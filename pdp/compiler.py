@@ -1,6 +1,6 @@
 from .builtins import builtins
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, NotReadyError
+from .deferred import Promise, NotReadyError, wait
 from .types import Instruction, Label, Assignment
 from . import reports
 
@@ -8,35 +8,78 @@ from . import reports
 class Compiler:
     def __init__(self):
         self.symbols = CaseInsensitiveDict()
-        self.local_symbols = CaseInsensitiveDict()
-        self.files_by_filename = {}
-        self.link_base = Promise("LA")
-        self.current_emit_address = self.link_base
+        self.link_base: Promise = Promise[int]("LA")
+        self.cur_emit_location = self.link_base
+        self.generated_code = b""
+        self.files = []
 
 
-    def add_label(self, label):
+    def compile_file(self, file, start):
+        return self.compile_block(file.body, start, "file")
+
+
+    def compile_block(self, block, start, context):
+        addr = start
+        data = b""
+
+        local_symbols = CaseInsensitiveDict()
+
+        for insn in block.insns:
+            if isinstance(insn, Instruction) and insn.name.name.lower() in (".end", "end"):
+                break
+
+            state = {"emit_address": addr, "local_symbols": local_symbols, "compiler": self}
+            if isinstance(insn, Instruction):
+                chunk = self.compile_insn(insn, state)
+                if chunk is not None:
+                    data += chunk
+                    try:
+                        addr += len(chunk)
+                    except NotReadyError:
+                        addr += chunk.len()
+
+            elif isinstance(insn, Label):
+                if context == "repeat":
+                    if not hasattr(insn, "label_error_emitted"):
+                        reports.error(
+                            (insn.ctx_start, insn.ctx_end, "Labels cannot be defined inside '.repeat' loop")
+                        )
+                        insn.label_error_emitted = True
+                    continue
+                self.compile_label(insn, addr, local_symbols)
+                if not insn.local:
+                    local_symbols = CaseInsensitiveDict()
+
+            elif isinstance(insn, Assignment):
+                self.compile_assignment(insn)
+
+            else:
+                assert False
+
+        return data
+
+
+    def compile_label(self, label, addr, local_symbols):
         if label.local:
-            if label.name in self.local_symbols:
-                prev_sym = self.local_symbols[label.name]
+            if label.name in local_symbols:
+                prev_sym, _ = local_symbols[label.name]
                 reports.error(
                     (label.ctx_start, label.ctx_end, f"Duplicate local label '{label.name}:'"),
                     (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
                 )
-
-            self.local_symbols[label.name] = label
+            local_symbols[label.name] = (label, addr)
         else:
             if label.name in self.symbols:
-                prev_sym = self.symbols[label.name]
+                prev_sym, _ = self.symbols[label.name]
                 reports.error(
                     (label.ctx_start, label.ctx_end, f"Duplicate symbol '{label.name}'"),
                     (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
                 )
-
-            self.symbols[label.name] = label
-            self.local_symbols = {}
+            self.symbols[label.name] = (label, addr)
 
 
-    def add_variable(self, var):
+    def compile_assignment(self, var):
+        var.symbol_value = None
         if var.name in self.symbols:
             prev_sym = self.symbols[var.name]
             reports.error(
@@ -44,86 +87,55 @@ class Compiler:
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
         else:
-            self.symbols[var.name] = var
+            self.symbols[var.name] = (var, None)
 
 
-    def scan_symbols(self, file):
-        self.files_by_filename[file.filename] = file
-
-        prev_local_symbols = self.local_symbols
-        self.local_symbols = {}
-
-        try:
-            for insn in file.body.insns:
-                if isinstance(insn, Label):
-                    self.add_label(insn)
-                elif isinstance(insn, Assignment):
-                    self.add_variable(insn)
-                insn.local_symbols = self.local_symbols
-        finally:
-            self.local_symbols = prev_local_symbols
-
-
-    def compile_file(self, file):
-        for insn in file.body.insns:
-            if isinstance(insn, Instruction) and insn.name.name.lower() in (".end", "end"):
-                break
-            self.compile_insn(insn)
-
-
-    def compile_insn(self, insn):
-        insn.emit_address = self.current_emit_address
-
-        if isinstance(insn, Instruction):
-            if insn.name.name in self.symbols:
-                # Resolve a macro
-                symbol = self.symbols[insn.name.name]
-                if isinstance(symbol, Label):
-                    reports.error(
-                        (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                        (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. " + reports.terminal_link("Are you looking for macros?", "https://pdpy.github.io/macros"))
-                    )
-                    return
-                elif isinstance(symbol, Assignment):
-                    reports.error(
-                        (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                        (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. " + reports.terminal_link("You may be looking for MACRO-11 macros.", "https://pdpy.github.io/macros") + "\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
-                    )
-                    return
-                else:
-                    # assert isinstance(symbol, Macro)
-                    # TODO
-                    pass
-            elif insn.name.name in builtins:
-                chunk = builtins[insn.name.name].substitute(insn)
-                if chunk is None:
-                    return
-                try:
-                    chunk_length = len(chunk)
-                except NotReadyError:
-                    print(insn.name, insn.operands, self.current_emit_address, "???")
-                    self.current_emit_address += chunk.len()
-                else:
-                    print(insn.name, insn.operands, self.current_emit_address, chunk_length)
-                    self.current_emit_address += chunk_length
-            else:
+    def compile_insn(self, insn, state):
+        if insn.name.name in self.symbols:
+            # Resolve a macro
+            symbol = self.symbols[insn.name.name]
+            if isinstance(symbol, Label):
                 reports.error(
-                    (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is an undefined instruction.\nIs our database incomplete? " + reports.terminal_link("Report that on GitHub.", "https://github.com/imachug/pdpy11/issues/new"))
+                    (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
+                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. " + reports.terminal_link("Are you looking for macros?", "https://pdpy.github.io/macros"))
                 )
-                return
+                return None
+            elif isinstance(symbol, Assignment):
+                reports.error(
+                    (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
+                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. " + reports.terminal_link("You may be looking for MACRO-11 macros.", "https://pdpy.github.io/macros") + "\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
+                )
+                return None
+            else:
+                # TODO
+                # assert isinstance(symbol, Macro)
+                raise NotImplementedError()
+        elif insn.name.name in builtins:
+            return builtins[insn.name.name].compile(state, self, insn)
+        else:
+            reports.error(
+                (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is an undefined {'metainstruction' if insn.name.name[0] == '.' else 'instruction'}.\nIs our database incomplete? " + reports.terminal_link("Report that on GitHub.", "https://github.com/imachug/pdpy11/issues/new"))
+            )
+            return None
 
 
-def compile_files(files_ast):
-    comp = Compiler()
+    def add_files(self, files_ast):
+        self.files += files_ast
 
-    for file_ast in files_ast:
-        comp.scan_symbols(file_ast)
+        with reports.handle_reports(reports.TextHandler()):
+            for file_ast in files_ast:
+                data = self.compile_file(file_ast, self.cur_emit_location)
+                self.generated_code += data
+                try:
+                    self.cur_emit_location += len(data)
+                except NotReadyError:
+                    self.cur_emit_location += data.len()
 
-    if reports.is_error_condition():
-        raise reports.UnrecoverableError()
 
-    for file_ast in files_ast:
-        comp.compile_file(file_ast)
+    def link(self):
+        if not self.link_base.settled:
+            self.link_base.settle(0o1000)  # TODO: maybe report a warning?
 
-    if reports.is_error_condition():
-        raise reports.UnrecoverableError()
+        with reports.handle_reports(reports.TextHandler()):
+            code = wait(self.generated_code)
+            return (wait(self.link_base), code)

@@ -31,3 +31,10 @@ class Context:
         copy = self.save()
         copy.skip_whitespace()
         return copy.code[copy.pos:].strip() == ""
+
+
+    def __repr__(self):
+        line_no = self.code[:self.pos].count("\n")
+        idx_line_start = self.code.rfind("\n", 0, self.pos) + 1
+        col_no = (self.pos - idx_line_start) + self.code[idx_line_start:self.pos].count("\t") * 3
+        return f"{self.filename}:{line_no + 1}:{col_no + 1}"

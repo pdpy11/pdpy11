@@ -1,141 +1,12 @@
 import struct
 
+from .architecture import instruction_opcodes
+from .builtins import get_as_int
 from .containers import CaseInsensitiveDict
-from .deferred import SizedDeferred
+from .deferred import Deferred, SizedDeferred, BaseDeferred, wait
+from .types import Token, Symbol, ParenthesizedExpression, Number
+from . import operators
 from . import reports
-
-
-instruction_opcodes = dict(
-    halt  = "000000",
-    wait  = "000001",
-    rti   = "000002",
-    bpt   = "000003",
-    iot   = "000004",
-    reset = "000005",
-    rtt   = "000006",
-    mfpt  = "000007",
-    jmp   = "0001dd",
-    rts   = "00020d",
-    spl   = "00023i",
-    # TODO: nop
-    clc   = "000241",
-    clv   = "000242",
-    clvc  = "000243",
-    clz   = "000244",
-    clzc  = "000245",
-    clzv  = "000246",
-    clzvc = "000247",
-    cln   = "000250",
-    clnc  = "000251",
-    clnv  = "000252",
-    clnvc = "000253",
-    clnz  = "000254",
-    clnzc = "000255",
-    clnzv = "000256",
-    ccc   = "000257",
-    # TODO: nop 260
-    sec   = "000261",
-    sev   = "000262",
-    sevc  = "000263",
-    sez   = "000264",
-    sezc  = "000265",
-    sezv  = "000266",
-    sezvc = "000267",
-    sen   = "000270",
-    senc  = "000271",
-    senv  = "000272",
-    senvc = "000273",
-    senz  = "000274",
-    senzc = "000275",
-    senzv = "000276",
-    scc   = "000277",
-    swab  = "0003dd",
-    br    = "000[1oo]oo",
-    bne   = "001[0oo]oo",
-    beq   = "001[1oo]oo",
-    bge   = "002[0oo]oo",
-    blt   = "002[1oo]oo",
-    bgt   = "003[0oo]oo",
-    ble   = "003[1oo]oo",
-    jsr   = "004sdd",
-    clr   = "0050dd",
-    com   = "0051dd",
-    inc   = "0052dd",
-    dec   = "0053dd",
-    neg   = "0054dd",
-    adc   = "0055dd",
-    sbc   = "0056dd",
-    tst   = "0057dd",
-    ror   = "0060dd",
-    rol   = "0061dd",
-    asr   = "0062dd",
-    asl   = "0063dd",
-    mark  = "0064ii",
-    mfpi  = "0065ss",
-    mtpi  = "0067dd",
-    sxt   = "0067dd",
-    csm   = "0070dd",
-    mov   = "01ssdd",
-    cmp   = "02ssdd",
-    bit   = "03ssdd",
-    bic   = "04ssdd",
-    bis   = "05ssdd",
-    add   = "06ssdd",
-    mul   = "070dss",
-    div   = "071dss",
-    ash   = "072dss",
-    ashc  = "073dss",
-    xor   = "074sdd",
-    med   = "076600", # TODO?
-    sob   = "077doo",
-    bpl   = "100[0oo]oo",
-    bmi   = "100[1oo]oo",
-    bhi   = "101[0oo]oo",
-    blos  = "101[1oo]oo",
-    bvc   = "102[0oo]oo",
-    bvs   = "102[1oo]oo",
-    bcc   = "103[0oo]oo",
-    bhis  = "103[0oo]oo",
-    bcs   = "103[1oo]oo",
-    blo   = "103[1oo]oo",
-    emt   = "104[0ii]ii",
-    trap  = "104[1ii]ii",
-    clrb  = "1050dd",
-    comb  = "1051dd",
-    incb  = "1052dd",
-    decb  = "1053dd",
-    negb  = "1054dd",
-    adcb  = "1055dd",
-    sbcb  = "1056dd",
-    tstb  = "1057dd",
-    rorb  = "1060dd",
-    rolb  = "1061dd",
-    asrb  = "1062dd",
-    aslb  = "1063dd",
-    mtps  = "1064ss",
-    mfpd  = "1065ss",
-    mtpd  = "1066dd",
-    mfps  = "1067dd",
-    movb  = "11ssdd",
-    cmpb  = "12ssdd",
-    bitb  = "13ssdd",
-    bicb  = "14ssdd",
-    bisb  = "15ssdd",
-    sub   = "16ssdd",
-    ldub  = "170003",
-    mns   = "170004",
-    mpp   = "170005",
-    # TODO: floating-point instructions
-    # TODO: xfc
-
-
-    # TODO: Damn, I'm just too lazy to implement all these as macros. Will do that later.
-    pop   = "0126dd",
-    push  = "01ss46",
-    ret   = "000206",
-    call  = "0046ss",
-    nop   = "000240"
-)
 
 
 
@@ -143,25 +14,381 @@ class RegisterOperandStub:
     def __init__(self, pattern_char):
         self.pattern_char = pattern_char
 
+    def encode(self, operand, state):
+        if register := try_register_from_symbol(operand):
+            return register.idx, b""
+        else:
+            insn = state["insn"]
+            idx = {"s": "first", "d": "second"}[self.pattern_char]
+            reports.error(
+                (insn.ctx_start, insn.ctx_end, f"'{insn.name.name}' command accepts a register as the {idx} argument"),
+                (operand.ctx_start, operand.ctx_end, "...but this value does not look like a register")
+            )
+            raise reports.RecoverableError("Register expected, expression passed")
+
+
 class RegisterModeOperandStub:
     def __init__(self, pattern_char):
         self.pattern_char = pattern_char
 
+    def encode(self, operand, state):
+        # Good luck debugging this
+        # pylint: disable=isinstance-second-argument-not-valid-type
+        if register := try_register_from_symbol(operand):
+            mode = AddressingModes.Register(operand.ctx_start, operand.ctx_end, register)
+        elif isinstance(operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.expr)):
+            mode = AddressingModes.RegisterDeferred(operand.ctx_start, operand.ctx_end, register)
+        elif isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
+            mode = AddressingModes.Autoincrement(operand.ctx_start, operand.ctx_end, register)
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)):
+            mode = AddressingModes.AutoincrementDeferred(operand.ctx_start, operand.ctx_end, register)
+        elif isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
+            mode = AddressingModes.Autodecrement(operand.ctx_start, operand.ctx_end, register)
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)):
+            mode = AddressingModes.AutodecrementDeferred(operand.ctx_start, operand.ctx_end, register)
+        elif isinstance(operand, operators.call) and (register := try_register_from_symbol(operand.operand)):
+            mode = AddressingModes.Index(operand.ctx_start, operand.ctx_end, register, operand.callee)
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.call) and (register := try_register_from_symbol(operand.operand.operand)):
+            mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, operand.operand.callee)
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
+            reports.warning(
+                (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have @({register}) mode. This expression is parsed as @0({register}), which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for explicitness.")
+            )
+            mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, Number(None, None, "0"))
+        elif isinstance(operand, operators.immediate):
+            mode = AddressingModes.Immediate(operand.ctx_start, operand.ctx_end, operand.operand)
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.immediate):
+            mode = AddressingModes.Absolute(operand.ctx_start, operand.ctx_end, operand.operand.operand)
+        elif isinstance(operand, operators.deferred):
+            mode = AddressingModes.RelativeDeferred(operand.ctx_start, operand.ctx_end, operand.operand)
+        else:
+            mode = AddressingModes.Relative(operand.ctx_start, operand.ctx_end, operand)
+
+        return mode.get_mode(), mode.encode_inline(state)
+
+
 class OffsetOperandStub:
-    def __init__(self, pattern_char):
+    def __init__(self, pattern_char, bitness, unsigned):
         self.pattern_char = pattern_char
+        self.bitness = bitness
+        self.unsigned = unsigned
+
+
+    def encode(self, operand, state):
+        insn = state["insn"]
+
+        if isinstance(operand, Number) and operand.representation[-1] != ".":
+            operand = Symbol(operand.ctx_start, operand.ctx_end, operand.representation)
+        elif "(" not in repr(operand):
+            fixup_active = True
+            def fixup_label(token):
+                nonlocal fixup_active
+                if isinstance(token, operators.InfixOperator):
+                    token.lhs = fixup_label(token.lhs)
+                    token.rhs = fixup_label(token.rhs)
+                elif isinstance(token, (operators.PrefixOperator, operators.PostfixOperator)):
+                    token.operand = fixup_label(token.operand)
+                elif isinstance(token, operators.call):
+                    token.callee = fixup_label(token.callee)
+                    token.operand = fixup_label(token.operand)
+                elif isinstance(token, ParenthesizedExpression):
+                    token.expr = fixup_label(token.expr)
+                elif isinstance(token, Number) and token.representation[-1] != ".":
+                    if fixup_active:
+                        reports.warning(
+                            (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an offset."),
+                            (operand.ctx_start, operand.ctx_end, "It's operand is a complex expression."),
+                            (token.ctx_start, token.ctx_end, f"Thus, for compatibility, the first number is treated as a local label.\nFor example, '1 + 2' is parsed as 'address of local label 1 plus two'.\nThis may be unintended, so please state your intent explicitly:\n- if you meant numbers to be numbers, add parentheses around the operand: '({operand})', and\n- if you wanted '{token}' to be a label, add a colon after it: '{token}:'.")
+                        )
+                        fixup_active = False
+                        return Symbol(token.ctx_start, token.ctx_end, token.representation)
+                elif isinstance(token, Symbol):
+                    fixup_active = False
+                return token
+            fixup_label(operand)
+
+        def fn():
+            offset = wait(operand.resolve(state) - state["rel_address"])
+            error = False
+            if self.unsigned and offset > 0:
+                reports.error(
+                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump backwards"),
+                    (operand.ctx_start, operand.ctx_end, f"...but this offset is positive (exactly {offset})")
+                )
+                error = True
+            min_offset = -2 ** (self.bitness + self.unsigned) + 2 * self.unsigned
+            max_offset = 0 if self.unsigned else 2 ** self.bitness - 2
+            if not min_offset <= offset <= max_offset:
+                reports.error(
+                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump from {min_offset} to {max_offset} (inclusively)"),
+                    (operand.ctx_start, operand.ctx_end, f"...but this offset is out of bounds ({offset})")
+                )
+                error = True
+            if offset % 2 == 1:
+                reports.error(
+                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump by an even offset"),
+                    (operand.ctx_start, operand.ctx_end, f"...but this offset is odd ({offset}, in particular)")
+                )
+                error = True
+            if error:
+                return 0
+            if self.unsigned:
+                return -offset // 2
+            else:
+                return offset // 2
+        return Deferred[int](fn), b""
+
+
 
 class ImmediateOperandStub:
-    def __init__(self, pattern_char):
+    def __init__(self, pattern_char, bitness, unsigned):
         self.pattern_char = pattern_char
+        self.bitness = bitness
+        self.unsigned = unsigned
 
 
-# def patch_insn(stub, pattern, value):
-#     enc = value.encode_mode()
-#     pattern[stub.pattern_char]
+    def encode(self, operand, state):
+        insn = state["insn"]
 
-#     print(pattern, stub.pattern_char, value, enc)
-#     raise NotImplementedError()
+        def fn():
+            value = wait(operand.resolve(state))
+            error = False
+            if self.unsigned and value < 0:
+                reports.error(
+                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes a non-negative immediate operand"),
+                    (operand.ctx_start, operand.ctx_end, f"...but this value is negative (exactly {value})")
+                )
+                error = True
+            min_value = 0 if self.unsigned else -2 ** self.bitness
+            max_value = 2 ** self.bitness - 1
+            if not min_value <= value <= max_value:
+                reports.error(
+                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an immediate operand from {min_value} to {max_value} (inclusively)"),
+                    (operand.ctx_start, operand.ctx_end, f"...but this value is out of bounds ({value})")
+                )
+                error = True
+            if error:
+                return 0
+            return value % (2 ** self.bitness)
+        return Deferred[int](fn), b""
+
+
+REGISTER_NAMES = {
+    "r0": 0,
+    "r1": 1,
+    "r2": 2,
+    "r3": 3,
+    "r4": 4,
+    "r5": 5,
+    "r6": 6,
+    "r7": 7,
+    "sp": 6,
+    "pc": 7
+}
+
+class Register(Token):
+    # pylint: disable=arguments-differ
+    def init(self, name: str):
+        self.name: str = name
+        self.idx = REGISTER_NAMES[name.lower()]
+
+    def __repr__(self):
+        return f"{self.name}"
+
+    def __eq__(self, rhs):
+        return isinstance(rhs, type(self)) and self.name == rhs.name
+
+
+class SimpleAddressingMode(Token):
+    mode_code: int
+    reg: Register
+
+    # pylint: disable=arguments-differ
+    def init(self, reg: Register):
+        self.reg: Register = reg
+
+    def get_mode(self):
+        return (self.mode_code << 3) | self.reg.idx
+
+    # pylint: disable=unused-argument
+    def encode_inline(self, state):
+        return b""
+
+
+class AddressingModes:
+    class Register(SimpleAddressingMode):
+        mode_code = 0
+
+        def __repr__(self):
+            return repr(self.reg)
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.reg == rhs.reg
+
+
+    class RegisterDeferred(SimpleAddressingMode):
+        mode_code = 1
+
+        def __repr__(self):
+            return f"({self.reg})"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.reg == rhs.reg
+
+
+    class Autoincrement(SimpleAddressingMode):
+        mode_code = 2
+
+        def __repr__(self):
+            return f"({self.reg})+"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.reg == rhs.reg
+
+
+    class AutoincrementDeferred(SimpleAddressingMode):
+        mode_code = 3
+
+        def __repr__(self):
+            return f"@({self.reg})+"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.reg == rhs.reg
+
+
+    class Autodecrement(SimpleAddressingMode):
+        mode_code = 4
+
+        def __repr__(self):
+            return f"-({self.reg})"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.reg == rhs.reg
+
+
+    class AutodecrementDeferred(SimpleAddressingMode):
+        mode_code = 5
+
+        def __repr__(self):
+            return f"@-({self.reg})"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.reg == rhs.reg
+
+
+    class Index(SimpleAddressingMode):
+        mode_code = 6
+
+        # pylint: disable=arguments-differ
+        def init(self, reg: Register, index):
+            super().init(reg)
+            self.index = index
+
+        def __repr__(self):
+            return f"{self.index}({self.reg})"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and (self.reg, self.index) == (rhs.reg, rhs.index)
+
+        def encode_inline(self, state):
+            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", self, self.index, 16, False)))
+
+
+    class IndexDeferred(SimpleAddressingMode):
+        mode_code = 7
+
+        # pylint: disable=arguments-differ
+        def init(self, reg: Register, index):
+            super().init(reg)
+            self.index = index
+
+        def __repr__(self):
+            return f"@{self.index}({self.reg})"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and (self.reg, self.index) == (rhs.reg, rhs.index)
+
+        def encode_inline(self, state):
+            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", self, self.index, 16, False)))
+
+
+    class Immediate(Token):
+        # pylint: disable=arguments-differ
+        def init(self, value):
+            self.value = value
+
+        def __repr__(self):
+            return f"#{self.value}"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.value == rhs.value
+
+        def get_mode(self):
+            return 0o27
+
+        def encode_inline(self, state):
+            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an immediate value", self, self.value, 16, False)))
+
+
+    class Absolute(Token):
+        # pylint: disable=arguments-differ
+        def init(self, addr):
+            self.addr = addr
+
+        def __repr__(self):
+            return f"@#{self.addr}"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.addr == rhs.addr
+
+        def get_mode(self):
+            return 0o37
+
+        def encode_inline(self, state):
+            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an absolute address", self, self.addr, 16, False)))
+
+
+    class Relative(Token):
+        # pylint: disable=arguments-differ
+        def init(self, addr: Token):
+            self.addr: Token = addr
+
+        def __repr__(self):
+            return f"{self.addr}"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.addr == rhs.addr
+
+        def get_mode(self):
+            return 0o67
+
+        def encode_inline(self, state):
+            return SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(self.addr.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
+
+
+    class RelativeDeferred(Token):
+        # pylint: disable=arguments-differ
+        def init(self, addr):
+            self.addr = addr
+
+        def __repr__(self):
+            return f"@{self.addr}"
+
+        def __eq__(self, rhs):
+            return isinstance(rhs, type(self)) and self.addr == rhs.addr
+
+        def get_mode(self):
+            return 0o77
+
+        def encode_inline(self, state):
+            return SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(self.addr.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
+
+
+def try_register_from_symbol(operand):
+    if isinstance(operand, Symbol) and operand.name.lower() in REGISTER_NAMES:
+        return Register(operand.ctx_start, operand.ctx_end, operand.name)
+    else:
+        return None
 
 
 class Instruction:
@@ -172,31 +399,44 @@ class Instruction:
         self.dst_operand = dst_operand
 
 
-    def substitute(self, insn):
-        operands = [op for op in (self.src_operand, self.dst_operand) if op is not None]
+    def compile(self, state, compiler, insn):
+        state = {**state, "insn": insn, "compiler": compiler}
 
-        if len(insn.operands) < len(operands):
+        operand_stubs = [op for op in (self.src_operand, self.dst_operand) if op is not None]
+
+        if len(insn.operands) < len(operand_stubs):
             reports.error(
-                (insn.ctx_start, insn.ctx_end, f"Too few operands for '{self.name}' instruction: {len(operands)} expected, {len(insn.operands)} given")
+                (insn.ctx_start, insn.ctx_end, f"Too few operands for '{self.name}' instruction: {len(operand_stubs)} expected, {len(insn.operands)} given")
             )
             return None
-        elif len(insn.operands) > len(operands):
+        elif len(insn.operands) > len(operand_stubs):
             reports.error(
-                (insn.ctx_start, insn.ctx_end, f"Too many operands for '{self.name}' instruction: {len(operands)} expected, {len(insn.operands)} given")
+                (insn.ctx_start, insn.ctx_end, f"Too many operands for '{self.name}' instruction: {len(operand_stubs)} expected, {len(insn.operands)} given")
             )
             return None
 
-        chunk_length = 2 + sum(operand.inline_length for operand in insn.operands)
-        def encode():
-            pattern = self.opcode_pattern
-            operands_encoding = b""
-            for operand, value in zip(operands, insn.operands):
-                if operand:
-                    pattern = patch_insn(operand, pattern, value)
-                    operands_encoding += operand.encode_inline()
-            assert pattern.isdigit()
-            return struct.pack("<H", int(pattern, 2)) + operands_encoding
-        return SizedDeferred(chunk_length, encode)
+
+        replacements = []
+        operands_encoding = b""
+
+        for stub, operand_expr in zip(operand_stubs, insn.operands):
+            opcode_inline_value, operand_encoding = stub.encode(operand_expr, {**state, "rel_address": state["emit_address"] + 2 + len(operands_encoding)})
+            replacements.append((stub.pattern_char, opcode_inline_value))
+            operands_encoding += operand_encoding
+
+        def get_opcode():
+            opcode_pattern = self.opcode_pattern
+            for pattern_char, opcode_inline_value in replacements:
+                value = wait(opcode_inline_value)
+                splitted = opcode_pattern.split(pattern_char)
+                opcode_pattern = "".join(splitted[i] + str((value >> (len(splitted) - 2 - i)) & 1) for i in range(0, len(splitted) - 1)) + splitted[-1]
+            assert opcode_pattern.isdigit()
+            return struct.pack("<H", int(opcode_pattern, 2))
+
+        if any(isinstance(opcode_inline_value, BaseDeferred) for _, opcode_inline_value in replacements):
+            return SizedDeferred[bytes](2, get_opcode) + operands_encoding
+        else:
+            return get_opcode() + operands_encoding
 
 
 
@@ -243,17 +483,21 @@ def init():
             else:
                 dst_operand = RegisterOperandStub("d")
 
-        if "o" in opcode_pattern:
+        if "o" in opcode_pattern or "O" in opcode_pattern:
+            unsigned = "O" in opcode_pattern
+            char = "O" if unsigned else "o"
             if src_operand is None:
-                src_operand = OffsetOperandStub("o")
+                src_operand = OffsetOperandStub(char, opcode_pattern.count(char), unsigned)
             else:
                 assert dst_operand is None
-                dst_operand = OffsetOperandStub("o")
+                dst_operand = OffsetOperandStub(char, opcode_pattern.count(char), unsigned)
 
-        if "i" in opcode_pattern:
-            assert "o" not in opcode_pattern
+        if "i" in opcode_pattern or "I" in opcode_pattern:
+            assert "o" not in opcode_pattern and "O" not in opcode_pattern
+            unsigned = "I" in opcode_pattern
+            char = "I" if unsigned else "i"
             assert src_operand is None
-            src_operand = ImmediateOperandStub("i")
+            src_operand = ImmediateOperandStub(char, opcode_pattern.count(char), unsigned)
 
         instructions[insn_name] = Instruction(insn_name, opcode_pattern, src_operand, dst_operand)
 

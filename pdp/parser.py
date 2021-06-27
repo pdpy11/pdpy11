@@ -1,8 +1,9 @@
 import re
 
 from .context import Context
-from .types import *
+from . import operators
 from . import reports
+from . import types
 
 
 class Goto(BaseException):
@@ -38,14 +39,22 @@ UNCOMMON_BUILTIN_INSTRUCTION_NAMES = {
     "call": "'call X' is a classic alias for 'jsr sp, X'"
 }
 
-
-class RecoverableError(Exception):
-    pass
+REGISTER_NAMES = ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "sp", "pc")
 
 
 class Parser:
     def __init__(self, fn):
         self.fn = fn
+
+
+    @classmethod
+    def either(cls, parsers):
+        def fn(ctx):
+            for parser in parsers:
+                if (result := parser(ctx, maybe=True, skip_whitespace_after=False)) is not None:
+                    return result
+            raise reports.RecoverableError("Failed to match either of the alternatives")
+        return cls(fn)
 
 
     def __or__(self, rhs):
@@ -60,8 +69,9 @@ class Parser:
     def __add__(self, rhs):
         assert isinstance(rhs, Parser)
         def fn(ctx):
-            self(ctx, skip_whitespace_after=False)
-            return rhs(ctx, skip_whitespace_after=False)
+            result = self(ctx, skip_whitespace_after=False)
+            rhs(ctx, skip_whitespace_after=False)
+            return result
         return Parser(fn)
 
 
@@ -78,13 +88,13 @@ class Parser:
         return Parser(fn)
 
 
-    def __call__(self, ctx, *, maybe=False, skip_whitespace_after=False, lookahead=False, error=None, **kwargs):
+    def __call__(self, ctx, *, maybe=False, skip_whitespace_after=False, lookahead=False, report=None, **kwargs):
         if maybe or lookahead:
             old_ctx = ctx.save()
             try:
                 result = self.fn(ctx, **kwargs)
                 assert result is not None
-            except RecoverableError:
+            except reports.RecoverableError:
                 if maybe:
                     ctx.restore(old_ctx)
                     return None
@@ -101,14 +111,14 @@ class Parser:
                 result = self.fn(ctx, **kwargs)
                 assert result is not None
                 return result
-            except RecoverableError:
-                if error is None:
+            except reports.RecoverableError:
+                if report is None:
                     raise
-                elif callable(error):
-                    error()
+                elif callable(report):
+                    report()
                     return None
                 else:
-                    reports.emit_report(*error)
+                    reports.emit_report(*report)
                     return None
             else:
                 if skip_whitespace_after:
@@ -124,10 +134,31 @@ class Parser:
                 ctx.skip_whitespace()
             match = regex.match(ctx.code, ctx.pos)
             if match is None:
-                raise RecoverableError(f"Failed to match regex at position {ctx.pos}")
+                raise reports.RecoverableError(f"Failed to match regex at position {ctx.pos}")
             ctx.pos = match.end()
             return match.group()
         return Parser(fn)
+
+
+    @classmethod
+    def literal(cls, literal, skip_whitespace_before=True):
+        def fn(ctx):
+            if skip_whitespace_before:
+                ctx.skip_whitespace()
+            if ctx.code[ctx.pos:ctx.pos + len(literal)] == literal:
+                ctx.pos += len(literal)
+                return literal
+            else:
+                raise reports.RecoverableError(f"Failed to match literal at position {ctx.pos}")
+        return Parser(fn)
+
+
+@Parser
+def eof(ctx):
+    ctx.skip_whitespace()
+    if ctx.pos < len(ctx.code):
+        raise reports.RecoverableError("Failed to match EOF")
+    return True
 
 
 newline = Parser.regex(r"\s*\n|\s*;[^\n]*", skip_whitespace_before=False)
@@ -138,25 +169,28 @@ opening_bracket = Parser.regex(r"{")
 closing_bracket = Parser.regex(r"}")
 plus = Parser.regex(r"\+")
 minus = Parser.regex(r"-")
+colon = Parser.regex(r":")
 at_sign = Parser.regex(r"@")
 hash_sign = Parser.regex(r"#")
 equals_sign = Parser.regex(r"=")
 quote = Parser.regex("[\"']")
 
 
+local_symbol_literal = Parser.regex(r"[0-9][a-zA-Z_0-9$]*")
 symbol_literal = Parser.regex(r"[a-zA-Z_$][a-zA-Z_0-9$]*")
 instruction_name = Parser.regex(r"\.?[a-zA-Z_][a-zA-Z_0-9]*")
 
-register = Parser.regex(r"([rR][0-7]|[sS][pP]|[pP][cC])\b") >> Register
-number = Parser.regex(r"-?\d+\.?") >> Number
+number = Parser.regex(r"-?\d+\.?") >> types.Number
 
 
 @Parser
 def label(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
+
     name = Parser.regex(r"([a-zA-Z_0-9$]+)\s*:")(ctx)
     name = name[:-1].strip()
+
     if name.lower() in COMMON_BUILTIN_INSTRUCTION_NAMES:
         reports.warning(
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction")
@@ -165,7 +199,12 @@ def label(ctx):
         reports.warning(
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[name.lower()])
         )
-    return Label(ctx_start, ctx, name)
+    elif name.lower() in REGISTER_NAMES:
+        reports.error(
+            (ctx_start, ctx, "Label name clashes with a register.\nYou won't be able to access this label because every usage would be parsed as a register")
+        )
+
+    return types.Label(ctx_start, ctx, name)
 
 
 @Parser
@@ -173,14 +212,16 @@ def assignment(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    symbol = symbol_literal(ctx, skip_whitespace_after=True)
+    symbol = symbol_literal(ctx, skip_whitespace_after=False)
+    ctx_after_symbol = ctx.save()
+    ctx.skip_whitespace()
 
     ctx_equals = ctx.save()
     equals_sign(ctx, skip_whitespace_after=False)
     ctx_after_equals = ctx.save()
     ctx.skip_whitespace()
 
-    value = expression(ctx, skip_whitespace_after=False, error=(
+    value = expression(ctx, skip_whitespace_after=False, report=(
         reports.critical,
         (ctx_equals, ctx_after_equals, "An equals sign '=' must be followed by an expression (as in assignment)"),
         (ctx, ctx, "...yet no expression was matched here")
@@ -194,8 +235,12 @@ def assignment(ctx):
         reports.warning(
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[symbol.lower()])
         )
+    elif symbol.lower() in REGISTER_NAMES:
+        reports.error(
+            (ctx_start, ctx_after_symbol, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value.token_text()}, {symbol}'? " + reports.terminal_link("Read an intro on PDP-11 assembly.", "https://pdpy.github.io/intro"))
+        )
 
-    return Assignment(ctx_start, ctx, symbol, value)
+    return types.Assignment(ctx_start, ctx, symbol, value)
 
 
 @Parser
@@ -213,7 +258,18 @@ def symbol_expression(ctx):
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[symbol.lower()])
         )
 
-    return Symbol(ctx_start, ctx, symbol)
+    colon(ctx, maybe=True, skip_whitespace_after=False)
+
+    return types.Symbol(ctx_start, ctx, symbol)
+
+
+@Parser
+def local_symbol_expression(ctx):
+    ctx.skip_whitespace()
+    ctx_start = ctx.save()
+    symbol = local_symbol_literal(ctx, skip_whitespace_after=False)
+    colon(ctx, skip_whitespace_after=False)
+    return types.Symbol(ctx_start, ctx, symbol)
 
 
 string_char = (
@@ -243,7 +299,7 @@ def string(ctx):
         )
 
     ctx.pos += 1
-    return String(ctx_start, ctx, value)
+    return types.String(ctx_start, ctx, quotation_sign, value)
 
 
 @Parser
@@ -251,244 +307,141 @@ def instruction_pointer(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
     Parser.regex(r"\.(?![a-zA-Z_0-9])")(ctx, skip_whitespace_after=False)
-    return InstructionPointer(ctx_start, ctx)
+    return types.InstructionPointer(ctx_start, ctx)
 
-expression_literal = number | symbol_expression | string | instruction_pointer
+expression_literal = symbol_expression | local_symbol_expression | number | string | instruction_pointer
 
-operator = Parser.regex(r"[+\-*/%]|>>|<<")
-OPERATORS = {
-    ">>": {"precedence": 1, "associativity": "left"},
-    "<<": {"precedence": 1, "associativity": "left"},
-    "+": {"precedence": 2, "associativity": "left"},
-    "-": {"precedence": 2, "associativity": "left"},
-    "*": {"precedence": 3, "associativity": "left"},
-    "/": {"precedence": 3, "associativity": "left"},
-    "%": {"precedence": 3, "associativity": "left"}
-}
+infix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.InfixOperator]])
+prefix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PrefixOperator]])
+postfix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PostfixOperator]])
+
 
 @Parser
 def expression_literal_rec(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    if opening_parenthesis(ctx, maybe=True, skip_whitespace_after=False):
+    if opening_parenthesis(ctx, maybe=True, lookahead=True, skip_whitespace_after=False):
+        value = None
+    else:
+        value = expression_literal(ctx, skip_whitespace_after=False)
+
+    while opening_parenthesis(ctx, maybe=True, skip_whitespace_after=False):
         ctx_after_paren = ctx.save()
         ctx.skip_whitespace()
 
-        expr = expression(ctx, skip_whitespace_after=True, error=(
+        expr = expression(ctx, skip_whitespace_after=True, report=(
             reports.critical,
             (ctx, ctx, "Could not parse an expression here"),
             (ctx_start, ctx_after_paren, "...as expected after an opening parenthesis here")
         ))
 
-        closing_parenthesis(ctx, skip_whitespace_after=False, error=(
+        closing_parenthesis(ctx, skip_whitespace_after=False, report=(
             reports.critical,
             (ctx, ctx, "Expected a closing parenthesis here"),
             (ctx_start, ctx_after_paren, "...to match an opening parenthesis here")
         ))
 
-        return expr
-    else:
-        return expression_literal(ctx, skip_whitespace_after=False)
+        if value is None:
+            value = types.ParenthesizedExpression(ctx_start, ctx, expr)
+        else:
+            value = operators.call(ctx_start, ctx, value, expr)
+
+    return value
+
 
 @Parser
 def expression(ctx):
-    ctx.skip_whitespace()
-    expr = expression_literal_rec(ctx, skip_whitespace_after=True)
-
-    stack = [expr]
     op_stack = []
 
-    while True:
+    ctx.skip_whitespace()
+    ctx_op = ctx.save()
+
+    # Try to match a full expression before matching a prefix operator, so that
+    # -1 is parsed as -1, not -(1)
+    while (expr := expression_literal_rec(ctx, maybe=True, skip_whitespace_after=False)) is None:
+        char = prefix_operator(ctx, skip_whitespace_after=False)
+        op_stack.append({
+            "ctx_start": ctx_op,
+            "operator": operators.operators[operators.PrefixOperator][char]
+        })
+        ctx.skip_whitespace()
         ctx_op = ctx.save()
-        cur_operator = operator(ctx, maybe=True, skip_whitespace_after=False)
-        if not cur_operator:
+
+    stack = [expr]
+
+    def pop_op_stack(ctx_end):
+        info = op_stack.pop()
+        operator = info["operator"]
+        if issubclass(operator, operators.InfixOperator):
+            rhs = stack.pop()
+            lhs = stack.pop()
+            stack.append(operator(lhs.ctx_start, ctx_end, lhs, rhs))
+        else:
+            op_operand = stack.pop()
+            stack.append(operator(info["ctx_start"], ctx_end, op_operand))
+
+
+    while True:
+        ctx_prev = ctx.save()
+
+        ctx.skip_whitespace()
+        ctx_op = ctx.save()
+
+        char = (postfix_operator + (newline | comma | closing_parenthesis | closing_bracket | eof))(ctx, maybe=True, lookahead=True)
+        if char:
+            # Postfix operator
+            postfix_operator(ctx, skip_whitespace_after=False)
+            ctx_op_end = ctx.save()
+
+            operator = operators.operators[operators.PostfixOperator][char]
+
+            self_precedence = operator.precedence
+
+            while op_stack and self_precedence > op_stack[-1]["operator"].precedence:
+                pop_op_stack(ctx_prev)
+
+            stack[-1] = operator(ctx_op, ctx_op_end, stack[-1])
             break
-        ctx_op_end = ctx.save()
+        else:
+            # Must be an infix operator
+            char = infix_operator(ctx, maybe=True, skip_whitespace_after=False)
+            if not char:
+                ctx.restore(ctx_prev)
+                break
 
-        expr = expression_literal_rec(ctx, skip_whitespace_after=True, error=(
-            reports.critical,
-            (ctx, ctx, "Could not parse an expression here"),
-            (ctx_op, ctx_op_end, f"...as expected after operator '{cur_operator}'")
-        ))
+            ctx_op_end = ctx.save()
 
-        while op_stack != [] and (OPERATORS[op_stack[-1]["operator"]]["precedence"] > OPERATORS[cur_operator]["precedence"] or (OPERATORS[op_stack[-1]["operator"]]["precedence"] == OPERATORS[cur_operator]["precedence"] and OPERATORS[cur_operator]["associativity"] == "left")):
-            lhs, rhs = stack[-2], stack[-1]
-            stack.pop()
-            stack[-1] = Operator(op_stack[-1]["ctx_start"], op_stack[-1]["ctx_end"], lhs, rhs, op_stack[-1]["operator"])
-            op_stack.pop()
+            operator = operators.operators[operators.InfixOperator][char]
 
-        stack.append(expr)
-        op_stack.append({"ctx_start": ctx_op, "ctx_end": ctx_op_end, "operator": cur_operator})
+            expr = expression_literal_rec(ctx, skip_whitespace_after=True, report=(
+                reports.critical,
+                (ctx, ctx, "Could not parse an expression here"),
+                (ctx_op, ctx_op_end, f"...as expected after operator '{char}'")
+            ))
+
+            self_precedence = operator.precedence
+            is_left_associative = operator.associativity == "left"
+
+            while op_stack and (self_precedence, is_left_associative) > (op_stack[-1]["operator"].precedence, False):
+                pop_op_stack(ctx_prev)
+
+            stack.append(expr)
+            op_stack.append({
+                "operator": operator
+            })
 
     while op_stack:
-        lhs, rhs = stack[-2], stack[-1]
-        stack.pop()
-        stack[-1] = Operator(op_stack[-1]["ctx_start"], op_stack[-1]["ctx_end"], lhs, rhs, op_stack[-1]["operator"])
-        op_stack.pop()
+        pop_op_stack(ctx)
 
     return stack[-1]
-
-
-@Parser
-def operand(ctx):
-    ctx.skip_whitespace()
-    ctx_start = ctx.save()
-
-
-    if opening_parenthesis(ctx, maybe=True, skip_whitespace_after=False):
-        ctx_after_paren = ctx.save()
-        ctx.skip_whitespace()
-        reg = register(ctx, skip_whitespace_after=False, error=(
-            reports.critical,
-            (ctx_start, ctx_after_paren, "An opening parenthesis '(' in an operand must be followed by a register..."),
-            (ctx, "...yet the value here does not denote a register name")
-        ))
-        ctx_after_reg = ctx.save()
-        ctx.skip_whitespace()
-        closing_parenthesis(ctx, skip_whitespace_after=False, error=(
-            reports.critical,
-            (ctx_start, ctx_after_reg, "An opening parenthesis '(', followed by a register name in an operand must be followed by a closing parenthesis..."),
-            (ctx, ctx, "...yet no parenthesis was matched here")
-        ))
-        if plus(ctx, maybe=True, skip_whitespace_after=False):
-            return AddressingModes.Autoincrement(ctx_start, ctx, reg)
-        else:
-            return AddressingModes.RegisterDeferred(ctx_start, ctx, reg)
-
-    elif Parser.regex(r"-\(")(ctx, maybe=True, skip_whitespace_after=False):
-        ctx_after_paren = ctx.save()
-        ctx.skip_whitespace()
-        reg = register(ctx, skip_whitespace_after=False, error=(
-            reports.critical,
-            (ctx_start, ctx_after_paren, "A minus and an opening parenthesis '-(' in an operand must be followed by a register..."),
-            (ctx, ctx, "...yet the value here does not denote a register name")
-        ))
-        ctx_after_reg = ctx.save()
-        ctx.skip_whitespace()
-        closing_parenthesis(ctx, skip_whitespace_after=False, error=(
-            reports.critical,
-            (ctx_start, ctx_after_reg, "A minus and an opening parenthesis '-(', followed by a register name in an operand must be followed by a closing parenthesis..."),
-            (ctx, "...yet no parenthesis was matched here")
-        ))
-        return AddressingModes.Autodecrement(ctx_start, ctx, reg)
-
-    elif at_sign(ctx, maybe=True, skip_whitespace_after=False):
-        ctx_after_at = ctx.save()
-        ctx.skip_whitespace()
-
-        if opening_parenthesis(ctx, maybe=True, skip_whitespace_after=False):
-            ctx_after_paren = ctx.save()
-            ctx.skip_whitespace()
-            reg = register(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_paren, "An at sign and an opening parenthesis '@(' in an operand must be followed by a register..."),
-                (ctx, ctx, "...yet the value here does not denote a register name")
-            ))
-            ctx_after_reg = ctx.save()
-            ctx.skip_whitespace()
-            closing_parenthesis(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_reg, "An at sign and an opening parenthesis '@(', followed by a register name in an operand must be followed by a closing parenthesis..."),
-                (ctx, ctx, "...yet no parenthesis was matched here")
-            ))
-            if plus(ctx, maybe=True, skip_whitespace_after=False):
-                return AddressingModes.AutoincrementDeferred(ctx_start, ctx, reg)
-            else:
-                return AddressingModes.IndexDeferred(ctx_start, ctx, reg, Number(None, None, "0"))
-
-        elif Parser.regex(r"-\(")(ctx, maybe=True, skip_whitespace_after=False):
-            ctx_after_paren = ctx.save()
-            ctx.skip_whitespace()
-            reg = register(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_paren, "An at sign, a minus and an opening parenthesis '@-(' in an operand must be followed by a register..."),
-                (ctx, ctx, "...yet the value here does not denote a register name")
-            ))
-            ctx_after_reg = ctx.save()
-            ctx.skip_whitespace()
-            closing_parenthesis(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_reg, "An at sign, a minus and an opening parenthesis '@-(', followed by a register name in an operand must be followed by a closing parenthesis..."),
-                (ctx, ctx, "...yet no parenthesis was matched here")
-            ))
-            return AddressingModes.AutodecrementDeferred(ctx_start, ctx, reg)
-
-        elif hash_sign(ctx, maybe=True, skip_whitespace_after=False):
-            ctx_after_hash = ctx.save()
-            ctx.skip_whitespace()
-            addr = expression(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_hash, "An at sign and a hash sign '@#' in an operand must be followed by an address (as in absolute addressing)"),
-                (ctx, ctx, "...yet an expression was not be matched here")
-            ))
-            return AddressingModes.Absolute(ctx_start, ctx, addr)
-
-        else:
-            index = expression(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_at, "An at sign '@' in an operand must be followed by:\n- '(rn)' (as in deferred addressing), e.g. @(r0), or\n- '(rn)+' (as in autoincrement deferred addressing), e.g. @(r0)+, or\n- '-(rn)' (as in autodecrement deferred addressing), e.g. @-(r0), or\n- an index (as in index deferred addressing), e.g. @123(r0) or @(1+2)(r0), or\n- an address (as in relative deferred addressing), e.g. @123 or @(1+2), or\n- '#n' (as in absolute addressing), e.g. @#123 or @#(1+2)"),
-                (ctx, ctx, "...yet none of that was matched here")
-            ))
-            if opening_parenthesis(ctx, maybe=True, skip_whitespace_after=False):
-                ctx_after_paren = ctx.save()
-                ctx.skip_whitespace()
-                reg = register(ctx, skip_whitespace_after=False, error=(
-                    reports.critical,
-                    (ctx_start, ctx_after_paren, "An at sign '@' followed by an expression and a parenthesis '(' in an operand must be followed by a register (as in index deferred addressing)..."),
-                    (ctx, ctx, "...yet the value here does not denote a register name")
-                ))
-                ctx_after_reg = ctx.save()
-                ctx.skip_whitespace()
-                closing_parenthesis(ctx, skip_whitespace_after=False, error=(
-                    reports.critical,
-                    (ctx_start, ctx_after_reg, "An at sign '@' followed by an expression, a parenthesis '(' and a register name must be followed by a parenthesis ')'"),
-                    (ctx, ctx, "...yet no parenthesis was matched here")
-                ))
-                return AddressingModes.IndexDeferred(ctx_start, ctx, reg, index)
-            else:
-                return AddressingModes.RelativeDeferred(ctx_start, ctx, index)
-
-    elif hash_sign(ctx, maybe=True, skip_whitespace_after=False):
-        ctx_after_hash = ctx.save()
-        ctx.skip_whitespace()
-        value = expression(ctx, skip_whitespace_after=False, error=(
-            reports.critical,
-            (ctx_start, ctx_after_hash, "A hash sign '#' in an operand must be followed by an expression as in immediate addressing, e.g. #123"),
-            (ctx, ctx, "...yet no expression was matched here")
-        ))
-        return AddressingModes.Immediate(ctx_start, ctx, value)
-
-    elif reg := register(ctx, maybe=True, skip_whitespace_after=False):
-        return AddressingModes.Register(ctx_start, ctx, reg)
-
-    else:
-        index = expression(ctx, skip_whitespace_after=False)
-        if opening_parenthesis(ctx, maybe=True, skip_whitespace_after=False):
-            ctx_after_paren = ctx.save()
-            ctx.skip_whitespace()
-            reg = register(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_paren, "An expression and a parenthesis '(' in an operand must be followed by a register (as in index addressing)..."),
-                (ctx, ctx, "...yet the value here does not denote a register name")
-            ))
-            ctx_after_reg = ctx.save()
-            ctx.skip_whitespace()
-            closing_parenthesis(ctx, skip_whitespace_after=False, error=(
-                reports.critical,
-                (ctx_start, ctx_after_reg, "An expression, a parenthesis '(' and a register name must be followed by a parenthesis ')'"),
-                (ctx, ctx, "...yet no parenthesis was matched here")
-            ))
-            return AddressingModes.Index(ctx_start, ctx, reg, index)
-        else:
-            return AddressingModes.Relative(ctx_start, ctx, index)
 
 
 @Parser
 def instruction(ctx):
     ctx_start = ctx.save()
     insn_name = instruction_name(ctx, skip_whitespace_after=False)
-    if insn_name.lower() in ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "sp", "pc"):
+    if insn_name.lower() in REGISTER_NAMES:
         reports.warning(
             (ctx_start, ctx, "Instruction name suspiciously resembles a register.\nCheck for an excess newline or a missing comma before the register name")
         )
@@ -537,7 +490,7 @@ def instruction(ctx):
                 )
             raise goto
 
-        first_operand = operand(ctx, maybe=True, skip_whitespace_after=False)
+        first_operand = expression(ctx, maybe=True, skip_whitespace_after=False)
         if first_operand:
             if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
                 reports.error(
@@ -550,7 +503,7 @@ def instruction(ctx):
             while comma(ctx, maybe=True, skip_whitespace_after=False):
                 ctx_after_comma = ctx.save()
                 ctx.skip_whitespace()
-                oper = operand(ctx, skip_whitespace_after=False, error=(
+                oper = expression(ctx, skip_whitespace_after=False, report=(
                     reports.critical,
                     (ctx_before_comma, ctx_after_comma, "Expected operand after comma in an instruction"),
                     (ctx_start, ctx_state_after_name, "(instruction started here)"),
@@ -582,7 +535,7 @@ def instruction(ctx):
                     (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that another instruction follows")
                 )
 
-    return Instruction(ctx_start, ctx, Symbol(ctx_start, ctx_state_after_name, insn_name), operands)
+    return types.Instruction(ctx_start, ctx, types.Symbol(ctx_start, ctx_state_after_name, insn_name), operands)
 
 
 @Parser
@@ -597,14 +550,14 @@ def code(ctx, break_on_closing_bracket=False):
         if break_on_closing_bracket and closing_bracket(ctx, maybe=True, skip_whitespace_after=False):
             break
 
-        insn = (label | assignment | instruction)(ctx, skip_whitespace_after=False, error=(
+        insn = (label | assignment | instruction)(ctx, skip_whitespace_after=False, report=(
             reports.critical,
             (ctx_start, ctx_start, "Could not parse instruction starting from here")
         ))
         insns.append(insn)
 
-    return CodeBlock(ctx_start, ctx, insns)
+    return types.CodeBlock(ctx_start, ctx, insns)
 
 
 def parse(filename, text):
-    return File(filename, code(Context(filename, text), skip_whitespace_after=False))
+    return types.File(filename, code(Context(filename, text), skip_whitespace_after=False))

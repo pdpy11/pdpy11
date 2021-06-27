@@ -147,9 +147,11 @@ disable=print-statement,
         line-too-long,
         no-else-return,
         no-else-raise,
+        no-else-break,
         missing-class-docstring,
         missing-function-docstring,
-        missing-module-docstring
+        missing-module-docstring,
+        no-self-use
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
@@ -396,7 +398,9 @@ good-names=i,
            f,
            n,
            x,
-           fn
+           fn,
+           a,
+           b
 
 # Good variable names regexes, separated by a comma. If names match any regex,
 # they will always be accepted

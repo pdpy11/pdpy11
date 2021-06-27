@@ -1,5 +1,8 @@
-from .compiler import compile_files
+import struct
+
+from .compiler import Compiler
 from .parser import parse
+from . import reports
 
 
 def main():
@@ -10,14 +13,36 @@ def main():
     #     ]
     # )
 
-    path = "/home/ivanq/Documents/k1801vm1/test.mac"
+    path = "/home/ivanq/Documents/k1801vm1/test1.mac"
 
-    with open(path) as f:
-        compile_files(
+    with reports.handle_reports(reports.TextHandler()):
+        with open(path) as f:
+            source = f.read()
+        source = """
+e:
+.repeat b - a {
+    inc r2
+}
+f:
+
+a: mov r0, #1
+b: nop
+
+.repeat f - e {
+    mov r1, r2
+}
+""".strip()
+
+        comp = Compiler()
+        comp.add_files(
             [
-                parse(path, f.read())
+                parse(path, source)
             ]
         )
+
+        base, code = comp.link()
+        with open("result.bin", "wb") as f:
+            f.write(struct.pack("<HH", base, len(code)) + code)
 
 
 main()
