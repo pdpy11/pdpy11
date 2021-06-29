@@ -13,3 +13,7 @@ lint:
 cov:
 	python3 -m coverage run -m pytest tests
 	python3 -m coverage report -m
+
+mut:
+	PYTHONPATH=tests python3 -m mutmut --runner "python3 -m hammett -x" run
+	python3 -m mutmut results
