@@ -19,7 +19,7 @@ def main():
     with reports.handle_reports(reports.TextHandler()):
         with open(path) as f:
             source = f.read()
-            source = "mov: nop"
+            # source = "clr lbl"
             # source = "insn 1:"
             # source = ".ascii \"\\x00\""
 #         source = """
@@ -37,14 +37,15 @@ def main():
 # }
 # """.strip()
 
-        comp = Compiler()
-        comp.add_files(
-            [
-                parse(path, source)
-            ]
-        )
+        with reports.handle_reports(reports.TextHandler()):
+            comp = Compiler()
+            comp.add_files(
+                [
+                    parse(path, source)
+                ]
+            )
+            base, code = comp.link()
 
-        base, code = comp.link()
         with open("result.bin", "wb") as f:
             f.write(struct.pack("<HH", base, len(code)) + code)
 

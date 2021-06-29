@@ -17,7 +17,7 @@ class InfixOperator(ExpressionToken):
         return isinstance(other, type(self)) and (self.lhs, self.rhs) == (other.lhs, other.rhs)
 
     def __repr__(self):
-        return f"{self.lhs} {self.char} {self.rhs}"
+        return f"{self.lhs!r} {self.char} {self.rhs!r}"
 
 
 class PrefixOperator(ExpressionToken):
@@ -29,13 +29,13 @@ class PrefixOperator(ExpressionToken):
         self.operand: ExpressionToken = operand
 
     def resolve(self, state):
-        raise NotImplementedError("PrefixOperator.resolve")
+        return type(self).fn(self.operand.resolve(state))
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and self.operand == rhs.operand
 
     def __repr__(self):
-        return f"{self.char}{self.operand}"
+        return f"{self.char}{self.operand!r}"
 
 
 class PostfixOperator(ExpressionToken):
@@ -47,13 +47,13 @@ class PostfixOperator(ExpressionToken):
         self.operand: ExpressionToken = operand
 
     def resolve(self, state):
-        raise NotImplementedError("PostfixOperator.resolve")
+        return type(self).fn(self.operand.resolve(state))
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and self.operand == rhs.operand
 
     def __repr__(self):
-        return f"{self.operand}{self.char}"
+        return f"{self.operand!r}{self.char}"
 
 
 operators = {
@@ -79,7 +79,7 @@ def operator(signature, precedence, associativity):
         char = signature[1:].strip()
         kind = PostfixOperator
     else:
-        assert False
+        assert False  # pragma: no cover
 
     class Class(kind):
         pass
@@ -153,10 +153,10 @@ class call(ExpressionToken):
         self.operand: ExpressionToken = operand
 
     def __repr__(self):
-        return f"{self.callee}({self.operand})"
+        return f"{self.callee!r}({self.operand!r})"
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and (self.callee, self.operand) == (rhs.callee, rhs.operand)
 
     def resolve(self, state):
-        raise NotImplementedError(f"call.resolve: {self}")
+        raise NotImplementedError(f"call.resolve: {self!r}")

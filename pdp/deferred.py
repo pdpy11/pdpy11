@@ -1,4 +1,7 @@
-class NotReadyError(BaseException):
+from contextlib import contextmanager
+
+
+class NotReadyError(Exception):
     pass
 
 
@@ -14,6 +17,25 @@ def optimize(deferred):
     return deferred
 
 
+class TryCompute:
+    depth = 0
+
+    def __enter__(self):
+        self.depth += 1
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        self.depth -= 1
+        return exc_type is NotReadyError
+
+try_compute = TryCompute()
+
+
+def not_ready():
+    if try_compute.depth > 0:
+        raise NotReadyError()
+
+
 class BaseDeferred:
     def __new__(cls, *args, **kwargs):  # pylint: disable=unused-argument
         if not args or not isinstance(args[0], type):
@@ -24,11 +46,15 @@ class BaseDeferred:
         self.typ: type = typ
 
     @classmethod
+    def construct(cls, *args, **kwargs):
+        return cls(*args, **kwargs)
+
+    @classmethod
     def __class_getitem__(cls, typ):
-        return lambda *args, **kwargs: cls(typ, *args, **kwargs)
+        return lambda *args, **kwargs: cls.construct(typ, *args, **kwargs)
 
     def __len__(self):
-        raise NotReadyError()
+        raise NotImplementedError()
 
     def len(self):
         if self.typ is not bytes:
@@ -79,6 +105,12 @@ class BaseDeferred:
     def __neg__(self):
         return LinearPolynomial[self.typ]({self: -1})
 
+    def __mul__(self, rhs):
+        if self.typ is int and not isinstance(rhs, BaseDeferred):
+            return LinearPolynomial[self.typ]({self: rhs})
+        else:
+            return Deferred[self.typ](lambda: wait(self) * wait(rhs))
+
 
 class Deferred(BaseDeferred):
     def __init__(self, typ, fn):
@@ -89,8 +121,24 @@ class Deferred(BaseDeferred):
         self.instance_id = Deferred.next_instance_id
         Deferred.next_instance_id += 1
 
+    @classmethod
+    def construct(cls, typ, fn):
+        with try_compute:
+            return fn()
+        return cls(typ, fn)
+
     def __repr__(self):
         return f"d{self.instance_id}"
+
+    def len(self):
+        def fn():
+            if not self.settled:
+                self.wait()
+            if isinstance(self.value, BaseDeferred):
+                return wait(self.value.len())
+            else:
+                return len(self.value)
+        return Deferred[int](fn)
 
     def wait(self):
         if self.settled:
@@ -196,19 +244,16 @@ class Concatenator(BaseDeferred):
     def __repr__(self):
         return "+".join(map(repr, self.lst))
 
-    def __len__(self):
-        return sum(map(len, self.lst))
-
     def wait(self):
         return self.typ().join(map(wait, self.lst))
 
     def len(self):
         total_len = 0
         for elem in self.lst:
-            try:
-                total_len += len(elem)
-            except NotReadyError:
+            if isinstance(elem, BaseDeferred):
                 total_len += elem.len()
+            else:
+                total_len += len(elem)
         return total_len
 
     def __add__(self, rhs):
@@ -239,6 +284,12 @@ class SizedDeferred(Deferred):
         super().__init__(typ, fn)
         self.size = size
 
+    @classmethod
+    def construct(cls, typ, size, fn):
+        with try_compute:
+            return fn()
+        return cls(typ, size, fn)
+
     def __len__(self):
         return self.size
 
@@ -253,6 +304,10 @@ class Promise(BaseDeferred):
         self.value = None
         self.settled = False
 
+    @classmethod
+    def construct(cls, typ, name):
+        return cls(typ, name)
+
     def settle(self, value):
         assert not self.settled
         self.value = value
@@ -263,7 +318,8 @@ class Promise(BaseDeferred):
 
     def wait(self):
         if not self.settled:
-            raise NotReadyError()
+            not_ready()
+            raise Exception(f"Promise {self!r} is not ready")
         return self.value
 
     def optimize(self):

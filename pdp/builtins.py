@@ -2,13 +2,13 @@ import inspect
 import struct
 
 from .containers import CaseInsensitiveDict
-from .deferred import Deferred, SizedDeferred, NotReadyError, wait
+from .deferred import Deferred, SizedDeferred, wait, BaseDeferred
 from .types import CodeBlock, String
 from . import operators
 from . import reports
 
 
-def get_as_int(state, what, token, arg_token, bitness, unsigned):
+def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii=False):
     value = wait(arg_token.resolve(state))
     if isinstance(value, int):
         if unsigned and value < 0:
@@ -31,17 +31,23 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned):
             raise reports.RecoverableError("Too large value")
         return value % (2 ** bitness)
     elif isinstance(value, str):
-        if not (isinstance(arg_token, String) and (arg_token.quote == "'" or len(value) == 2)):
+        if recommend_ascii:
             reports.warning(
-                "string-as-number",
-                (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention by " + ("using single quotes ' around the string, a la C." if isinstance(arg_token, String) else "casting the string like this: 'pack(\"...\")'.") + "\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
+                "use-ascii",
+                (arg_token.ctx_start, arg_token.ctx_end, f"Passing a string to metacommand '{token.name.name}', which implicitly converts it\nto a number and then writes back as a series of bytes is not particularly graceful.\nConsider using '.ascii' metacommand instead.")
+            )
+        elif not (isinstance(arg_token, String) and (arg_token.quote == "'" or len(value) == 2)):
+            reports.warning(
+                "implicit-pack",
+                (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention by " + ("using a single quote ', e.g. 'A instead of \"A\"." if isinstance(arg_token, String) and len(value) == 1 else "casting the string like this: 'pack(\"...\")'.") + "\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
             )
         if value == "":
             reports.warning(
-                "string-as-number",
+                "empty-pack",
                 (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug")
             )
-        if len(value) > 2:
+        value = value.encode("koi8-r")
+        if len(value) * 8 > bitness:
             if bitness > 8:
                 reports.error(
                     "too-long-string",
@@ -53,7 +59,11 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned):
                     (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to a single byte to be converted to an integer")
                 )
             raise reports.RecoverableError("Too long string")
-        return int.from_bytes(value.encode("koi8-r").ljust(bitness // 8, b"\x00"), byteorder="little")
+        vlaue = value.ljust(bitness // 8, b"\x00")
+        assert bitness in (8, 16, 32)
+        if bitness == 32:
+            value = value[2:] + value[:2]
+        return int.from_bytes(value, byteorder="little")
     else:
         reports.error(
             "type-mismatch",
@@ -116,7 +126,7 @@ class Metacommand:
             else:
                 reports.error(
                     "wrong-meta-operands",
-                    (insn.ctx_start, insn.ctx_end, f"Metacommand '{insn.name}' expects a code block, but it was not passed")
+                    (insn.ctx_start, insn.ctx_end, f"Metacommand '{insn.name.name}' expects a code block, but it was not passed")
                 )
                 raise reports.RecoverableError("Code block not passed")
 
@@ -130,13 +140,13 @@ class Metacommand:
         if len(insn_operands) < self.min_operands:
             reports.error(
                 "wrong-meta-operands",
-                (insn.ctx_start, insn.ctx_end, f"Too few operands passed to '{insn.name}': {len(insn.operands)} passed, {expectation} expected")
+                (insn.ctx_start, insn.ctx_end, f"Too few operands passed to '{insn.name.name}': {len(insn.operands)} passed, {expectation} expected")
             )
             raise reports.RecoverableError("Too few operands")
         elif len(insn_operands) > self.max_operands:
             reports.error(
                 "wrong-meta-operands",
-                (insn.ctx_start, insn.ctx_end, f"Too many operands passed to '{insn.name}': {len(insn.operands)} passed, {expectation} expected")
+                (insn.ctx_start, insn.ctx_end, f"Too many operands passed to '{insn.name.name}': {len(insn.operands)} passed, {expectation} expected")
             )
             raise reports.RecoverableError("Too many operands")
 
@@ -177,7 +187,7 @@ def metacommand(fn=None, size=None):
 @metacommand(size=lambda state, *operands: len(operands))
 def byte(state, *operands) -> bytes:
     def encode_i8(operand):
-        value = get_as_int(state, "'.byte' operand", state["insn"], operand, 8, False)
+        value = get_as_int(state, "'.byte' operand", state["insn"], operand, bitness=8, unsigned=False, recommend_ascii=True)
         assert -2 ** 8 < value < 2 ** 8
         value %= 2 ** 8
         return struct.pack("<B", value)
@@ -187,7 +197,7 @@ def byte(state, *operands) -> bytes:
 @metacommand(size=lambda state, *operands: 2 * len(operands))
 def word(state, *operands) -> bytes:
     def encode_i16(operand):
-        value = get_as_int(state, "'.word' operand", state["insn"], operand, 16, False)
+        value = get_as_int(state, "'.word' operand", state["insn"], operand, bitness=16, unsigned=False, recommend_ascii=True)
         assert -2 ** 16 < value < 2 ** 16
         value %= 2 ** 16
         return struct.pack("<H", value)
@@ -197,7 +207,7 @@ def word(state, *operands) -> bytes:
 @metacommand(size=lambda state, *operands: 4 * len(operands))
 def dword(state, *operands) -> bytes:
     def encode_i32(operand):
-        value = get_as_int(state, "'.dword' operand", state["insn"], operand, 32, False)
+        value = get_as_int(state, "'.dword' operand", state["insn"], operand, bitness=32, unsigned=False, recommend_ascii=True)
         assert -2 ** 32 < value < 2 ** 32
         value %= 2 ** 32
         return struct.pack("<H", value >> 16) + struct.pack("<H", value & 0xffff)
@@ -217,23 +227,13 @@ def asciz(state, operand) -> bytes:
 
 @metacommand
 def blkb(state, cnt) -> bytes:
-    cnt_val = get_as_int(state, "'.blkb' count", state["insn"], cnt, 16, True)
-    if cnt_val < 0:
-        reports.error(
-            "negative-count",
-            (cnt.ctx_start, cnt.ctx_end, f"Byte count cannot be negative ({cnt_val} given)")
-        )
+    cnt_val = get_as_int(state, "'.blkb' count", state["insn"], cnt, 16, unsigned=True)
     return b"\x00" * cnt_val
 
 
 @metacommand
 def blkw(state, cnt) -> bytes:
-    cnt_val = get_as_int(state, "'.blkw' count", state["insn"], cnt, 16, True)
-    if cnt_val < 0:
-        reports.error(
-            "negative-count",
-            (cnt.ctx_start, cnt.ctx_end, f"Word count cannot be negative ({cnt_val} given)")
-        )
+    cnt_val = get_as_int(state, "'.blkw' count", state["insn"], cnt, 16, unsigned=True)
     return b"\x00\x00" * cnt_val
 
 
@@ -254,9 +254,9 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
         )
     for _ in range(cnt_val):
         chunk = state["compiler"].compile_block(body, addr, "repeat")
-        try:
-            addr += len(chunk)
-        except NotReadyError:
+        if isinstance(chunk, BaseDeferred):
             addr += chunk.len()
+        else:
+            addr += len(chunk)
         result += chunk
     return result

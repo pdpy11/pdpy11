@@ -24,6 +24,7 @@ class Context:
                 if self.pos == -1:
                     self.pos = len(self.code)
             else:
+                _ = 1  # For code coverage. CPython optimizes 'break' away otherwise
                 break
 
 

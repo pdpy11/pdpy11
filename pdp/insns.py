@@ -4,7 +4,7 @@ from .architecture import instruction_opcodes
 from .builtins import get_as_int
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, BaseDeferred, wait
-from .types import Token, Symbol, ParenthesizedExpression, Number
+from .types import Token, Symbol, ParenthesizedExpression, Number, InstructionPointer
 from . import operators
 from . import reports
 
@@ -54,7 +54,7 @@ class RegisterModeOperandStub:
         elif isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
             reports.warning(
                 "implicit-index",
-                (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have @({register}) mode. This expression is parsed as @0({register}), which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for explicitness.")
+                (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have @({register!r}) mode. This expression is parsed as @0({register!r}), which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for explicitness.")
             )
             mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, Number(None, None, "", 0))
         elif isinstance(operand, operators.immediate):
@@ -81,7 +81,7 @@ class OffsetOperandStub:
 
         if isinstance(operand, Number) and operand.representation[-1] != ".":
             operand = Symbol(operand.ctx_start, operand.ctx_end, operand.representation)
-        elif "(" not in repr(operand):
+        elif "(" not in str(operand):
             fixup_active = True
             def fixup_label(token):
                 nonlocal fixup_active
@@ -101,11 +101,11 @@ class OffsetOperandStub:
                             "label-fixup",
                             (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an offset."),
                             (operand.ctx_start, operand.ctx_end, "It's operand is a complex expression."),
-                            (token.ctx_start, token.ctx_end, f"Thus, for compatibility, the first number is treated as a local label.\nFor example, '1 + 2' is parsed as 'address of local label 1 plus two'.\nThis may be unintended, so please state your intent explicitly:\n- if you meant numbers to be numbers, add parentheses around the operand: '({operand})', and\n- if you wanted '{token}' to be a label, add a colon after it: '{token}:'.")
+                            (token.ctx_start, token.ctx_end, f"Thus, for compatibility, the first number is treated as a local label.\nFor example, '1 + 2' is parsed as 'address of local label 1 plus two'.\nThis may be unintended, so please state your intent explicitly:\n- if you meant numbers to be numbers, add parentheses around the operand: '({operand!r})', and\n- if you wanted '{token!r}' to be a label, add a colon after it: '{token!r}:'.")
                         )
                         fixup_active = False
                         return Symbol(token.ctx_start, token.ctx_end, token.representation)
-                elif isinstance(token, Symbol):
+                elif isinstance(token, (Symbol, InstructionPointer)):
                     fixup_active = False
                 return token
             fixup_label(operand)
@@ -228,7 +228,7 @@ class AddressingModes:
         mode_code = 0
 
         def __repr__(self):
-            return repr(self.reg)
+            return f"{self.reg!r}"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.reg == rhs.reg
@@ -238,7 +238,7 @@ class AddressingModes:
         mode_code = 1
 
         def __repr__(self):
-            return f"({self.reg})"
+            return f"({self.reg!r})"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.reg == rhs.reg
@@ -248,7 +248,7 @@ class AddressingModes:
         mode_code = 2
 
         def __repr__(self):
-            return f"({self.reg})+"
+            return f"({self.reg!r})+"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.reg == rhs.reg
@@ -258,7 +258,7 @@ class AddressingModes:
         mode_code = 3
 
         def __repr__(self):
-            return f"@({self.reg})+"
+            return f"@({self.reg!r})+"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.reg == rhs.reg
@@ -268,7 +268,7 @@ class AddressingModes:
         mode_code = 4
 
         def __repr__(self):
-            return f"-({self.reg})"
+            return f"-({self.reg!r})"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.reg == rhs.reg
@@ -278,7 +278,7 @@ class AddressingModes:
         mode_code = 5
 
         def __repr__(self):
-            return f"@-({self.reg})"
+            return f"@-({self.reg!r})"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.reg == rhs.reg
@@ -293,7 +293,7 @@ class AddressingModes:
             self.index = index
 
         def __repr__(self):
-            return f"{self.index}({self.reg})"
+            return f"{self.index!r}({self.reg!r})"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and (self.reg, self.index) == (rhs.reg, rhs.index)
@@ -311,7 +311,7 @@ class AddressingModes:
             self.index = index
 
         def __repr__(self):
-            return f"@{self.index}({self.reg})"
+            return f"@{self.index!r}({self.reg!r})"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and (self.reg, self.index) == (rhs.reg, rhs.index)
@@ -326,7 +326,7 @@ class AddressingModes:
             self.value = value
 
         def __repr__(self):
-            return f"#{self.value}"
+            return f"#{self.value!r}"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.value == rhs.value
@@ -344,7 +344,7 @@ class AddressingModes:
             self.addr = addr
 
         def __repr__(self):
-            return f"@#{self.addr}"
+            return f"@#{self.addr!r}"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.addr == rhs.addr
@@ -362,7 +362,7 @@ class AddressingModes:
             self.addr: Token = addr
 
         def __repr__(self):
-            return f"{self.addr}"
+            return f"{self.addr!r}"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.addr == rhs.addr
@@ -380,7 +380,7 @@ class AddressingModes:
             self.addr = addr
 
         def __repr__(self):
-            return f"@{self.addr}"
+            return f"@{self.addr!r}"
 
         def __eq__(self, rhs):
             return isinstance(rhs, type(self)) and self.addr == rhs.addr

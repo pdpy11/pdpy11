@@ -1,4 +1,5 @@
 from .context import Context
+from .deferred import Deferred, not_ready
 from . import reports
 
 
@@ -13,13 +14,15 @@ class Token:
     def init(self):
         pass
 
-    def token_text(self):
+    def __str__(self):
         return self.ctx_start.code[self.ctx_start.pos:self.ctx_end.pos]
+
+    def __eq__(self, rhs):
+        raise NotImplementedError()  # pragma: no cover
 
 
 class ExpressionToken(Token):
     def resolve(self, state):
-        # Abstract method, should be redefined
         raise NotImplementedError()  # pragma: no cover
 
 
@@ -30,10 +33,17 @@ class Instruction(Token):
         self.operands = operands
 
     def __repr__(self):
-        if self.operands:
-            return f"{self.name} {', '.join(map(repr, self.operands))}"
-        else:
-            return f"{self.name}"
+        res = f"{self.name!r}"
+
+        operands = self.operands[:]
+        code_block = None
+        if operands and isinstance(operands[-1], CodeBlock):
+            code_block = operands.pop()
+        if operands:
+            res += " " + ", ".join(map(repr, operands))
+        if code_block is not None:
+            res += " " + repr(code_block)
+        return res
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and (self.name, self.operands) == (rhs.name, rhs.operands)
@@ -56,7 +66,7 @@ class ParenthesizedExpression(ExpressionToken):
         self.expr = expr
 
     def __repr__(self):
-        return f"({self.expr})"
+        return f"({self.expr!r})"
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and self.expr == rhs.expr
@@ -88,6 +98,7 @@ class Symbol(ExpressionToken):
         elif self.name in state["local_symbols"]:
             symbol, value = state["local_symbols"][self.name]
         else:
+            not_ready()
             # TODO: check if there's a local symbol with the same name defined out of scope
             reports.error(
                 "undefined-symbol",
@@ -119,7 +130,7 @@ class Assignment(Token):
         self.value = value
 
     def __repr__(self):
-        return f"{self.name} = {self.value}"
+        return f"{self.name!r} = {self.value!r}"
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and (self.name, self.value) == (rhs.name, rhs.value)
@@ -144,7 +155,7 @@ class String(ExpressionToken):
         self.string: str = string
 
     def __repr__(self):
-        return f"{self.quote}{self.string}{self.quote}"
+        return self.quote + self.string + ("" if self.quote == "'" else self.quote)
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and self.string == rhs.string
@@ -183,7 +194,7 @@ class File:
         self.body = body
 
     def __repr__(self):
-        return f"<{self.filename}> {self.body}"
+        return f"<{self.filename}> {self.body!r}"
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and (self.filename, self.body) == (rhs.filename, rhs.body)

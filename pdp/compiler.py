@@ -1,6 +1,6 @@
 from .builtins import builtins
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, NotReadyError, wait
+from .deferred import Promise, wait, Deferred, BaseDeferred
 from .types import Instruction, Label, Assignment
 from . import reports
 
@@ -26,6 +26,11 @@ class Compiler:
 
         for insn in block.insns:
             if isinstance(insn, Instruction) and insn.name.name.lower() in (".end", "end"):
+                if insn.name.name.lower() == "end":
+                    reports.warning(
+                        "meta-typo",
+                        (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is not a metacommand by itself, but '.{insn.name.name}' is.\nPlease be explicit and add a dot."),
+                    )       
                 break
 
             state = {"emit_address": addr, "local_symbols": local_symbols, "compiler": self}
@@ -33,10 +38,10 @@ class Compiler:
                 chunk = self.compile_insn(insn, state)
                 if chunk is not None:
                     data += chunk
-                    try:
-                        addr += len(chunk)
-                    except NotReadyError:
+                    if isinstance(chunk, BaseDeferred):
                         addr += chunk.len()
+                    else:
+                        addr += len(chunk)
 
             elif isinstance(insn, Label):
                 if context == "repeat":
@@ -108,14 +113,14 @@ class Compiler:
             symbol, _ = self.symbols[insn.name.name]
             if isinstance(symbol, Label):
                 reports.error(
-                    "unknown-insn",
+                    "meta-type-mismatch",
                     (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
                     (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. " + reports.terminal_link("Are you looking for macros?", "https://pdpy.github.io/macros"))
                 )
                 return None
             elif isinstance(symbol, Assignment):
                 reports.error(
-                    "unknown-insn",
+                    "meta-type-mismatch",
                     (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
                     (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. " + reports.terminal_link("You may be looking for MACRO-11 macros.", "https://pdpy.github.io/macros") + "\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
                 )
@@ -135,20 +140,18 @@ class Compiler:
     def add_files(self, files_ast):
         self.files += files_ast
 
-        with reports.handle_reports(reports.TextHandler()):
-            for file_ast in files_ast:
-                data = self.compile_file(file_ast, self.cur_emit_location)
-                self.generated_code += data
-                try:
-                    self.cur_emit_location += len(data)
-                except NotReadyError:
-                    self.cur_emit_location += data.len()
+        for file_ast in files_ast:
+            data = self.compile_file(file_ast, self.cur_emit_location)
+            self.generated_code += data
+            if isinstance(data, BaseDeferred):
+                self.cur_emit_location += data.len()
+            else:
+                self.cur_emit_location += len(data)
 
 
     def link(self):
         if not self.link_base.settled:
             self.link_base.settle(0o1000)  # TODO: maybe report a warning?
 
-        with reports.handle_reports(reports.TextHandler()):
-            code = wait(self.generated_code)
-            return (wait(self.link_base), code)
+        code = wait(self.generated_code)
+        return (wait(self.link_base), code)

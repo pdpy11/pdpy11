@@ -123,8 +123,7 @@ class Parser:
 
     @classmethod
     def regex(cls, regex, skip_whitespace_before=True):
-        if not isinstance(regex, re.Pattern):
-            regex = re.compile(regex)
+        regex = re.compile(regex)
         def fn(ctx):
             if skip_whitespace_before:
                 ctx.skip_whitespace()
@@ -158,21 +157,21 @@ def eof(ctx):
 
 
 newline = Parser.regex(r"\s*\n|\s*;[^\n]*", skip_whitespace_before=False)
-comma = Parser.regex(r",")
-opening_parenthesis = Parser.regex(r"\(")
-closing_parenthesis = Parser.regex(r"\)")
-opening_bracket = Parser.regex(r"{")
-closing_bracket = Parser.regex(r"}")
-plus = Parser.regex(r"\+")
-minus = Parser.regex(r"-")
-colon = Parser.regex(r":")
-at_sign = Parser.regex(r"@")
-hash_sign = Parser.regex(r"#")
-equals_sign = Parser.regex(r"=")
-single_quote = Parser.regex("'")
-string_quote = Parser.regex("\"")
+comma = Parser.literal(",")
+opening_parenthesis = Parser.literal("(")
+closing_parenthesis = Parser.literal(")")
+opening_bracket = Parser.literal("{")
+closing_bracket = Parser.literal("}")
+plus = Parser.literal("+")
+minus = Parser.literal("-")
+colon = Parser.literal(":")
+at_sign = Parser.literal("@")
+hash_sign = Parser.literal("#")
+equals_sign = Parser.literal("=")
+single_quote = Parser.literal("'")
+string_quote = Parser.literal("\"")
 character = Parser.regex(r"[\s\S]", skip_whitespace_before=False)
-string_backslash = Parser.regex(r"\\", skip_whitespace_before=False)
+string_backslash = Parser.literal("\\", skip_whitespace_before=False)
 
 
 local_symbol_literal = Parser.regex(r"\d[a-zA-Z_0-9$]*")
@@ -296,7 +295,7 @@ def assignment(ctx):
     elif symbol.lower() in REGISTER_NAMES:
         reports.warning(
             "suspicious-name",
-            (ctx_start, ctx_after_symbol, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value.token_text()}, {symbol}'? " + reports.terminal_link("Read an intro on PDP-11 assembly.", "https://pdpy.github.io/intro"))
+            (ctx_start, ctx_after_symbol, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'? " + reports.terminal_link("Read an intro on PDP-11 assembly.", "https://pdpy.github.io/intro"))
         )
 
     return types.Assignment(ctx_start, ctx, types.Symbol(ctx_start, ctx_after_symbol, symbol), value)
@@ -385,7 +384,7 @@ def character_string(ctx):
 
     if ctx.pos == len(ctx.code):
         reports.critical(
-            "invalid-character",
+            "unterminated-string",
             (ctx_start, ctx, "Unterminated string literal")
         )
 
@@ -416,7 +415,7 @@ def string(ctx):
 
     if ctx.pos == len(ctx.code):
         reports.critical(
-            "invalid-string",
+            "unterminated-string",
             (ctx_start, ctx, "Unterminated string literal")
         )
 
@@ -594,9 +593,8 @@ def instruction(ctx):
         )
 
     with goto:
-        if newline(ctx, maybe=True):
-            # The recommended way to separate instructions is using newlines,
-            # e.g.
+        if (newline | closing_bracket)(ctx, maybe=True, lookahead=True):
+            # The recommended way to separate instructions is by newlines, e.g.
             #     mov r0, r1
             #     nop
             #     add r1, r2
@@ -611,9 +609,6 @@ def instruction(ctx):
             # to look like the next instruction.
             raise goto
 
-        if closing_bracket(ctx, maybe=True, lookahead=True):
-            raise goto
-
         name = (instruction_name + ~colon)(ctx, maybe=True, lookahead=True)
         if name in COMMON_BUILTIN_INSTRUCTION_NAMES or name in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
             ctx_new = ctx.save()
@@ -626,7 +621,7 @@ def instruction(ctx):
                     (ctx_start, ctx_state_after_name, "There is no newline after the name of this instruction, hence an operand must follow,"),
                     (ctx_before_insn, ctx_new, f"but it suspiciously resembles another instruction.\nYou probably \x1b[3mmeant\x1b[23m an instruction '{insn_name}' without operands followed by a '{next_insn_name}' instruction,\nand pdpy will compile this code as such, but this is against standards; please add a newline between instructions.")
                 )
-            raise goto
+                raise goto
 
         first_operand = expression(ctx, maybe=True)
 
@@ -666,19 +661,12 @@ def instruction(ctx):
                 )
         else:
             if ctx_state_after_name.pos < len(ctx.code):
-                if "\n" not in ctx.code[ctx_state_after_name.pos:ctx.pos]:
-                    ctx.skip_whitespace()
-                    reports.warning(
-                        "missing-newline",
-                        (ctx, ctx, "Could not parse an operand starting from here; assuming a new instruction.\nPlease add a newline here if an instruction was implied."),
-                        (ctx_start, ctx_state_after_name, "The previous instruction started here")
-                    )
-
-                if ctx.code[ctx_state_after_name.pos].strip() != "":
-                    reports.error(
-                        "missing-whitespace",
-                        (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that another instruction follows.")
-                    )
+                ctx.skip_whitespace()
+                reports.warning(
+                    "missing-newline",
+                    (ctx, ctx, "Could not parse an operand starting from here; assuming a new instruction.\nPlease add a newline here if an instruction was implied."),
+                    (ctx_start, ctx_state_after_name, "The previous instruction started here")
+                )
 
     return types.Instruction(ctx_start, ctx, types.Symbol(ctx_start, ctx_state_after_name, insn_name), operands)
 
