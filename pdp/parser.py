@@ -51,7 +51,7 @@ class Parser:
     def either(cls, parsers):
         def fn(ctx):
             for parser in parsers:
-                if (result := parser(ctx, maybe=True, skip_whitespace_after=False)) is not None:
+                if (result := parser(ctx, maybe=True)) is not None:
                     return result
             raise reports.RecoverableError("Failed to match either of the alternatives")
         return cls(fn)
@@ -60,51 +60,52 @@ class Parser:
     def __or__(self, rhs):
         assert isinstance(rhs, Parser)
         def fn(ctx):
-            if (result := self(ctx, maybe=True, skip_whitespace_after=False)) is not None:
+            if (result := self(ctx, maybe=True)) is not None:
                 return result
-            return rhs(ctx, skip_whitespace_after=False)
+            return rhs(ctx)
         return Parser(fn)
 
 
     def __add__(self, rhs):
         assert isinstance(rhs, Parser)
         def fn(ctx):
-            result = self(ctx, skip_whitespace_after=False)
-            rhs(ctx, skip_whitespace_after=False)
+            result = self(ctx)
+            rhs(ctx)
             return result
         return Parser(fn)
 
 
-    def __rshift__(self, rhs):
+    def __invert__(self):
         def fn(ctx):
-            if callable(rhs):
-                ctx_start = ctx.save()
-                ctx_start.skip_whitespace()
-                result = self(ctx, skip_whitespace_after=False)
-                return rhs(ctx_start, ctx, result)
-            else:
-                self(ctx, skip_whitespace_after=False)
-                return rhs
+            if self(ctx, maybe=True):
+                raise reports.RecoverableError("An unexpected match happened")
+            return ""
         return Parser(fn)
 
 
-    def __call__(self, ctx, *, maybe=False, skip_whitespace_after=False, lookahead=False, report=None, **kwargs):
-        if maybe or lookahead:
+    # def __rshift__(self, rhs):
+    #     def fn(ctx):
+    #         ctx_start = ctx.save()
+    #         ctx_start.skip_whitespace()
+    #         result = self(ctx)
+    #         return rhs(ctx_start, ctx, result)
+    #     return Parser(fn)
+
+
+    def __call__(self, ctx, *, maybe=False, lookahead=False, report=None, **kwargs):
+        if lookahead:
+            assert maybe
+        if maybe:
             old_ctx = ctx.save()
             try:
                 result = self.fn(ctx, **kwargs)
                 assert result is not None
             except reports.RecoverableError:
-                if maybe:
-                    ctx.restore(old_ctx)
-                    return None
-                else:
-                    raise
+                ctx.restore(old_ctx)
+                return None
             else:
                 if lookahead:
                     ctx.restore(old_ctx)
-                elif skip_whitespace_after:
-                    ctx.skip_whitespace()
                 return result
         else:
             try:
@@ -114,15 +115,10 @@ class Parser:
             except reports.RecoverableError:
                 if report is None:
                     raise
-                elif callable(report):
-                    report()
-                    return None
                 else:
                     reports.emit_report(*report)
-                    return None
-            else:
-                if skip_whitespace_after:
-                    ctx.skip_whitespace()
+                    # unreachable
+                    assert False  # pragma: no cover
 
 
     @classmethod
@@ -173,14 +169,70 @@ colon = Parser.regex(r":")
 at_sign = Parser.regex(r"@")
 hash_sign = Parser.regex(r"#")
 equals_sign = Parser.regex(r"=")
-quote = Parser.regex("[\"']")
+single_quote = Parser.regex("'")
+string_quote = Parser.regex("\"")
+character = Parser.regex(r"[\s\S]", skip_whitespace_before=False)
+string_backslash = Parser.regex(r"\\", skip_whitespace_before=False)
 
 
-local_symbol_literal = Parser.regex(r"[0-9][a-zA-Z_0-9$]*")
+local_symbol_literal = Parser.regex(r"\d[a-zA-Z_0-9$]*")
 symbol_literal = Parser.regex(r"[a-zA-Z_$][a-zA-Z_0-9$]*")
 instruction_name = Parser.regex(r"\.?[a-zA-Z_][a-zA-Z_0-9]*")
 
-number = Parser.regex(r"-?\d+\.?") >> types.Number
+
+@Parser
+def number(ctx):
+    negative = minus(ctx, maybe=True)
+    sign = -1 if negative else 1
+    sign_str = "-" if negative else ""
+
+    ctx.skip_whitespace()
+    ctx_start = ctx.save()
+
+    first_digit = Parser.regex(r"\d")(ctx)
+
+    boundary = r"(?![$_])\b"
+
+    if first_digit == "0":
+        if Parser.regex(r"[xX]", skip_whitespace_before=False)(ctx, maybe=True):
+            # Hexadecimal number
+            num = Parser.regex(rf"[0-9a-fA-F]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+                reports.critical,
+                "invalid-number",
+                (ctx_start, ctx, "A hexadecimal number was expected after '0x'")
+            ))
+            return types.Number(ctx_start, ctx, f"{sign_str}0x{num}", int(num, 16) * sign)
+        elif Parser.regex(rf"[oO]", skip_whitespace_before=False)(ctx, maybe=True):
+            # Octal number
+            num = Parser.regex(rf"[0-7]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+                reports.critical,
+                "invalid-number",
+                (ctx_start, ctx, "An octal number was expected after '0o'")
+            ))
+            return types.Number(ctx_start, ctx, f"{sign_str}0o{num}", int(num, 8) * sign)
+        elif Parser.regex(rf"[bB]", skip_whitespace_before=False)(ctx, maybe=True):
+            # Binary number
+            num = Parser.regex(rf"[01]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+                reports.critical,
+                "invalid-number",
+                (ctx_start, ctx, "A binary number was expected after '0b'")
+            ))
+            return types.Number(ctx_start, ctx, f"{sign_str}0b{num}", int(num, 2) * sign)
+
+    # This may be a local label, so better not be strict
+    num = Parser.regex(rf"\d*(\.|{boundary})", skip_whitespace_before=False)(ctx)
+    num = first_digit + num
+
+    if num.endswith("."):
+        return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num[:-1], 10) * sign)
+
+    if colon(ctx, maybe=True):
+        raise reports.RecoverableError("Local label, not a number")
+
+    if "8" in num or "9" in num:
+        return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num, 10) * sign, invalid_base8=True)
+
+    return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num, 8) * sign)
 
 
 @Parser
@@ -193,15 +245,18 @@ def label(ctx):
 
     if name.lower() in COMMON_BUILTIN_INSTRUCTION_NAMES:
         reports.warning(
+            "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction")
         )
     elif name.lower() in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
         reports.warning(
+            "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[name.lower()])
         )
     elif name.lower() in REGISTER_NAMES:
-        reports.error(
-            (ctx_start, ctx, "Label name clashes with a register.\nYou won't be able to access this label because every usage would be parsed as a register")
+        reports.warning(
+            "suspicious-name",
+            (ctx_start, ctx, "Label name clashes with a register.\nYou won't be able to access this label because every usage would be parsed as a register.")
         )
 
     return types.Label(ctx_start, ctx, name)
@@ -212,35 +267,39 @@ def assignment(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    symbol = symbol_literal(ctx, skip_whitespace_after=False)
+    symbol = symbol_literal(ctx)
     ctx_after_symbol = ctx.save()
     ctx.skip_whitespace()
 
     ctx_equals = ctx.save()
-    equals_sign(ctx, skip_whitespace_after=False)
+    equals_sign(ctx)
     ctx_after_equals = ctx.save()
     ctx.skip_whitespace()
 
-    value = expression(ctx, skip_whitespace_after=False, report=(
+    value = expression(ctx, report=(
         reports.critical,
+        "invalid-assignment",
         (ctx_equals, ctx_after_equals, "An equals sign '=' must be followed by an expression (as in assignment)"),
         (ctx, ctx, "...yet no expression was matched here")
     ))
 
     if symbol.lower() in COMMON_BUILTIN_INSTRUCTION_NAMES:
         reports.warning(
+            "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction")
         )
     elif symbol.lower() in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
         reports.warning(
+            "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[symbol.lower()])
         )
     elif symbol.lower() in REGISTER_NAMES:
-        reports.error(
+        reports.warning(
+            "suspicious-name",
             (ctx_start, ctx_after_symbol, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value.token_text()}, {symbol}'? " + reports.terminal_link("Read an intro on PDP-11 assembly.", "https://pdpy.github.io/intro"))
         )
 
-    return types.Assignment(ctx_start, ctx, symbol, value)
+    return types.Assignment(ctx_start, ctx, types.Symbol(ctx_start, ctx_after_symbol, symbol), value)
 
 
 @Parser
@@ -248,17 +307,23 @@ def symbol_expression(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    symbol = symbol_literal(ctx, skip_whitespace_after=False)
+    symbol = symbol_literal(ctx)
     if symbol.lower() in COMMON_BUILTIN_INSTRUCTION_NAMES:
         reports.warning(
-            (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it")
+            "suspicious-name",
+            (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it.")
         )
     elif symbol.lower() in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
         reports.warning(
+            "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[symbol.lower()])
         )
 
-    colon(ctx, maybe=True, skip_whitespace_after=False)
+    if colon(ctx, maybe=True) and symbol.lower() in REGISTER_NAMES:
+        reports.warning(
+            "suspicious-name",
+            (ctx_start, ctx, "This symbol suspiciously resembles a register, but is parsed as a label.")
+        )
 
     return types.Symbol(ctx_start, ctx, symbol)
 
@@ -267,19 +332,75 @@ def symbol_expression(ctx):
 def local_symbol_expression(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
-    symbol = local_symbol_literal(ctx, skip_whitespace_after=False)
-    colon(ctx, skip_whitespace_after=False)
+    symbol = local_symbol_literal(ctx)
+    colon(ctx, maybe=not symbol.isdigit())
     return types.Symbol(ctx_start, ctx, symbol)
 
 
-string_char = (
-    (Parser.regex(r"\\n", skip_whitespace_before=False) >> "\n")
-    | (Parser.regex(r"\\r", skip_whitespace_before=False) >> "\r")
-    | (Parser.regex(r"\\t", skip_whitespace_before=False) >> "\t")
-    | (Parser.regex(r"\\\\", skip_whitespace_before=False) >> "\\")
-    | (Parser.regex(r"\\\n", skip_whitespace_before=False) >> "")
-    | Parser.regex(r".", skip_whitespace_before=False)
-)
+@Parser
+def string_escape(ctx):
+    ctx_start = ctx.save()
+
+    string_backslash(ctx)
+
+    char = character(ctx, report=(
+        reports.error,
+        "invalid-escape",
+        (ctx_start, ctx, "A letter is expected after a backslash '\\' in a string")
+    )).lower()
+
+    if char == "n":
+        return "\n"
+    elif char == "r":
+        return "\r"
+    elif char == "t":
+        return "\t"
+    elif char in "\\\"'/":
+        return char
+    elif char == "\n":
+        return ""
+    elif char == "x":
+        code = Parser.regex(r"[0-9a-fA-F]{2}")(ctx, report=(
+            reports.error,
+            "invalid-escape",
+            (ctx_start, ctx, "Two hexadecimal digits are expected after '\\x' in a string")
+        ))
+        return chr(int(code, 16))
+    else:
+        reports.error(
+            "invalid-escape",
+            (ctx_start, ctx, f"Unknown escape '\\{char}' in a string")
+        )
+        return ""
+
+string_char = string_escape | character
+
+
+@Parser
+def character_string(ctx):
+    ctx.skip_whitespace()
+    ctx_start = ctx.save()
+
+    single_quote(ctx)
+
+    if ctx.pos == len(ctx.code):
+        reports.critical(
+            "invalid-character",
+            (ctx_start, ctx, "Unterminated string literal")
+        )
+
+    value = ""
+    if ctx.code[ctx.pos] != "'":
+        value += string_char(ctx)
+
+    if ctx.pos < len(ctx.code) and ctx.code[ctx.pos] == "'":
+        single_quote(ctx)
+        reports.error(
+            "invalid-character",
+            (ctx_start, ctx, "Single quotation mark denotes not a string, but a character.\nUnlike C, a character must not be terminated by a single quotation mark.\nFor example, 'a should be used instead of 'a'. Please remove the second quotation mark.")
+        )
+
+    return types.String(ctx_start, ctx, "'", value)
 
 
 @Parser
@@ -287,14 +408,15 @@ def string(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    quotation_sign = quote(ctx, skip_whitespace_after=False)
+    quotation_sign = string_quote(ctx)
 
     value = ""
     while ctx.pos < len(ctx.code) and ctx.code[ctx.pos] != quotation_sign:
-        value += string_char(ctx, skip_whitespace_after=False)
+        value += string_char(ctx)
 
     if ctx.pos == len(ctx.code):
         reports.critical(
+            "invalid-string",
             (ctx_start, ctx, "Unterminated string literal")
         )
 
@@ -306,10 +428,10 @@ def string(ctx):
 def instruction_pointer(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
-    Parser.regex(r"\.(?![a-zA-Z_0-9])")(ctx, skip_whitespace_after=False)
+    Parser.regex(r"\.(?![a-zA-Z_0-9])")(ctx)
     return types.InstructionPointer(ctx_start, ctx)
 
-expression_literal = symbol_expression | local_symbol_expression | number | string | instruction_pointer
+expression_literal = symbol_expression | number | local_symbol_expression | character_string | string | instruction_pointer
 
 infix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.InfixOperator]])
 prefix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PrefixOperator]])
@@ -321,24 +443,28 @@ def expression_literal_rec(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    if opening_parenthesis(ctx, maybe=True, lookahead=True, skip_whitespace_after=False):
+    if opening_parenthesis(ctx, maybe=True, lookahead=True):
         value = None
     else:
-        value = expression_literal(ctx, skip_whitespace_after=False)
+        value = expression_literal(ctx)
 
-    while opening_parenthesis(ctx, maybe=True, skip_whitespace_after=False):
+    while opening_parenthesis(ctx, maybe=True):
         ctx_after_paren = ctx.save()
         ctx.skip_whitespace()
 
-        expr = expression(ctx, skip_whitespace_after=True, report=(
+        expr = expression(ctx, report=(
             reports.critical,
+            "invalid-expression",
             (ctx, ctx, "Could not parse an expression here"),
             (ctx_start, ctx_after_paren, "...as expected after an opening parenthesis here")
         ))
 
-        closing_parenthesis(ctx, skip_whitespace_after=False, report=(
+        ctx.skip_whitespace()
+
+        closing_parenthesis(ctx, report=(
             reports.critical,
-            (ctx, ctx, "Expected a closing parenthesis here"),
+            "invalid-expression",
+            (ctx, ctx, "This is not a operator, so a closing parenthesis is expected here"),
             (ctx_start, ctx_after_paren, "...to match an opening parenthesis here")
         ))
 
@@ -355,12 +481,18 @@ def expression(ctx):
     op_stack = []
 
     ctx.skip_whitespace()
+    ctx_start = ctx.save()
     ctx_op = ctx.save()
 
     # Try to match a full expression before matching a prefix operator, so that
     # -1 is parsed as -1, not -(1)
-    while (expr := expression_literal_rec(ctx, maybe=True, skip_whitespace_after=False)) is None:
-        char = prefix_operator(ctx, skip_whitespace_after=False)
+    while (expr := expression_literal_rec(ctx, maybe=True)) is None:
+        char = prefix_operator(ctx, report=(
+            reports.critical,
+            "invalid-expression",
+            (ctx, ctx, "Expected an expression or an operator here"),
+            (ctx_start, ctx, "...after a prefix here")
+        ) if op_stack else None)
         op_stack.append({
             "ctx_start": ctx_op,
             "operator": operators.operators[operators.PrefixOperator][char]
@@ -391,21 +523,22 @@ def expression(ctx):
         char = (postfix_operator + (newline | comma | closing_parenthesis | closing_bracket | eof))(ctx, maybe=True, lookahead=True)
         if char:
             # Postfix operator
-            postfix_operator(ctx, skip_whitespace_after=False)
+            postfix_operator(ctx)
             ctx_op_end = ctx.save()
 
             operator = operators.operators[operators.PostfixOperator][char]
 
             self_precedence = operator.precedence
+            is_left_associative = operator.associativity == "left"
 
-            while op_stack and self_precedence > op_stack[-1]["operator"].precedence:
+            while op_stack and (self_precedence, is_left_associative) > (op_stack[-1]["operator"].precedence, False):
                 pop_op_stack(ctx_prev)
 
             stack[-1] = operator(ctx_op, ctx_op_end, stack[-1])
             break
         else:
             # Must be an infix operator
-            char = infix_operator(ctx, maybe=True, skip_whitespace_after=False)
+            char = infix_operator(ctx, maybe=True)
             if not char:
                 ctx.restore(ctx_prev)
                 break
@@ -414,8 +547,9 @@ def expression(ctx):
 
             operator = operators.operators[operators.InfixOperator][char]
 
-            expr = expression_literal_rec(ctx, skip_whitespace_after=True, report=(
+            expr = expression_literal_rec(ctx, report=(
                 reports.critical,
+                "invalid-expression",
                 (ctx, ctx, "Could not parse an expression here"),
                 (ctx_op, ctx_op_end, f"...as expected after operator '{char}'")
             ))
@@ -440,9 +574,10 @@ def expression(ctx):
 @Parser
 def instruction(ctx):
     ctx_start = ctx.save()
-    insn_name = instruction_name(ctx, skip_whitespace_after=False)
+    insn_name = instruction_name(ctx)
     if insn_name.lower() in REGISTER_NAMES:
         reports.warning(
+            "suspicious-name",
             (ctx_start, ctx, "Instruction name suspiciously resembles a register.\nCheck for an excess newline or a missing comma before the register name")
         )
     ctx_state_after_name = ctx.save()
@@ -451,14 +586,15 @@ def instruction(ctx):
 
     if comma(ctx, maybe=True, lookahead=True):
         ctx_before_comma = ctx.save()
-        comma(ctx, skip_whitespace_after=False)
+        comma(ctx)
         reports.critical(
+            "invalid-insn",
             (ctx_before_comma, ctx, "Unexpected comma right after instruction name; expected an operand"),
             (ctx_start, ctx_state_after_name, "Instruction started here")
         )
 
     with goto:
-        if newline(ctx, maybe=True, skip_whitespace_after=False):
+        if newline(ctx, maybe=True):
             # The recommended way to separate instructions is using newlines,
             # e.g.
             #     mov r0, r1
@@ -478,33 +614,38 @@ def instruction(ctx):
         if closing_bracket(ctx, maybe=True, lookahead=True):
             raise goto
 
-        if instruction_name(ctx, maybe=True, lookahead=True) in COMMON_BUILTIN_INSTRUCTION_NAMES:
+        name = (instruction_name + ~colon)(ctx, maybe=True, lookahead=True)
+        if name in COMMON_BUILTIN_INSTRUCTION_NAMES or name in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
             ctx_new = ctx.save()
             ctx_new.skip_whitespace()
             ctx_before_insn = ctx_new.save()
-            next_insn_name = instruction_name(ctx_new, skip_whitespace_after=False)
-            if not comma(ctx_new, maybe=True, lookahead=True):
+            next_insn_name = instruction_name(ctx_new)
+            if not (comma | newline | infix_operator | postfix_operator)(ctx_new, maybe=True, lookahead=True):
                 reports.warning(
+                    "missing-newline",
                     (ctx_start, ctx_state_after_name, "There is no newline after the name of this instruction, hence an operand must follow,"),
                     (ctx_before_insn, ctx_new, f"but it suspiciously resembles another instruction.\nYou probably \x1b[3mmeant\x1b[23m an instruction '{insn_name}' without operands followed by a '{next_insn_name}' instruction,\nand pdpy will compile this code as such, but this is against standards; please add a newline between instructions.")
                 )
             raise goto
 
-        first_operand = expression(ctx, maybe=True, skip_whitespace_after=False)
+        first_operand = expression(ctx, maybe=True)
+
         if first_operand:
-            if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
+            if ctx.code[ctx_state_after_name.pos].strip() != "":
                 reports.error(
-                    (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Moving on on assumption that an operand follows")
+                    "missing-whitespace",
+                    (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that an operand follows.")
                 )
 
             operands = [first_operand]
 
             ctx_before_comma = ctx.save()
-            while comma(ctx, maybe=True, skip_whitespace_after=False):
+            while comma(ctx, maybe=True):
                 ctx_after_comma = ctx.save()
                 ctx.skip_whitespace()
-                oper = expression(ctx, skip_whitespace_after=False, report=(
+                oper = expression(ctx, report=(
                     reports.critical,
+                    "invalid-operand",
                     (ctx_before_comma, ctx_after_comma, "Expected operand after comma in an instruction"),
                     (ctx_start, ctx_state_after_name, "(instruction started here)"),
                     (ctx, ctx, "This definitely does not look like an operand")
@@ -513,27 +654,31 @@ def instruction(ctx):
                 ctx_before_comma = ctx.save()
 
             ctx_opening_bracket = ctx.save()
-            if opening_bracket(ctx, maybe=True, skip_whitespace_after=False):
-                oper = code(ctx, break_on_closing_bracket=True, skip_whitespace_after=False)
+            if opening_bracket(ctx, maybe=True):
+                oper = code(ctx, break_on_closing_bracket=True)
                 oper.ctx = ctx_opening_bracket
                 operands.append(oper)
 
-            if ctx.pos < len(ctx.code) and ctx.code[ctx.pos].strip() != "":
+            if ctx.pos < len(ctx.code) and ctx.code[ctx.pos].strip() not in ("", ";"):
                 reports.error(
+                    "missing-whitespace",
                     (ctx, ctx, "Expected whitespace after instruction. Proceeding as if a new instruction is starting")
                 )
         else:
-            if ctx_state_after_name.pos < len(ctx.code) and "\n" not in ctx.code[ctx_state_after_name.pos:ctx.pos]:
-                ctx.skip_whitespace()
-                reports.warning(
-                    (ctx, ctx, "Could not parse an operand starting from here; assuming a new instruction.\nPlease add a newline here if an instruction was implied"),
-                    (ctx_start, ctx_state_after_name, "The previous instruction started here")
-                )
+            if ctx_state_after_name.pos < len(ctx.code):
+                if "\n" not in ctx.code[ctx_state_after_name.pos:ctx.pos]:
+                    ctx.skip_whitespace()
+                    reports.warning(
+                        "missing-newline",
+                        (ctx, ctx, "Could not parse an operand starting from here; assuming a new instruction.\nPlease add a newline here if an instruction was implied."),
+                        (ctx_start, ctx_state_after_name, "The previous instruction started here")
+                    )
 
-            if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
-                reports.error(
-                    (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that another instruction follows")
-                )
+                if ctx.code[ctx_state_after_name.pos].strip() != "":
+                    reports.error(
+                        "missing-whitespace",
+                        (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that another instruction follows.")
+                    )
 
     return types.Instruction(ctx_start, ctx, types.Symbol(ctx_start, ctx_state_after_name, insn_name), operands)
 
@@ -547,11 +692,12 @@ def code(ctx, break_on_closing_bracket=False):
     while not ctx.eof():
         ctx.skip_whitespace()
         ctx_start = ctx.save()
-        if break_on_closing_bracket and closing_bracket(ctx, maybe=True, skip_whitespace_after=False):
+        if break_on_closing_bracket and closing_bracket(ctx, maybe=True):
             break
 
-        insn = (label | assignment | instruction)(ctx, skip_whitespace_after=False, report=(
+        insn = (label | assignment | instruction)(ctx, report=(
             reports.critical,
+            "invalid-insn",
             (ctx_start, ctx_start, "Could not parse instruction starting from here")
         ))
         insns.append(insn)
@@ -560,4 +706,4 @@ def code(ctx, break_on_closing_bracket=False):
 
 
 def parse(filename, text):
-    return types.File(filename, code(Context(filename, text), skip_whitespace_after=False))
+    return types.File(filename, code(Context(filename, text)))

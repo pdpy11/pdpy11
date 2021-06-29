@@ -13,25 +13,29 @@ def main():
     #     ]
     # )
 
-    path = "/home/ivanq/Documents/k1801vm1/test1.mac"
+    # path = "/home/ivanq/Documents/k1801vm1/test.mac"
+    path = "test.mac"
 
     with reports.handle_reports(reports.TextHandler()):
         with open(path) as f:
             source = f.read()
-        source = """
-e:
-.repeat b - a {
-    inc r2
-}
-f:
+            source = "mov: nop"
+            # source = "insn 1:"
+            # source = ".ascii \"\\x00\""
+#         source = """
+# e:
+# .repeat b - a {
+#     inc r2
+# }
+# f:
 
-a: mov r0, #1
-b: nop
+# a: mov r0, #1
+# b: nop
 
-.repeat f - e {
-    mov r1, r2
-}
-""".strip()
+# .repeat f - e {
+#     mov r1, r2
+# }
+# """.strip()
 
         comp = Compiler()
         comp.add_files(

@@ -21,6 +21,7 @@ class RegisterOperandStub:
             insn = state["insn"]
             idx = {"s": "first", "d": "second"}[self.pattern_char]
             reports.error(
+                "invalid-addressing",
                 (insn.ctx_start, insn.ctx_end, f"'{insn.name.name}' command accepts a register as the {idx} argument"),
                 (operand.ctx_start, operand.ctx_end, "...but this value does not look like a register")
             )
@@ -52,9 +53,10 @@ class RegisterModeOperandStub:
             mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, operand.operand.callee)
         elif isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
             reports.warning(
+                "implicit-index",
                 (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have @({register}) mode. This expression is parsed as @0({register}), which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for explicitness.")
             )
-            mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, Number(None, None, "0"))
+            mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, Number(None, None, "", 0))
         elif isinstance(operand, operators.immediate):
             mode = AddressingModes.Immediate(operand.ctx_start, operand.ctx_end, operand.operand)
         elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.immediate):
@@ -96,6 +98,7 @@ class OffsetOperandStub:
                 elif isinstance(token, Number) and token.representation[-1] != ".":
                     if fixup_active:
                         reports.warning(
+                            "label-fixup",
                             (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an offset."),
                             (operand.ctx_start, operand.ctx_end, "It's operand is a complex expression."),
                             (token.ctx_start, token.ctx_end, f"Thus, for compatibility, the first number is treated as a local label.\nFor example, '1 + 2' is parsed as 'address of local label 1 plus two'.\nThis may be unintended, so please state your intent explicitly:\n- if you meant numbers to be numbers, add parentheses around the operand: '({operand})', and\n- if you wanted '{token}' to be a label, add a colon after it: '{token}:'.")
@@ -112,6 +115,7 @@ class OffsetOperandStub:
             error = False
             if self.unsigned and offset > 0:
                 reports.error(
+                    "jump-out-of-bounds",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump backwards"),
                     (operand.ctx_start, operand.ctx_end, f"...but this offset is positive (exactly {offset})")
                 )
@@ -120,12 +124,14 @@ class OffsetOperandStub:
             max_offset = 0 if self.unsigned else 2 ** self.bitness - 2
             if not min_offset <= offset <= max_offset:
                 reports.error(
+                    "jump-out-of-bounds",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump from {min_offset} to {max_offset} (inclusively)"),
                     (operand.ctx_start, operand.ctx_end, f"...but this offset is out of bounds ({offset})")
                 )
                 error = True
             if offset % 2 == 1:
                 reports.error(
+                    "jump-out-of-bounds",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump by an even offset"),
                     (operand.ctx_start, operand.ctx_end, f"...but this offset is odd ({offset}, in particular)")
                 )
@@ -155,6 +161,7 @@ class ImmediateOperandStub:
             error = False
             if self.unsigned and value < 0:
                 reports.error(
+                    "value-out-of-bounds",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes a non-negative immediate operand"),
                     (operand.ctx_start, operand.ctx_end, f"...but this value is negative (exactly {value})")
                 )
@@ -163,6 +170,7 @@ class ImmediateOperandStub:
             max_value = 2 ** self.bitness - 1
             if not min_value <= value <= max_value:
                 reports.error(
+                    "value-out-of-bounds",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an immediate operand from {min_value} to {max_value} (inclusively)"),
                     (operand.ctx_start, operand.ctx_end, f"...but this value is out of bounds ({value})")
                 )
@@ -406,11 +414,13 @@ class Instruction:
 
         if len(insn.operands) < len(operand_stubs):
             reports.error(
+                "wrong-operands",
                 (insn.ctx_start, insn.ctx_end, f"Too few operands for '{self.name}' instruction: {len(operand_stubs)} expected, {len(insn.operands)} given")
             )
             return None
         elif len(insn.operands) > len(operand_stubs):
             reports.error(
+                "wrong-operands",
                 (insn.ctx_start, insn.ctx_end, f"Too many operands for '{self.name}' instruction: {len(operand_stubs)} expected, {len(insn.operands)} given")
             )
             return None

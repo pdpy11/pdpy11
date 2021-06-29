@@ -34,7 +34,7 @@ def colorize(text):
         comment = None
     text = re.sub(r"(\b[a-zA-Z_]+\b)", "\x01\x1b[94m\x02\\1\x01\x1b[39m\x02", text)
     text = re.sub(r"\b(r[0-7]|sp|pc)\b", "\x01\x1b[93m\x02\\1\x01\x1b[39m\x02", text, flags=re.I)
-    text = re.sub(r"(\b\d+\b)", "\x01\x1b[95m\x02\\1\x01\x1b[39m\x02", text)
+    text = re.sub(r"(\b(0[xX][0-9a-fA-F]+|0o[0-7]+|\d+\.?)\b)", "\x01\x1b[95m\x02\\1\x01\x1b[39m\x02", text)
     if comment:
         text += f"\x01\x1b[38;5;242m\x02{comment}\x01\x1b[39m\x02"
     return text
@@ -46,44 +46,47 @@ class handle_reports:
     def __init__(self, fn):
         self.fn = fn
         self.obj = None
+        self.is_error_condition = False
 
     def __enter__(self):
         if hasattr(self.fn, "__enter__"):
             self.obj = self.fn.__enter__()
         else:
             self.obj = self.fn
+
         self.handlers_stack.append(self)
+
         return self
 
     def __exit__(self, exc_type, exc_value, exc_tb):
         assert self.handlers_stack.pop() is self
+
         if hasattr(self.obj, "__exit__"):
             return self.obj.__exit__(exc_type, exc_value, exc_tb)
+
+        if exc_type is not UnrecoverableError and self.is_error_condition:
+            raise UnrecoverableError()
+
         return False
 
 
 class TextHandler:
-    def __init__(self):
-        self.is_error_condition = False
-
-
     def __enter__(self):
         return self
 
 
     def __exit__(self, exc_type, exc_value, exc_tb):
-        if exc_type is not UnrecoverableError and self.is_error_condition:
-            raise UnrecoverableError()
+        pass
 
 
-    def __call__(self, priority, *reports):
+    def __call__(self, priority, identifier, *reports):
         for file_i, (filename, file_reports) in enumerate(itertools.groupby(reports, key=lambda report: report[0].filename)):
             file_reports = list(file_reports)
             ctx = file_reports[0][0]
             lines = ctx.code.split("\n")
 
             if file_i == 0:
-                print(f"{priority.text} in \x1b[96m{filename}\x1b[0m:")
+                print(f"{priority.text} in \x1b[96m{filename}\x1b[0m: \x1b[38;5;208m[-W{identifier}]\x1b[0m")
             else:
                 print(f"In \x1b[96m{filename}\x1b[0m:")
 
@@ -189,21 +192,24 @@ class TextHandler:
 
         print()
 
-        if priority in (error, critical):
-            self.is_error_condition = True
-
-        if priority is critical:
-            raise UnrecoverableError()
-
 
 def terminal_link(text, href):
     return "\x1b]8;;" + href + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 
 
-def emit_report(priority, *reports):
+def emit_report(priority, identifier, *reports):
     if not handle_reports.handlers_stack:
-        raise Exception("No report handlers are set")
-    handle_reports.handlers_stack[-1].obj(priority, *reports)
+        # Shouldn't happen
+        raise Exception("No report handlers are set")  # pragma: no cover
+
+    handler = handle_reports.handlers_stack[-1]
+    handler.obj(priority, identifier, *reports)
+
+    if priority in (error, critical):
+        handler.is_error_condition = True
+
+    if priority is critical:
+        raise UnrecoverableError()
 
 
 class RecoverableError(Exception):

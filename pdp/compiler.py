@@ -42,6 +42,7 @@ class Compiler:
                 if context == "repeat":
                     if not hasattr(insn, "label_error_emitted"):
                         reports.error(
+                            "unexpected-label",
                             (insn.ctx_start, insn.ctx_end, "Labels cannot be defined inside '.repeat' loop")
                         )
                         insn.label_error_emitted = True
@@ -64,6 +65,7 @@ class Compiler:
             if label.name in local_symbols:
                 prev_sym, _ = local_symbols[label.name]
                 reports.error(
+                    "duplicate-symbol",
                     (label.ctx_start, label.ctx_end, f"Duplicate local label '{label.name}:'"),
                     (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
                 )
@@ -72,6 +74,7 @@ class Compiler:
             if label.name in self.symbols:
                 prev_sym, _ = self.symbols[label.name]
                 reports.error(
+                    "duplicate-symbol",
                     (label.ctx_start, label.ctx_end, f"Duplicate symbol '{label.name}'"),
                     (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
                 )
@@ -80,28 +83,39 @@ class Compiler:
 
     def compile_assignment(self, var):
         var.symbol_value = None
-        if var.name in self.symbols:
-            prev_sym = self.symbols[var.name]
+        if var.name.name in self.symbols:
+            prev_sym = self.symbols[var.name.name]
             reports.error(
-                (var.ctx_start, var.ctx_end, f"Duplicate variable '{var.name}'"),
+                "duplicate-symbol",
+                (var.ctx_start, var.ctx_end, f"Duplicate variable '{var.name.name}'"),
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
         else:
-            self.symbols[var.name] = (var, None)
+            self.symbols[var.name.name] = (var, None)
 
 
     def compile_insn(self, insn, state):
-        if insn.name.name in self.symbols:
+        if insn.name.name in builtins:
+            return builtins[insn.name.name].compile(state, self, insn)
+        elif "." + insn.name.name in builtins:
+            reports.warning(
+                "meta-typo",
+                (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is not a metacommand by itself, but '.{insn.name.name}' is.\nPlease be explicit and add a dot."),
+            )
+            return builtins["." + insn.name.name].compile(state, self, insn)
+        elif insn.name.name in self.symbols:
             # Resolve a macro
-            symbol = self.symbols[insn.name.name]
+            symbol, _ = self.symbols[insn.name.name]
             if isinstance(symbol, Label):
                 reports.error(
+                    "unknown-insn",
                     (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
                     (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. " + reports.terminal_link("Are you looking for macros?", "https://pdpy.github.io/macros"))
                 )
                 return None
             elif isinstance(symbol, Assignment):
                 reports.error(
+                    "unknown-insn",
                     (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
                     (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. " + reports.terminal_link("You may be looking for MACRO-11 macros.", "https://pdpy.github.io/macros") + "\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
                 )
@@ -110,10 +124,9 @@ class Compiler:
                 # TODO
                 # assert isinstance(symbol, Macro)
                 raise NotImplementedError()
-        elif insn.name.name in builtins:
-            return builtins[insn.name.name].compile(state, self, insn)
         else:
             reports.error(
+                "unknown-insn",
                 (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is an undefined {'metainstruction' if insn.name.name[0] == '.' else 'instruction'}.\nIs our database incomplete? " + reports.terminal_link("Report that on GitHub.", "https://github.com/imachug/pdpy11/issues/new"))
             )
             return None

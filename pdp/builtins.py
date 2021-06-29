@@ -13,42 +13,50 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned):
     if isinstance(value, int):
         if unsigned and value < 0:
             reports.error(
+                "value-out-of-bounds",
                 (arg_token.ctx_start, arg_token.ctx_end, f"An unsigned integer is expected as {what}, but {value} was passed")
             )
             raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
         if value <= -2 ** bitness:
             reports.error(
+                "value-out-of-bounds",
                 (arg_token.ctx_start, arg_token.ctx_end, f"The value is too small: {value} does not fit in {bitness} bits")
             )
             raise reports.RecoverableError("Too negative value")
         if value >= 2 ** bitness:
             reports.error(
+                "value-out-of-bounds",
                 (arg_token.ctx_start, arg_token.ctx_end, f"The value is too large: {value} does not fit in {bitness} bits")
             )
             raise reports.RecoverableError("Too large value")
         return value % (2 ** bitness)
     elif isinstance(value, str):
-        if not isinstance(arg_token, String) or arg_token.quote != "'":
+        if not (isinstance(arg_token, String) and (arg_token.quote == "'" or len(value) == 2)):
             reports.warning(
-                (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention by " + ("using single quotes ' around the string, a la C." if isinstance(arg_token, String) else "casting the string like this: 'pack(\"...\")'.") + "\nNote that this is not the same as defining a string using .ASCII elsewhere and then using its address.")
+                "string-as-number",
+                (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention by " + ("using single quotes ' around the string, a la C." if isinstance(arg_token, String) else "casting the string like this: 'pack(\"...\")'.") + "\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
             )
         if value == "":
             reports.warning(
+                "string-as-number",
                 (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug")
             )
         if len(value) > 2:
             if bitness > 8:
                 reports.error(
+                    "too-long-string",
                     (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to {bitness // 8} bytes to be converted to an integer")
                 )
             else:
                 reports.error(
+                    "too-long-string",
                     (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to a single byte to be converted to an integer")
                 )
             raise reports.RecoverableError("Too long string")
         return int.from_bytes(value.encode("koi8-r").ljust(bitness // 8, b"\x00"), byteorder="little")
     else:
         reports.error(
+            "type-mismatch",
             (token.ctx_start, token.ctx_end, f"A number was expected as {what}"),
             (arg_token.ctx_start, arg_token.ctx_end, f"...yet the evaluated value is not an integer but {type(value).__name__}")
         )
@@ -61,6 +69,7 @@ def get_as_str(state, what, token, arg_token):
         return value
     else:
         reports.error(
+            "type-mismatch",
             (token.ctx_start, token.ctx_end, f"A string was expected as {what}"),
             (arg_token.ctx_start, arg_token.ctx_end, f"...yet the evaluated value is not a string but {type(value).__name__}")
         )
@@ -78,12 +87,6 @@ class Metacommand:
         self.name = "." + fn.__name__
 
         sig = inspect.signature(fn)
-        # if len(operands) != 1:
-        #     reports.error(
-        #         (insn.ctx_start, insn.ctx_end, f"'.blkb' metacommand takes exactly 1 operand, {len(operands)} given")
-        #     )
-        #     return None
-        # operand = operands[0]
         assert list(sig.parameters.keys())[:1] == ["state"]
 
         self.min_operands = 0
@@ -112,7 +115,8 @@ class Metacommand:
                 insn_operands = insn_operands[:-1]
             else:
                 reports.error(
-                    (insn.ctx_start, insn.ctx_end, f"Metainstruction '{insn.name}' expects a code block, but it was not passed")
+                    "wrong-meta-operands",
+                    (insn.ctx_start, insn.ctx_end, f"Metacommand '{insn.name}' expects a code block, but it was not passed")
                 )
                 raise reports.RecoverableError("Code block not passed")
 
@@ -125,11 +129,13 @@ class Metacommand:
 
         if len(insn_operands) < self.min_operands:
             reports.error(
+                "wrong-meta-operands",
                 (insn.ctx_start, insn.ctx_end, f"Too few operands passed to '{insn.name}': {len(insn.operands)} passed, {expectation} expected")
             )
             raise reports.RecoverableError("Too few operands")
         elif len(insn_operands) > self.max_operands:
             reports.error(
+                "wrong-meta-operands",
                 (insn.ctx_start, insn.ctx_end, f"Too many operands passed to '{insn.name}': {len(insn.operands)} passed, {expectation} expected")
             )
             raise reports.RecoverableError("Too many operands")
@@ -140,7 +146,8 @@ class Metacommand:
             # pylint: disable=isinstance-second-argument-not-valid-type
             if isinstance(operand, operators.immediate):
                 reports.error(
-                    (operand.ctx_start, operand.ctx_end, f"Unexpected immediate value in '{self.name}' metacommand.\nYou wrote '{operand}', you probably \x1b[3mmeant\x1b[23m '{operand.operand}', proceeding under that assumption"),
+                    "excess-hash",
+                    (operand.ctx_start, operand.ctx_end, f"Unexpected immediate value in '{self.name}' metacommand.\nYou wrote '{operand}', you probably meant '{operand.operand}', proceeding under that assumption"),
                     (insn.name.ctx_start, insn.name.ctx_end, "Metacommand started here")
                 )
                 operands.append(operand.operand)
@@ -209,13 +216,25 @@ def asciz(state, operand) -> bytes:
 
 
 @metacommand
-def blkb(state, operand) -> bytes:
-    return b"\x00" * get_as_int(state, "'.blkb' count", state["insn"], operand, 16, True)
+def blkb(state, cnt) -> bytes:
+    cnt_val = get_as_int(state, "'.blkb' count", state["insn"], cnt, 16, True)
+    if cnt_val < 0:
+        reports.error(
+            "negative-count",
+            (cnt.ctx_start, cnt.ctx_end, f"Byte count cannot be negative ({cnt_val} given)")
+        )
+    return b"\x00" * cnt_val
 
 
 @metacommand
-def blkw(state, operand) -> bytes:
-    return b"\x00" * (2 * get_as_int(state, "'.blkw' count", state["insn"], operand, 16, True))
+def blkw(state, cnt) -> bytes:
+    cnt_val = get_as_int(state, "'.blkw' count", state["insn"], cnt, 16, True)
+    if cnt_val < 0:
+        reports.error(
+            "negative-count",
+            (cnt.ctx_start, cnt.ctx_end, f"Word count cannot be negative ({cnt_val} given)")
+        )
+    return b"\x00\x00" * cnt_val
 
 
 @metacommand
@@ -230,6 +249,7 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
     cnt_val = wait(cnt.resolve(state))
     if cnt_val < 0:
         reports.error(
+            "negative-count",
             (cnt.ctx_start, cnt.ctx_end, f"Repetitions count cannot be negative ({cnt_val} given)")
         )
     for _ in range(cnt_val):

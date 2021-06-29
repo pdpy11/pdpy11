@@ -125,7 +125,7 @@ instruction_opcodes = dict(
     # TODO: Damn, I'm just too lazy to implement all these as macros. Will do that later.
     pop   = "0126dd",
     push  = "01ss46",
-    ret   = "000206",
-    call  = "0046ss",
+    ret   = "000207",
+    call  = "0047ss",
     nop   = "000240"
 )

@@ -19,7 +19,8 @@ class Token:
 
 class ExpressionToken(Token):
     def resolve(self, state):
-        raise NotImplementedError()
+        # Abstract method, should be redefined
+        raise NotImplementedError()  # pragma: no cover
 
 
 class Instruction(Token):
@@ -78,6 +79,7 @@ class Symbol(ExpressionToken):
     def resolve(self, state):
         if self.name.lower() in ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "sp", "pc"):
             reports.error(
+                "unexpected-register",
                 (self.ctx_start, self.ctx_end, "A register cannot be used here. An integer or a symbol are expected")
             )
             raise reports.RecoverableError("A register is used as a symbol")
@@ -88,9 +90,10 @@ class Symbol(ExpressionToken):
         else:
             # TODO: check if there's a local symbol with the same name defined out of scope
             reports.error(
-                (self.ctx_start, self.ctx_end, f"Unknown label '{self.name}' is referenced here")
+                "undefined-symbol",
+                (self.ctx_start, self.ctx_end, f"Unknown symbol '{self.name}' is referenced here")
             )
-            raise reports.RecoverableError(f"Unknown label '{self.name}'")
+            raise reports.RecoverableError(f"Unknown symbol '{self.name}'")
         if isinstance(symbol, Assignment):
             value = symbol.value.resolve(state)
         return value
@@ -152,20 +155,26 @@ class String(ExpressionToken):
 
 class Number(ExpressionToken):
     # pylint: disable=arguments-differ
-    def init(self, representation):
+    def init(self, representation, value, invalid_base8=False):
         self.representation = representation
+        self.value = value
+        self.invalid_base8 = invalid_base8
+        self.reported_invalid_base8 = False
 
     def __repr__(self):
         return f"{self.representation}"
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.representation == rhs.representation
+        return isinstance(rhs, type(self)) and (self.representation, self.value, self.invalid_base8) == (rhs.representation, rhs.value, rhs.invalid_base8)
 
     def resolve(self, state):
-        if self.representation.endswith("."):
-            return int(self.representation[:-1])
-        else:
-            return int(self.representation, 8)
+        if self.invalid_base8:
+            char = "8" if "8" in self.representation else "9"
+            reports.error(
+                "invalid-number",
+                (self.ctx_start, self.ctx_end, f"In PDP-11 assembly, numbers are considered base-8 by default.\nThis number has digit {char}, so you probably wanted it base-10.\nAdd a dot after the number to switch to decimal: '{self.representation}.'\nIf you wanted to specify a local label of the same name, add a colon: '{self.representation}:'")
+            )
+        return self.value
 
 
 class File:
