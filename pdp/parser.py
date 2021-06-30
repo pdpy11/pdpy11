@@ -201,7 +201,7 @@ def number(ctx):
                 (ctx_start, ctx, "A hexadecimal number was expected after '0x'")
             ))
             return types.Number(ctx_start, ctx, f"{sign_str}0x{num}", int(num, 16) * sign)
-        elif Parser.regex(rf"[oO]", skip_whitespace_before=False)(ctx, maybe=True):
+        elif Parser.regex(r"[oO]", skip_whitespace_before=False)(ctx, maybe=True):
             # Octal number
             num = Parser.regex(rf"[0-7]+{boundary}", skip_whitespace_before=False)(ctx, report=(
                 reports.critical,
@@ -209,7 +209,7 @@ def number(ctx):
                 (ctx_start, ctx, "An octal number was expected after '0o'")
             ))
             return types.Number(ctx_start, ctx, f"{sign_str}0o{num}", int(num, 8) * sign)
-        elif Parser.regex(rf"[bB]", skip_whitespace_before=False)(ctx, maybe=True):
+        elif Parser.regex(r"[bB]", skip_whitespace_before=False)(ctx, maybe=True):
             # Binary number
             num = Parser.regex(rf"[01]+{boundary}", skip_whitespace_before=False)(ctx, report=(
                 reports.critical,
@@ -359,12 +359,12 @@ def string_escape(ctx):
     elif char == "\n":
         return ""
     elif char == "x":
-        code = Parser.regex(r"[0-9a-fA-F]{2}")(ctx, report=(
+        num = Parser.regex(r"[0-9a-fA-F]{2}")(ctx, report=(
             reports.error,
             "invalid-escape",
             (ctx_start, ctx, "Two hexadecimal digits are expected after '\\x' in a string")
         ))
-        return chr(int(code, 16))
+        return chr(int(num, 16))
     else:
         reports.error(
             "invalid-escape",

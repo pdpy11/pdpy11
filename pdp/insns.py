@@ -4,10 +4,31 @@ from .architecture import instruction_opcodes
 from .builtins import get_as_int
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, BaseDeferred, wait
-from .types import Token, Symbol, ParenthesizedExpression, Number, InstructionPointer
+from .types import Symbol, ParenthesizedExpression, Number, InstructionPointer
 from . import operators
 from . import reports
 
+
+
+REGISTER_NAMES = {
+    "r0": 0,
+    "r1": 1,
+    "r2": 2,
+    "r3": 3,
+    "r4": 4,
+    "r5": 5,
+    "r6": 6,
+    "r7": 7,
+    "sp": 6,
+    "pc": 7
+}
+
+
+def try_register_from_symbol(operand):
+    if isinstance(operand, Symbol) and operand.name.lower() in REGISTER_NAMES:
+        return REGISTER_NAMES[operand.name.lower()]
+    else:
+        return None
 
 
 class RegisterOperandStub:
@@ -15,8 +36,8 @@ class RegisterOperandStub:
         self.pattern_char = pattern_char
 
     def encode(self, operand, state):
-        if register := try_register_from_symbol(operand):
-            return register.idx, b""
+        if (register := try_register_from_symbol(operand)) is not None:
+            return register, b""
         else:
             insn = state["insn"]
             idx = {"s": "first", "d": "second"}[self.pattern_char]
@@ -35,38 +56,49 @@ class RegisterModeOperandStub:
     def encode(self, operand, state):
         # Good luck debugging this
         # pylint: disable=isinstance-second-argument-not-valid-type
-        if register := try_register_from_symbol(operand):
-            mode = AddressingModes.Register(operand.ctx_start, operand.ctx_end, register)
-        elif isinstance(operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.expr)):
-            mode = AddressingModes.RegisterDeferred(operand.ctx_start, operand.ctx_end, register)
-        elif isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
-            mode = AddressingModes.Autoincrement(operand.ctx_start, operand.ctx_end, register)
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)):
-            mode = AddressingModes.AutoincrementDeferred(operand.ctx_start, operand.ctx_end, register)
-        elif isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
-            mode = AddressingModes.Autodecrement(operand.ctx_start, operand.ctx_end, register)
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)):
-            mode = AddressingModes.AutodecrementDeferred(operand.ctx_start, operand.ctx_end, register)
-        elif isinstance(operand, operators.call) and (register := try_register_from_symbol(operand.operand)):
-            mode = AddressingModes.Index(operand.ctx_start, operand.ctx_end, register, operand.callee)
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.call) and (register := try_register_from_symbol(operand.operand.operand)):
-            mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, operand.operand.callee)
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)):
+        if (register := try_register_from_symbol(operand)) is not None:
+            # Register
+            return register, b""
+        elif isinstance(operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.expr)) is not None:
+            # Register deferred
+            return 0o10 | register, b""
+        elif isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
+            # Autoincrement
+            return 0o20 | register, b""
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)) is not None:
+            # Autoincrement deferred
+            return 0o30 | register, b""
+        elif isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
+            # Autodecrement
+            return 0o40 | register, b""
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)) is not None:
+            # Autodecrement deferred
+            return 0o50 | register, b""
+        elif isinstance(operand, operators.call) and (register := try_register_from_symbol(operand.operand)) is not None:
+            # Index
+            return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee, bitness=16, unsigned=False)))
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.call) and (register := try_register_from_symbol(operand.operand.operand)) is not None:
+            # Index deferred
+            return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.operand.callee, bitness=16, unsigned=False)))
+        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
+            # Index deferred with implicit zero index
             reports.warning(
                 "implicit-index",
                 (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have @({register!r}) mode. This expression is parsed as @0({register!r}), which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for explicitness.")
             )
-            mode = AddressingModes.IndexDeferred(operand.ctx_start, operand.ctx_end, register, Number(None, None, "", 0))
+            return 0o70 | register, b"\x00\x00"
         elif isinstance(operand, operators.immediate):
-            mode = AddressingModes.Immediate(operand.ctx_start, operand.ctx_end, operand.operand)
+            # Immediate
+            return 0o27, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an immediate value", operand, operand.operand, bitness=16, unsigned=False)))
         elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.immediate):
-            mode = AddressingModes.Absolute(operand.ctx_start, operand.ctx_end, operand.operand.operand)
+            # Absolute
+            return 0o37, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an absolute address", operand, operand.operand.operand, bitness=16, unsigned=False)))
         elif isinstance(operand, operators.deferred):
-            mode = AddressingModes.RelativeDeferred(operand.ctx_start, operand.ctx_end, operand.operand)
+            # Relative deferred
+            return 0o77, SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(operand.operand.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
         else:
-            mode = AddressingModes.Relative(operand.ctx_start, operand.ctx_end, operand)
-
-        return mode.get_mode(), mode.encode_inline(state)
+            # Relative
+            return 0o67, SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(operand.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
 
 
 class OffsetOperandStub:
@@ -81,7 +113,7 @@ class OffsetOperandStub:
 
         if isinstance(operand, Number) and operand.representation[-1] != ".":
             operand = Symbol(operand.ctx_start, operand.ctx_end, operand.representation)
-        elif "(" not in str(operand):
+        elif "(" not in operand.text() and ":" not in operand.text():
             fixup_active = True
             def fixup_label(token):
                 nonlocal fixup_active
@@ -93,8 +125,6 @@ class OffsetOperandStub:
                 elif isinstance(token, operators.call):
                     token.callee = fixup_label(token.callee)
                     token.operand = fixup_label(token.operand)
-                elif isinstance(token, ParenthesizedExpression):
-                    token.expr = fixup_label(token.expr)
                 elif isinstance(token, Number) and token.representation[-1] != ".":
                     if fixup_active:
                         reports.warning(
@@ -115,23 +145,24 @@ class OffsetOperandStub:
             error = False
             if self.unsigned and offset > 0:
                 reports.error(
-                    "jump-out-of-bounds",
+                    "branch-out-of-bounds",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump backwards"),
                     (operand.ctx_start, operand.ctx_end, f"...but this offset is positive (exactly {offset})")
                 )
                 error = True
-            min_offset = -2 ** (self.bitness + self.unsigned) + 2 * self.unsigned
-            max_offset = 0 if self.unsigned else 2 ** self.bitness - 2
-            if not min_offset <= offset <= max_offset:
-                reports.error(
-                    "jump-out-of-bounds",
-                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump from {min_offset} to {max_offset} (inclusively)"),
-                    (operand.ctx_start, operand.ctx_end, f"...but this offset is out of bounds ({offset})")
-                )
-                error = True
+            else:
+                min_offset = -2 ** (self.bitness + self.unsigned) + 2 * self.unsigned
+                max_offset = 0 if self.unsigned else 2 ** self.bitness - 2
+                if not min_offset <= offset <= max_offset:
+                    reports.error(
+                        "branch-out-of-bounds",
+                        (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump from {min_offset} to {max_offset} (inclusively)"),
+                        (operand.ctx_start, operand.ctx_end, f"...but this offset is out of bounds ({offset})")
+                    )
+                    error = True
             if offset % 2 == 1:
                 reports.error(
-                    "jump-out-of-bounds",
+                    "odd-branch",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump by an even offset"),
                     (operand.ctx_start, operand.ctx_end, f"...but this offset is odd ({offset}, in particular)")
                 )
@@ -158,245 +189,26 @@ class ImmediateOperandStub:
 
         def fn():
             value = wait(operand.resolve(state))
-            error = False
             if self.unsigned and value < 0:
                 reports.error(
                     "value-out-of-bounds",
                     (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes a non-negative immediate operand"),
                     (operand.ctx_start, operand.ctx_end, f"...but this value is negative (exactly {value})")
                 )
-                error = True
-            min_value = 0 if self.unsigned else -2 ** self.bitness
-            max_value = 2 ** self.bitness - 1
-            if not min_value <= value <= max_value:
-                reports.error(
-                    "value-out-of-bounds",
-                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an immediate operand from {min_value} to {max_value} (inclusively)"),
-                    (operand.ctx_start, operand.ctx_end, f"...but this value is out of bounds ({value})")
-                )
-                error = True
-            if error:
                 return 0
+            else:
+                min_value = 0 if self.unsigned else -2 ** self.bitness + 1
+                max_value = 2 ** self.bitness - 1
+                if not min_value <= value <= max_value:
+                    reports.error(
+                        "value-out-of-bounds",
+                        (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an immediate operand from {min_value} to {max_value} (inclusively)"),
+                        (operand.ctx_start, operand.ctx_end, f"...but this value is out of bounds ({value})")
+                    )
+                    return 0
             return value % (2 ** self.bitness)
         return Deferred[int](fn), b""
 
-
-REGISTER_NAMES = {
-    "r0": 0,
-    "r1": 1,
-    "r2": 2,
-    "r3": 3,
-    "r4": 4,
-    "r5": 5,
-    "r6": 6,
-    "r7": 7,
-    "sp": 6,
-    "pc": 7
-}
-
-class Register(Token):
-    # pylint: disable=arguments-differ
-    def init(self, name: str):
-        self.name: str = name
-        self.idx = REGISTER_NAMES[name.lower()]
-
-    def __repr__(self):
-        return f"{self.name}"
-
-    def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.name == rhs.name
-
-
-class SimpleAddressingMode(Token):
-    mode_code: int
-    reg: Register
-
-    # pylint: disable=arguments-differ
-    def init(self, reg: Register):
-        self.reg: Register = reg
-
-    def get_mode(self):
-        return (self.mode_code << 3) | self.reg.idx
-
-    # pylint: disable=unused-argument
-    def encode_inline(self, state):
-        return b""
-
-
-class AddressingModes:
-    class Register(SimpleAddressingMode):
-        mode_code = 0
-
-        def __repr__(self):
-            return f"{self.reg!r}"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.reg == rhs.reg
-
-
-    class RegisterDeferred(SimpleAddressingMode):
-        mode_code = 1
-
-        def __repr__(self):
-            return f"({self.reg!r})"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.reg == rhs.reg
-
-
-    class Autoincrement(SimpleAddressingMode):
-        mode_code = 2
-
-        def __repr__(self):
-            return f"({self.reg!r})+"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.reg == rhs.reg
-
-
-    class AutoincrementDeferred(SimpleAddressingMode):
-        mode_code = 3
-
-        def __repr__(self):
-            return f"@({self.reg!r})+"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.reg == rhs.reg
-
-
-    class Autodecrement(SimpleAddressingMode):
-        mode_code = 4
-
-        def __repr__(self):
-            return f"-({self.reg!r})"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.reg == rhs.reg
-
-
-    class AutodecrementDeferred(SimpleAddressingMode):
-        mode_code = 5
-
-        def __repr__(self):
-            return f"@-({self.reg!r})"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.reg == rhs.reg
-
-
-    class Index(SimpleAddressingMode):
-        mode_code = 6
-
-        # pylint: disable=arguments-differ
-        def init(self, reg: Register, index):
-            super().init(reg)
-            self.index = index
-
-        def __repr__(self):
-            return f"{self.index!r}({self.reg!r})"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and (self.reg, self.index) == (rhs.reg, rhs.index)
-
-        def encode_inline(self, state):
-            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", self, self.index, 16, False)))
-
-
-    class IndexDeferred(SimpleAddressingMode):
-        mode_code = 7
-
-        # pylint: disable=arguments-differ
-        def init(self, reg: Register, index):
-            super().init(reg)
-            self.index = index
-
-        def __repr__(self):
-            return f"@{self.index!r}({self.reg!r})"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and (self.reg, self.index) == (rhs.reg, rhs.index)
-
-        def encode_inline(self, state):
-            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", self, self.index, 16, False)))
-
-
-    class Immediate(Token):
-        # pylint: disable=arguments-differ
-        def init(self, value):
-            self.value = value
-
-        def __repr__(self):
-            return f"#{self.value!r}"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.value == rhs.value
-
-        def get_mode(self):
-            return 0o27
-
-        def encode_inline(self, state):
-            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an immediate value", self, self.value, 16, False)))
-
-
-    class Absolute(Token):
-        # pylint: disable=arguments-differ
-        def init(self, addr):
-            self.addr = addr
-
-        def __repr__(self):
-            return f"@#{self.addr!r}"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.addr == rhs.addr
-
-        def get_mode(self):
-            return 0o37
-
-        def encode_inline(self, state):
-            return SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an absolute address", self, self.addr, 16, False)))
-
-
-    class Relative(Token):
-        # pylint: disable=arguments-differ
-        def init(self, addr: Token):
-            self.addr: Token = addr
-
-        def __repr__(self):
-            return f"{self.addr!r}"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.addr == rhs.addr
-
-        def get_mode(self):
-            return 0o67
-
-        def encode_inline(self, state):
-            return SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(self.addr.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
-
-
-    class RelativeDeferred(Token):
-        # pylint: disable=arguments-differ
-        def init(self, addr):
-            self.addr = addr
-
-        def __repr__(self):
-            return f"@{self.addr!r}"
-
-        def __eq__(self, rhs):
-            return isinstance(rhs, type(self)) and self.addr == rhs.addr
-
-        def get_mode(self):
-            return 0o77
-
-        def encode_inline(self, state):
-            return SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(self.addr.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
-
-
-def try_register_from_symbol(operand):
-    if isinstance(operand, Symbol) and operand.name.lower() in REGISTER_NAMES:
-        return Register(operand.ctx_start, operand.ctx_end, operand.name)
-    else:
-        return None
 
 
 class Instruction:

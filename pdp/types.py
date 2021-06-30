@@ -1,5 +1,5 @@
 from .context import Context
-from .deferred import Deferred, not_ready
+from .deferred import not_ready
 from . import reports
 
 
@@ -14,7 +14,7 @@ class Token:
     def init(self):
         pass
 
-    def __str__(self):
+    def text(self):
         return self.ctx_start.code[self.ctx_start.pos:self.ctx_end.pos]
 
     def __eq__(self, rhs):

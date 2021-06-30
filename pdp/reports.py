@@ -200,7 +200,7 @@ def terminal_link(text, href):
 def emit_report(priority, identifier, *reports):
     if not handle_reports.handlers_stack:
         # Shouldn't happen
-        raise Exception("No report handlers are set")  # pragma: no cover
+        raise Exception(f"Unhandled report: {identifier}")  # pragma: no cover
 
     handler = handle_reports.handlers_stack[-1]
     handler.obj(priority, identifier, *reports)

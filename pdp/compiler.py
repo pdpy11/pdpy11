@@ -1,6 +1,6 @@
 from .builtins import builtins
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, wait, Deferred, BaseDeferred
+from .deferred import Promise, wait, BaseDeferred
 from .types import Instruction, Label, Assignment
 from . import reports
 
@@ -30,7 +30,7 @@ class Compiler:
                     reports.warning(
                         "meta-typo",
                         (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is not a metacommand by itself, but '.{insn.name.name}' is.\nPlease be explicit and add a dot."),
-                    )       
+                    )
                 break
 
             state = {"emit_address": addr, "local_symbols": local_symbols, "compiler": self}
@@ -47,20 +47,32 @@ class Compiler:
                 if context == "repeat":
                     if not hasattr(insn, "label_error_emitted"):
                         reports.error(
-                            "unexpected-label",
+                            "unexpected-symbol-definition",
                             (insn.ctx_start, insn.ctx_end, "Labels cannot be defined inside '.repeat' loop")
                         )
                         insn.label_error_emitted = True
+                    _ = 1  # for code coverage
                     continue
+
                 self.compile_label(insn, addr, local_symbols)
                 if not insn.local:
                     local_symbols = CaseInsensitiveDict()
 
             elif isinstance(insn, Assignment):
+                if context == "repeat":
+                    if not hasattr(insn, "assignment_error_emitted"):
+                        reports.error(
+                            "unexpected-symbol-definition",
+                            (insn.ctx_start, insn.ctx_end, "Variables cannot be defined inside '.repeat' loop")
+                        )
+                        insn.assignment_error_emitted = True
+                    _ = 1  # for code coverage
+                    continue
+
                 self.compile_assignment(insn)
 
             else:
-                assert False
+                assert False  # pragma: no cover
 
         return data
 
@@ -89,7 +101,7 @@ class Compiler:
     def compile_assignment(self, var):
         var.symbol_value = None
         if var.name.name in self.symbols:
-            prev_sym = self.symbols[var.name.name]
+            prev_sym, _ = self.symbols[var.name.name]
             reports.error(
                 "duplicate-symbol",
                 (var.ctx_start, var.ctx_end, f"Duplicate variable '{var.name.name}'"),
@@ -126,9 +138,8 @@ class Compiler:
                 )
                 return None
             else:
-                # TODO
-                # assert isinstance(symbol, Macro)
-                raise NotImplementedError()
+                # TODO: macros
+                assert False  # pragma: no cover
         else:
             reports.error(
                 "unknown-insn",

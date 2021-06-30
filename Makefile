@@ -15,5 +15,5 @@ cov:
 	python3 -m coverage report -m
 
 mut:
-	PYTHONPATH=tests python3 -m mutmut --runner "python3 -m hammett -x" run
+	python3 mutation.py run
 	python3 -m mutmut results

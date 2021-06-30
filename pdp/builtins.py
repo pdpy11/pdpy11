@@ -36,15 +36,22 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii
                 "use-ascii",
                 (arg_token.ctx_start, arg_token.ctx_end, f"Passing a string to metacommand '{token.name.name}', which implicitly converts it\nto a number and then writes back as a series of bytes is not particularly graceful.\nConsider using '.ascii' metacommand instead.")
             )
-        elif not (isinstance(arg_token, String) and (arg_token.quote == "'" or len(value) == 2)):
-            reports.warning(
-                "implicit-pack",
-                (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention by " + ("using a single quote ', e.g. 'A instead of \"A\"." if isinstance(arg_token, String) and len(value) == 1 else "casting the string like this: 'pack(\"...\")'.") + "\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
-            )
+        else:
+            if isinstance(arg_token, String) and len(value) == 1 and arg_token.quote != "'":
+                reports.warning(
+                    "implicit-pack",
+                    (arg_token.ctx_start, arg_token.ctx_end, f"A character that is used as {what} is implicitly converted to a number.\nConsider using a single quote ' as a cleaner solution, e.g. 'A instead of \"A\".")
+                )
+            elif not isinstance(arg_token, String) or (arg_token.quote != "'" and len(value) != 2):
+                reports.warning(
+                    "implicit-pack",
+                    (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention explicitly by casting the string like this: 'pack(\"...\")'.\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
+                )
+
         if value == "":
             reports.warning(
                 "empty-pack",
-                (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug")
+                (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug" + (f".\nThis inserts {bitness // 8} null byte{'s' if bitness > 8 else ''} into the binary file." if recommend_ascii else ""))
             )
         value = value.encode("koi8-r")
         if len(value) * 8 > bitness:
@@ -58,8 +65,8 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii
                     "too-long-string",
                     (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to a single byte to be converted to an integer")
                 )
-            raise reports.RecoverableError("Too long string")
-        vlaue = value.ljust(bitness // 8, b"\x00")
+            value = value[:bitness // 8]
+        value = value.ljust(bitness // 8, b"\x00")
         assert bitness in (8, 16, 32)
         if bitness == 32:
             value = value[2:] + value[:2]
@@ -157,7 +164,7 @@ class Metacommand:
             if isinstance(operand, operators.immediate):
                 reports.error(
                     "excess-hash",
-                    (operand.ctx_start, operand.ctx_end, f"Unexpected immediate value in '{self.name}' metacommand.\nYou wrote '{operand}', you probably meant '{operand.operand}', proceeding under that assumption"),
+                    (operand.ctx_start, operand.ctx_end, f"Unexpected immediate value in '{self.name}' metacommand.\nYou wrote '{operand.text()}', you probably meant '{operand.operand.text()}', proceeding under that assumption"),
                     (insn.name.ctx_start, insn.name.ctx_end, "Metacommand started here")
                 )
                 operands.append(operand.operand)
@@ -249,7 +256,7 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
     cnt_val = wait(cnt.resolve(state))
     if cnt_val < 0:
         reports.error(
-            "negative-count",
+            "value-out-of-bounds",
             (cnt.ctx_start, cnt.ctx_end, f"Repetitions count cannot be negative ({cnt_val} given)")
         )
     for _ in range(cnt_val):

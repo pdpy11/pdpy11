@@ -54,7 +54,7 @@ def test_zero_operand(code):
     "operand",
     [
         "r0", "r1", "r6", "sp", "pc", "#123", "10", "-57", "@#123", "@12",
-        "(r3)", "(r5)+", "-(r2)", "@1(sp)", "@(r1)+", "@-(r2)"
+        "(r0)", "(r0)+", "-(r0)", "@1(r0)", "@(r0)+", "@-(r0)"
     ]
 )
 def test_single_operand(insn, operand):
@@ -75,6 +75,28 @@ def test_two_operands(insn, op1, op2):
     compare_with_old(f"{insn} {op2}, {op1}")
 
 
+def test_immediate_operand():
+    compare_with_old("emt 123")
+    compare_with_old("emt 0")
+    expect_same("emt -1", "emt 377")
+
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("emt 400", "emt 0")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("emt 401", "emt 0")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("emt -400", "emt 0")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("emt -401", "emt 0")
+
+    compare_with_old("mark 0")
+    compare_with_old("mark 77")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("mark 100", "mark 0")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("mark -1", "mark 0")
+
+
 def test_str_as_int():
     expect_same("tst #'a", "tst #97.")
 
@@ -82,21 +104,16 @@ def test_str_as_int():
 def test_metacommands():
     expect_binary(".byte 0x12", b"\x12")
     expect_binary(".byte 0x12, 0x34", b"\x12\x34")
-    with util.expect_warning("use-ascii"):
-        expect_binary(".byte 'x", b"x")
 
+    expect_binary(".word 0x12", b"\x12\x00")
     expect_binary(".word 0x1234", b"\x34\x12")
     expect_binary(".word 0x1234, 0x5678", b"\x34\x12\x78\x56")
-    with util.expect_warning("use-ascii"):
-        expect_binary(".word \"ab\"", b"ab")
 
-    with util.expect_warning("use-ascii", "empty-pack"):
-        expect_binary(".word \"\"", b"\x00\x00")
-
+    expect_binary(".dword 0x78", b"\x00\x00\x78\x00")
+    expect_binary(".dword 0x5678", b"\x00\x00\x78\x56")
+    expect_binary(".dword 0x345678", b"\x34\x00\x78\x56")
     expect_binary(".dword 0x12345678", b"\x34\x12\x78\x56")
     expect_binary(".dword 0x12345678, 0x90abcdef", b"\x34\x12\x78\x56\xab\x90\xef\xcd")
-    with util.expect_warning("use-ascii"):
-        expect_binary(".dword \"abcd\"", b"abcd")
 
     expect_binary(".ascii \"Hello, world!\"", b"Hello, world!")
     expect_binary(".asciz \"Hello, world!\"", b"Hello, world!\x00")
@@ -114,6 +131,68 @@ def test_metacommands():
 
     with util.expect_warning("meta-typo"):
         expect_binary("blkb 10", b"\x00" * 8)
+
+    with util.expect_error("wrong-meta-operands"):
+        compile(".repeat 1")
+    with util.expect_error("wrong-meta-operands"):
+        compile(".blkb")
+    with util.expect_error("wrong-meta-operands"):
+        compile(".blkb 1, 2")
+
+
+def test_implicit_casts():
+    with util.expect_warning("use-ascii"):
+        expect_binary(".byte 'x", b"x")
+    with util.expect_warning("use-ascii", "empty-pack"):
+        expect_binary(".byte \"\"", b"\x00")
+
+    with util.expect_warning("use-ascii"):
+        expect_binary(".word 'x", b"x\x00")
+    with util.expect_warning("use-ascii"):
+        expect_binary(".word \"ab\"", b"ab")
+
+    with util.expect_warning("use-ascii", "empty-pack"):
+        expect_binary(".word \"\"", b"\x00\x00")
+
+    with util.expect_warning("use-ascii"):
+        expect_binary(".dword \"abcd\"", b"abcd")
+    with util.expect_warning("use-ascii"):
+        expect_binary(".dword \"abc\"", b"abc\x00")
+    with util.expect_warning("use-ascii"):
+        expect_binary(".dword \"ab\"", b"ab\x00\x00")
+    with util.expect_warning("use-ascii"):
+        expect_binary(".dword \"a\"", b"a\x00\x00\x00")
+
+    with util.expect_warning("implicit-pack"):
+        code = compile("mov #\"a\", r0")
+    assert code == compile("mov #'a, r0")
+
+    with util.expect_warning("implicit-pack"):
+        code = compile("mov #s, r0\ns = \"ab\"")
+    assert code == compile("mov #0x6261, r0")
+
+    with util.expect_error("too-long-string", "use-ascii"):
+        expect_same(".byte \"ab\"", ".ascii \"a\"")
+    with util.expect_error("too-long-string", "use-ascii"):
+        expect_same(".word \"abc\"", ".ascii \"ab\"")
+    with util.expect_error("too-long-string", "use-ascii"):
+        expect_same(".dword \"abcde\"", ".ascii \"abcd\"")
+
+
+
+def test_out_of_bounds():
+    with util.expect_error("value-out-of-bounds"):
+        compile(".repeat -1 { }")
+    with util.expect_error("value-out-of-bounds"):
+        compile(".blkb -1")
+
+    compile(".word 0")
+    compile(".word 177777")
+    compile(".word -177777")
+    with util.expect_error("value-out-of-bounds"):
+        compile(".word 200000")
+    with util.expect_error("value-out-of-bounds"):
+        compile(".word -200000")
 
 
 def test_math():
@@ -140,15 +219,17 @@ def test_end():
         expect_same("nop\nend\nccc", "nop")
 
 
-# def test_typing():
-#     with util.expect_error("meta-type-mismatch"):
-#         compile("lbl = 1\nlbl")
-#     with util.expect_error("meta-type-mismatch"):
-#         compile("lbl:\nlbl")
-#     with util.expect_error("meta-type-mismatch"):
-#         compile("lbl\nlbl = 1")
-#     with util.expect_error("meta-type-mismatch"):
-#         compile("lbl\nlbl:")
+def test_typing():
+    with util.expect_error("meta-type-mismatch"):
+        compile("lbl = 1\nlbl")
+    with util.expect_error("meta-type-mismatch"):
+        compile("lbl:\nlbl")
+
+    # Not working yet
+    # with util.expect_error("meta-type-mismatch"):
+    #     compile("lbl\nlbl = 1")
+    # with util.expect_error("meta-type-mismatch"):
+    #     compile("lbl\nlbl:")
 
 
 def test_deferred():
@@ -175,9 +256,86 @@ def test_addressing():
         expect_same("inc @(r2)", "inc @0(r2)")
 
 
-@pytest.mark.parametrize("insn", ["br", "bge"])
-def test_branching(insn):
-    compare_with_old(f"{insn} . + 4")
-    compare_with_old(f"{insn} 1\n1:")
-    expect_same(f"{insn} 1\n1:", f"{insn} lbl\nlbl:")
-    expect_same(f"{insn} lbl + 2\nlbl: .word 0", f"{insn} lbl\n.word 0\nlbl:")
+def test_branch():
+    compare_with_old("br . + 4")
+    compare_with_old("br 1\n1:")
+    compare_with_old("bge . + 4")
+    compare_with_old("bge 1\n1:")
+
+    expect_same("br 1\n1:", "br lbl\nlbl:")
+    expect_same("br lbl + 2\nlbl: .word 0", "br lbl\n.word 0\nlbl:")
+
+    with util.expect_warning("label-fixup"):
+        expect_same("br 1 + 2\n1:", "br lbl + 2\nlbl:")
+    with util.expect_warning("label-fixup"):
+        expect_same("br 2 + 2\n2:", "br lbl + 2\nlbl:")
+    with util.expect_warning("label-fixup"):
+        expect_same("br 4 + 2\n4:", "br lbl + 2\nlbl:")
+    with util.expect_warning("label-fixup"):
+        expect_same("br 2 + 4\n2:", "br lbl + 4\nlbl:")
+
+    with util.expect_warning("label-fixup"):
+        expect_same("br +1 + 2\n1:", "br lbl + 2\nlbl:")
+
+    expect_same("br 1: + 2\n1:", "br lbl + 2\nlbl:")
+    expect_same("br 2 + 1:\n1:", "br lbl + 2\nlbl:")
+
+    compile("br .")
+    with util.expect_error("odd-branch"):
+        compile("br . + 1")
+    with util.expect_error("branch-out-of-bounds"):
+        compile("br . + 10000")
+    with util.expect_error("branch-out-of-bounds"):
+        compile("br . - 10000")
+
+    compare_with_old("sob r0, .")
+    compare_with_old("sob r0, . + 2")
+    with util.expect_error("odd-branch"):
+        compile("sob r0, . - 1")
+    with util.expect_error("branch-out-of-bounds"):
+        print(compile("sob r0, . + 4"))
+    with util.expect_error("branch-out-of-bounds"):
+        compile("sob r0, . - 1000000")
+
+
+def test_unexpected_symbol():
+    with util.expect_error("unexpected-symbol-definition"):
+        compile(".repeat 10 { lbl = 1 }")
+    with util.expect_error("unexpected-symbol-definition"):
+        compile(".repeat 10 { lbl: }")
+
+
+def test_duplicate_symbol():
+    with util.expect_error("duplicate-symbol"):
+        compile("a = 1\na = 2")
+    with util.expect_error("duplicate-symbol"):
+        compile("a = 1\na = 1")
+    with util.expect_error("duplicate-symbol"):
+        compile("a:\na:")
+    with util.expect_error("duplicate-symbol"):
+        compile("a:\na = 1")
+    with util.expect_error("duplicate-symbol"):
+        compile("a = 1\na:")
+    with util.expect_error("duplicate-symbol"):
+        compile("1:\n1:")
+
+
+def test_undefined_symbol():
+    with util.expect_error("undefined-symbol"):
+        compile("clr @#a")
+
+
+def test_invalid_insn():
+    with util.expect_error("unknown-insn"):
+        compile("insn")
+
+    with util.expect_error("wrong-operands"):
+        compile("clr")
+    with util.expect_error("wrong-operands"):
+        compile("mov r1")
+    with util.expect_error("wrong-operands"):
+        compile("mov r1, r2, r3")
+    with util.expect_error("wrong-operands"):
+        compile("inc r1, r2")
+    with util.expect_error("wrong-operands"):
+        compile("nop r1")

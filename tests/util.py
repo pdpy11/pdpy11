@@ -15,7 +15,9 @@ def expect_warning(*warnings):
     with reports.handle_reports(report_handler):
         yield
 
-    assert sorted(matched_warnings) == sorted(warnings)
+    matched_warnings = sorted(matched_warnings)
+    warnings = sorted(warnings)
+    assert matched_warnings == warnings, f"{matched_warnings} != {warnings}"
 
 
 @contextmanager
@@ -37,8 +39,11 @@ def expect_error(*errors):
     else:
         assert False, "Should raise an error (critical or not)"  # pragma: no cover
 
-    assert sorted(matched_errors) == sorted(errors)
     assert is_error_condition
+
+    matched_errors = sorted(matched_errors)
+    errors = sorted(errors)
+    assert matched_errors == errors, f"{matched_errors} != {errors}"
 
 
 @contextmanager

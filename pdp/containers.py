@@ -1,10 +1,7 @@
 class CaseInsensitiveDict:
-    def __init__(self, container=None, **kwargs):
+    def __init__(self, container=None):
         if container:
-            assert not kwargs
             self.container = {key.lower(): (key, value) for key, value in container.items()}
-        elif kwargs:
-            self.container = {key.lower(): (key, value) for key, value in kwargs.items()}
         else:
             self.container = {}
 

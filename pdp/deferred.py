@@ -1,6 +1,3 @@
-from contextlib import contextmanager
-
-
 class NotReadyError(Exception):
     pass
 
@@ -39,7 +36,7 @@ def not_ready():
 class BaseDeferred:
     def __new__(cls, *args, **kwargs):  # pylint: disable=unused-argument
         if not args or not isinstance(args[0], type):
-            raise TypeError(f"{cls.__name__} must be passed a type in brackets")
+            raise TypeError(f"{cls.__name__} must be passed a type in brackets")  # pragma: no cover
         return super().__new__(cls)
 
     def __init__(self, typ: type):
@@ -54,15 +51,15 @@ class BaseDeferred:
         return lambda *args, **kwargs: cls.construct(typ, *args, **kwargs)
 
     def __len__(self):
-        raise NotImplementedError()
+        raise NotImplementedError()  # pragma: no cover
 
     def len(self):
-        if self.typ is not bytes:
+        if self.typ is not bytes:  # pragma: no cover
             raise TypeError(f"Can only calculate len() of {type(self).__name__}[bytes], not {type(self).__name__}[{self.typ.__name__}]")
         return Deferred[int](lambda: len(wait(self)))
 
     def __repr__(self):
-        raise NotImplementedError()
+        raise NotImplementedError()  # pragma: no cover
 
     def __add__(self, rhs):
         if self.typ is int:
@@ -75,7 +72,7 @@ class BaseDeferred:
                 return self
             return Concatenator[self.typ]([self, rhs])
         else:
-            raise TypeError(f"Don't know how to add {self.typ.__name__}")
+            raise TypeError(f"Don't know how to add {self.typ.__name__}")  # pragma: no cover
 
     def __radd__(self, lhs):
         if self.typ is int:
@@ -88,22 +85,27 @@ class BaseDeferred:
                 return self
             return Concatenator[self.typ]([lhs, self])
         else:
-            raise TypeError(f"Don't know how to add {self.typ.__name__}")
+            raise TypeError(f"Don't know how to add {self.typ.__name__}")  # pragma: no cover
 
     def __sub__(self, rhs):
         if self.typ is int:
             return self + (-rhs)
-        else:
+        else:  # pragma: no cover
             raise TypeError(f"Don't know how to subtract {self.typ.__name__}")
 
     def __rsub__(self, lhs):
         if self.typ is int:
             return lhs + (-self)
-        else:
+        else:  # pragma: no cover
             raise TypeError(f"Don't know how to subtract {self.typ.__name__}")
 
     def __neg__(self):
         return LinearPolynomial[self.typ]({self: -1})
+
+    def __pos__(self):
+        if self.typ is not int:  # pragma: no cover
+            raise TypeError(f"Don't know how to __pos__ {self.typ.__name__}")
+        return self
 
     def __mul__(self, rhs):
         if self.typ is int and not isinstance(rhs, BaseDeferred):
@@ -122,7 +124,7 @@ class Deferred(BaseDeferred):
         Deferred.next_instance_id += 1
 
     @classmethod
-    def construct(cls, typ, fn):
+    def construct(cls, typ, fn):  # pylint: disable=arguments-differ
         with try_compute:
             return fn()
         return cls(typ, fn)
@@ -162,7 +164,7 @@ Deferred.next_instance_id = 1
 
 class LinearPolynomial(BaseDeferred):
     def __init__(self, typ, coeffs=None, constant_term=0):
-        if typ is not int:
+        if typ is not int:  # pragma: no cover
             raise TypeError(f"Can only instantiate LinearPolynomial[int], not LinearPolynomial[{typ.__name__}]")
         super().__init__(typ)
         if coeffs is None:
@@ -177,7 +179,7 @@ class LinearPolynomial(BaseDeferred):
                 else:
                     self.coeffs[key] = value
         for key in self.coeffs:
-            if key.typ is not int:
+            if key.typ is not int:  # pragma: no cover
                 raise TypeError(f"LinearPolynomial variable has an invalid type {key.typ.__name__}")
         self.coeffs = {key: value for key, value in self.coeffs.items() if value != 0}
         self.constant_term = constant_term
@@ -285,7 +287,7 @@ class SizedDeferred(Deferred):
         self.size = size
 
     @classmethod
-    def construct(cls, typ, size, fn):
+    def construct(cls, typ, size, fn):  # pylint: disable=arguments-differ
         with try_compute:
             return fn()
         return cls(typ, size, fn)
@@ -304,10 +306,6 @@ class Promise(BaseDeferred):
         self.value = None
         self.settled = False
 
-    @classmethod
-    def construct(cls, typ, name):
-        return cls(typ, name)
-
     def settle(self, value):
         assert not self.settled
         self.value = value
@@ -319,7 +317,7 @@ class Promise(BaseDeferred):
     def wait(self):
         if not self.settled:
             not_ready()
-            raise Exception(f"Promise {self!r} is not ready")
+            raise Exception(f"Promise {self!r} is not ready")  # pragma: no cover
         return self.value
 
     def optimize(self):
