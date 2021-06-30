@@ -1,4 +1,4 @@
-.PHONY: all test
+.PHONY: all test lint cov mut
 
 
 all:

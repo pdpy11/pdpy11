@@ -191,8 +191,14 @@ def metacommand(fn=None, size=None):
     return fn
 
 
-@metacommand(size=lambda state, *operands: len(operands))
+@metacommand(size=lambda state, *operands: len(operands) or 1)
 def byte(state, *operands) -> bytes:
+    if not operands:
+        reports.warning(
+            "implicit-operand",
+            (state["insn"].ctx_start, state["insn"].ctx_end, "'.byte' without an operand is implicitly treated as '.byte 0'.\nPlease consider inserting the zero explicitly.")
+        )
+        return b"\x00"
     def encode_i8(operand):
         value = get_as_int(state, "'.byte' operand", state["insn"], operand, bitness=8, unsigned=False, recommend_ascii=True)
         assert -2 ** 8 < value < 2 ** 8
@@ -201,24 +207,50 @@ def byte(state, *operands) -> bytes:
     return b"".join(encode_i8(operand) for operand in operands)
 
 
-@metacommand(size=lambda state, *operands: 2 * len(operands))
+@metacommand(size=lambda state, *operands: 2 * (len(operands) or 1))
 def word(state, *operands) -> bytes:
+    prefix = b""
+    if wait(state["emit_address"]) % 2 == 1:
+        prefix = b"\x00"
+        reports.error(
+            "odd-address",
+            (state["insn"].ctx_start, state["insn"].ctx_end, "This '.word' was emitted on an odd address.\nThe pointer was automatically adjusted one byte forward by inserting a null byte.\nThis may break labels and address calculation in your program;\nplease add '.even' or '.byte 0' where necessary.")
+        )
+    if not operands:
+        reports.warning(
+            "implicit-operand",
+            (state["insn"].ctx_start, state["insn"].ctx_end, "'.word' without an operand is implicitly treated as '.word 0'.\nPlease consider inserting the zero explicitly.")
+        )
+        return prefix + b"\x00\x00"
     def encode_i16(operand):
         value = get_as_int(state, "'.word' operand", state["insn"], operand, bitness=16, unsigned=False, recommend_ascii=True)
         assert -2 ** 16 < value < 2 ** 16
         value %= 2 ** 16
         return struct.pack("<H", value)
-    return b"".join(encode_i16(operand) for operand in operands)
+    return prefix + b"".join(encode_i16(operand) for operand in operands)
 
 
-@metacommand(size=lambda state, *operands: 4 * len(operands))
+@metacommand(size=lambda state, *operands: 4 * (len(operands) or 1))
 def dword(state, *operands) -> bytes:
+    prefix = b""
+    if wait(state["emit_address"]) % 2 == 1:
+        prefix = b"\x00"
+        reports.error(
+            "odd-address",
+            (state["insn"].ctx_start, state["insn"].ctx_end, "This '.dword' was emitted on an odd address.\nThe pointer was automatically adjusted one byte forward by inserting a null byte.\nThis may break labels and address calculation in your program;\nplease add '.even' or '.byte 0' where necessary.")
+        )
+    if not operands:
+        reports.warning(
+            "implicit-operand",
+            (state["insn"].ctx_start, state["insn"].ctx_end, "'.dword' without an operand is implicitly treated as '.dword 0'.\nPlease consider inserting the zero explicitly.")
+        )
+        return prefix + b"\x00\x00\x00\x00"
     def encode_i32(operand):
         value = get_as_int(state, "'.dword' operand", state["insn"], operand, bitness=32, unsigned=False, recommend_ascii=True)
         assert -2 ** 32 < value < 2 ** 32
         value %= 2 ** 32
         return struct.pack("<H", value >> 16) + struct.pack("<H", value & 0xffff)
-    return b"".join(encode_i32(operand) for operand in operands)
+    return prefix + b"".join(encode_i32(operand) for operand in operands)
 
 
 # pylint: disable=redefined-builtin
@@ -250,6 +282,14 @@ def even(state) -> bytes:
 
 
 @metacommand
+def odd(state) -> bytes:
+    # As if that's any useful...
+    return b"\x00" if wait(state["emit_address"]) % 2 == 0 else b""
+
+
+# TODO: Macro-11 seems to have .rept metacommand. That is probably the same as
+# .repeat but '.rept X [code] .endr' instead of '.repeat X { [code] }'
+@metacommand
 def repeat(state, cnt, body: CodeBlock) -> bytes:
     addr = state["emit_address"]
     result = b""
@@ -267,3 +307,53 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
             addr += len(chunk)
         result += chunk
     return result
+
+
+# TODO: Macro-11 has .page, .print, .sbttl, .list and .nlist metacommands which
+# we can probably ignore as Rhialto's implementation does
+
+# TODO: What's .ident?
+
+# TODO: implement .radix. Macro-11 supports only radix 8, 10, 16 and 2 but we
+# can probably be more loose
+
+# TODO: What's .flt4 / .flt2?
+
+# TODO: Support .error (same as '#pragma error' in C)
+
+# TODO: .save and .restore
+
+# TODO: .narg, .nchr, .ntype
+
+# TODO: Support .include. Unlike pdp11asm's '.include', it is recursive, i.e.
+# you can have code after '.include' and it will be compiled. That's where we're
+# different from pdp11asm and pdpy in pdp11asm-compatible mode, but you really
+# shouldn't have relied on that behavior (and we can always emit a warning
+# in pdp11asm compatibility mode or something anyway)
+
+# TODO: .irp, .irpc (what's that?)
+
+# TODO: .library, .mcall, .macro, .mexit, .endm
+
+# TODO: .enabl and .disable for options: ama, lsb, gbl, lc, lcm and probably
+# others.
+#   ama means 'interpret X as @#X'
+#   gbl means 'treat undefined symbols as imported globals'
+# No idea what other options mean.
+# lsb seems to be handled for labels ending with a dollar, e.g. '1$' is
+# implicitly transformed to '1$[lsb]' where [lsb] is the current lsb value
+
+# TODO: .limit
+
+# TODO: .title
+
+# TODO: .end seems to take an optional operand?
+
+# TODO: conditionals: .ifdf, .iif, .if, .iff, .ift, .iftf, .endc
+
+# TODO: sections: .asect, .csect, .psect
+
+# TODO: .weak and .globl, no idea what .weak means
+
+# TODO: they say .word on an odd boundary should raise a warning and skip to the
+# nearest even address

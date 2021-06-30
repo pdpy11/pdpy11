@@ -62,23 +62,17 @@ class handle_reports:
         assert self.handlers_stack.pop() is self
 
         if hasattr(self.obj, "__exit__"):
-            return self.obj.__exit__(exc_type, exc_value, exc_tb)
+            return_code = self.obj.__exit__(exc_type, exc_value, exc_tb)
+        else:
+            return_code = False
 
         if exc_type is not UnrecoverableError and self.is_error_condition:
             raise UnrecoverableError()
 
-        return False
+        return return_code
 
 
 class TextHandler:
-    def __enter__(self):
-        return self
-
-
-    def __exit__(self, exc_type, exc_value, exc_tb):
-        pass
-
-
     def __call__(self, priority, identifier, *reports):
         for file_i, (filename, file_reports) in enumerate(itertools.groupby(reports, key=lambda report: report[0].filename)):
             file_reports = list(file_reports)

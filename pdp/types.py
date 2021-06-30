@@ -75,6 +75,21 @@ class ParenthesizedExpression(ExpressionToken):
         return self.expr.resolve(state)
 
 
+class BracketedExpression(ExpressionToken):
+    # pylint: disable=arguments-differ
+    def init(self, expr):
+        self.expr = expr
+
+    def __repr__(self):
+        return f"<{self.expr!r}>"
+
+    def __eq__(self, rhs):
+        return isinstance(rhs, type(self)) and self.expr == rhs.expr
+
+    def resolve(self, state):
+        return self.expr.resolve(state)
+
+
 class Symbol(ExpressionToken):
     # pylint: disable=arguments-differ
     def init(self, name: str):

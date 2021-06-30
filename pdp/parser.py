@@ -160,6 +160,8 @@ newline = Parser.regex(r"\s*\n|\s*;[^\n]*", skip_whitespace_before=False)
 comma = Parser.literal(",")
 opening_parenthesis = Parser.literal("(")
 closing_parenthesis = Parser.literal(")")
+opening_angle_bracket = Parser.literal("<")
+closing_angle_bracket = Parser.literal(">")
 opening_bracket = Parser.literal("{")
 closing_bracket = Parser.literal("}")
 plus = Parser.literal("+")
@@ -181,6 +183,11 @@ instruction_name = Parser.regex(r"\.?[a-zA-Z_][a-zA-Z_0-9]*")
 
 @Parser
 def number(ctx):
+    # TODO: Macro-11 supports ^B, ^O, ^D, ^X standing for binary, octal, decimal and hexadecimal
+    # TODO: Macro-11 supports ^R for radix-50. ^R<...> works, ^R^/.../ works, maybe something else works too
+    # TODO: Macro-11 supports ^F... for floating-point numbers, no idea how the format looks like
+    # TODO: Macro-11 supports ^P for psect limits, whatever that means
+
     negative = minus(ctx, maybe=True)
     sign = -1 if negative else 1
     sign_str = "-" if negative else ""
@@ -263,6 +270,10 @@ def label(ctx):
 
 @Parser
 def assignment(ctx):
+    # TODO: Macro-11 supports '. = X' syntax which we should probably interpret
+    # as an alias for '.blkb X - .'. Or as '.link X' if nothing has been emitted
+    # yet.
+
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
@@ -404,6 +415,67 @@ def character_string(ctx):
 
 @Parser
 def string(ctx):
+    # TODO: Terrible. Macro-11 supports 'x for single-character constants and
+    # "ab for two-character constants which are implicitly converted to a
+    # number, immediately. Other assemblers support closing quotes: 'x' and
+    # "ab".
+
+    # Old PDPy11 handles this in a different way, it requires closing quotes
+    # like 'x' and "ab", doesn't see any difference between ' and " and even
+    # allows longer strings. Then it supports /abacaba/ for strings which other
+    # assemblers (except maybe pdp11asm) don't support, and doesn't support
+    # ^/abacaba/ and <abacaba> which other compilers do support (although in
+    # a different context)
+
+    # Another problem is that the new assembler silently interprets #"a"+"b" as
+    # #"ab" while other assemblers (including older PDPy11, luckily) interpret
+    # it as #97.+98., because the new compiler supports + for concatenation. We
+    # should come up with a better solution.
+
+
+    # Now let's talk about 'bracketing'. Macro-11 supports two bracketing
+    # formats: <...> and ^/.../, in the latter case '/' may be any puncutation
+    # character, though '/' is much more common. In usual context, these two
+    # are the same and are used for the same purpose as parentheses in math.
+
+
+    # When Macro-11 expects a string (which happens after ^R (radix 50), .nchr,
+    # '.if b', '.if idn' and others, '=' in macro defaults, .irp and .irpc), the
+    # two types of brackets are redefined to contain a string. For example, all
+    # the following codes encode the string 'abacaba':
+    #   <abacaba>
+    #   ^/abacaba/
+    #   ^"abacaba"
+    #   ^,abacaba,
+    # Angle brackets can be nested, e.g. this encodes string 'aba<ca>ba':
+    #   <aba<ca>ba>
+    # If, however, neither ^ nor < are matched, it just assumes the next token
+    # (until whitespace, a comma or a semicolon) is the string contents.
+
+    # However!
+
+    # After .include and .library, the following formats are okay:
+    #   /abacaba/
+    #   "abacaba"
+    #   ,abacaba,
+    # But angle brackets and ^/.../ are not supported.
+
+    # After .ascii, .asciz and .rad50 it's almost the same as .include, but
+    # angle brackets are defined to encode single bytes. The following strings
+    # all decode to 'abacaba':
+    #   /abacaba/
+    #   "abacaba"
+    #   ,abacaba,
+    #   /aba/ <99.> /aba/
+
+
+    # The above means that we can no longer parse all instructions (meta- or
+    # not) the same way. This highlights a problem with macros because at
+    # parsing time we can no longer detect whether "ab" is a number or a string
+    # and whether "ab c" is a single string or two tokens and whether that
+    # causes a parsing error.
+
+
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
@@ -442,12 +514,24 @@ def expression_literal_rec(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    if opening_parenthesis(ctx, maybe=True, lookahead=True):
+    if (opening_parenthesis | opening_angle_bracket)(ctx, maybe=True, lookahead=True):
         value = None
     else:
         value = expression_literal(ctx)
 
-    while opening_parenthesis(ctx, maybe=True):
+    while True:
+        # <x> is allowed and means the same as (x)
+        # (a)(b) is a call with callee (a) and operand b
+        # <a>(b) is a call with callee <a> and operand b
+        # (a)<b> is a syntax error
+        # <a><b> is a syntax error too
+        if value is None:
+            bracket = (opening_parenthesis | opening_angle_bracket)(ctx, maybe=True)
+        else:
+            bracket = opening_parenthesis(ctx, maybe=True)
+        if bracket is None:
+            break
+
         ctx_after_paren = ctx.save()
         ctx.skip_whitespace()
 
@@ -460,7 +544,7 @@ def expression_literal_rec(ctx):
 
         ctx.skip_whitespace()
 
-        closing_parenthesis(ctx, report=(
+        (closing_parenthesis if bracket == "(" else closing_angle_bracket)(ctx, report=(
             reports.critical,
             "invalid-expression",
             (ctx, ctx, "This is not a operator, so a closing parenthesis is expected here"),
@@ -468,7 +552,10 @@ def expression_literal_rec(ctx):
         ))
 
         if value is None:
-            value = types.ParenthesizedExpression(ctx_start, ctx, expr)
+            if bracket == "(":
+                value = types.ParenthesizedExpression(ctx_start, ctx, expr)
+            else:
+                value = types.BracketedExpression(ctx_start, ctx, expr)
         else:
             value = operators.call(ctx_start, ctx, value, expr)
 
@@ -513,6 +600,11 @@ def expression(ctx):
             stack.append(operator(info["ctx_start"], ctx_end, op_operand))
 
 
+    # TODO: Macro-11 doesn't support operator precedence, it evaluates infix
+    # operators left to right. This may cause problems in code such as
+    # '1 * 2 + 3' which Macro-11 evaluates to 11 (oct) and PDPy11 evaluates to
+    # 5. We should emit a warning or handle this differently in Macro-11 and
+    # pdp11asm compatibility modes.
     while True:
         ctx_prev = ctx.save()
 
@@ -572,6 +664,12 @@ def expression(ctx):
 
 @Parser
 def instruction(ctx):
+    # TODO: Macro-11 supports .rem metacommand for comments, like this:
+    #   .rem / My comment goes here
+    #   still a comment
+    #   comment closes here /
+    # (the first character after '.rem' is a 'quotation' sign)
+
     ctx_start = ctx.save()
     insn_name = instruction_name(ctx)
     if insn_name.lower() in REGISTER_NAMES:

@@ -80,6 +80,9 @@ def test_immediate_operand():
     compare_with_old("emt 0")
     expect_same("emt -1", "emt 377")
 
+    with util.expect_warning("excess-hash"):
+        expect_same("emt #15", "emt 15")
+
     with util.expect_error("value-out-of-bounds"):
         expect_same("emt 400", "emt 0")
     with util.expect_error("value-out-of-bounds"):
@@ -122,9 +125,23 @@ def test_metacommands():
 
     expect_binary(".byte 1\n.even", b"\x01\x00")
     expect_binary(".byte 1, 2\n.even", b"\x01\x02")
+    expect_binary(".byte 1\n.odd", b"\x01")
+    expect_binary(".byte 1, 2\n.odd", b"\x01\x02\x00")
 
     expect_same(".repeat 10 { tst #1 }", "tst #1\n" * 8)
     expect_binary(".repeat 10 { .blkb cnt }\ncnt = 10", b"\x00" * 64)
+
+    with util.expect_error("odd-address"):
+        expect_same(".byte 1\n.word 2", ".byte 1, 0\n.word 2")
+    with util.expect_error("odd-address"):
+        expect_same(".byte 1\n.dword 2", ".byte 1, 0\n.dword 2")
+
+    with util.expect_warning("implicit-operand"):
+        expect_same(".byte", ".byte 0")
+    with util.expect_warning("implicit-operand"):
+        expect_same(".word", ".word 0")
+    with util.expect_warning("implicit-operand"):
+        expect_same(".dword", ".dword 0")
 
     with util.expect_error("excess-hash"):
         expect_binary(".byte #0x12", b"\x12")
@@ -210,6 +227,29 @@ def test_math():
     expect_same(".word +6", ".word 6")
     expect_same(".word +(6)", ".word 6")
     expect_same(".word -(6)", ".word -6")
+    expect_same(".word +<6>", ".word 6")
+    expect_same(".word -<6>", ".word -6")
+    expect_same(".word ~100", ".word 177677")
+    expect_same(".word ^C100", ".word 177677")
+    expect_same(".word ^C(20+60)", ".word 177677")
+    expect_same(".word 179. % 57", ".word 46")
+    expect_same(".word 0b1100 & 0b1010", ".word 0b1000")
+    expect_same(".word 0b1100 ^ 0b1010", ".word 0b0110")
+    expect_same(".word 0b1100 | 0b1010", ".word 0b1110")
+    expect_same(".word 0b1100 ! 0b1010", ".word 0b1110")
+    expect_same(".word 123 << 6", ".word 12300")
+    expect_same(".word 1337 >> 6", ".word 13")
+    expect_same(".word 123 _ 6", ".word 12300")
+    expect_same(".word 1337 _ -6", ".word 13")
+
+
+def test_unexpected_register():
+    with util.expect_error("unexpected-register"):
+        compile("clr r1+1")
+    with util.expect_error("unexpected-register"):
+        compile("clr (r1+1)")
+    with util.expect_error("unexpected-register"):
+        compile("clr <r1>")
 
 
 def test_end():
@@ -254,6 +294,9 @@ def test_addressing():
 
     with util.expect_warning("implicit-index"):
         expect_same("inc @(r2)", "inc @0(r2)")
+
+    with util.expect_warning("legacy-deferred"):
+        expect_same("clr @r0", "clr (r0)")
 
 
 def test_branch():
@@ -339,3 +382,15 @@ def test_invalid_insn():
         compile("inc r1, r2")
     with util.expect_error("wrong-operands"):
         compile("nop r1")
+
+
+def test_numbers():
+    expect_same(".word 123.", ".word 173")
+    expect_same(".word 0x123", ".word 443")
+    expect_same(".word 0o123", ".word 123")
+    expect_same(".word 0b11010", ".word 32")
+
+    with util.expect_error("invalid-number"):
+        expect_same(".word 18", ".word 18.")
+    with util.expect_error("invalid-number"):
+        expect_same(".word 19", ".word 19.")

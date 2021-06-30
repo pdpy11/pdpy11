@@ -62,6 +62,13 @@ class RegisterModeOperandStub:
         elif isinstance(operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.expr)) is not None:
             # Register deferred
             return 0o10 | register, b""
+        elif isinstance(operand, operators.deferred) and (register := try_register_from_symbol(operand.operand)) is not None:
+            # Register deferred
+            reports.warning(
+                "legacy-deferred",
+                (operand.ctx_start, operand.ctx_end, f"@{register!r} is a legacy way of spelling ({register!r}), please use the new syntax")
+            )
+            return 0o10 | register, b""
         elif isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
             # Autoincrement
             return 0o20 | register, b""
@@ -186,6 +193,13 @@ class ImmediateOperandStub:
 
     def encode(self, operand, state):
         insn = state["insn"]
+
+        if isinstance(operand, operators.immediate):
+            reports.warning(
+                "excess-hash",
+                (operand.ctx_start, operand.ctx_end, f"'{insn.name.name}' instruction takes an immediate value implicitly, a hash is unnecessary")
+            )
+            operand = operand.operand
 
         def fn():
             value = wait(operand.resolve(state))

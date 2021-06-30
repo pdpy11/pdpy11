@@ -96,52 +96,108 @@ def operator(signature, precedence, associativity):
     return decorator
 
 
-@operator("x+", precedence=3, associativity="left")
+# Operators precedences are mostly copied from C
+
+@operator("x+", precedence=2, associativity="left")
 def postadd(x):
     raise NotImplementedError()
 
 
-@operator("x-", precedence=3, associativity="left")
+@operator("x-", precedence=2, associativity="left")
 def postsub(x):
     raise NotImplementedError()
 
 
-@operator("+x", precedence=3, associativity="left")
+@operator("+x", precedence=2, associativity="left")
 def pos(x):
     return +x
 
 
-@operator("-x", precedence=3, associativity="left")
+@operator("-x", precedence=2, associativity="left")
 def neg(x):
     return -x
 
 
-@operator("x * x", precedence=5, associativity="left")
+@operator("~x", precedence=2, associativity="left")
+def inv(x):
+    return ~x
+
+
+@operator("^C x", precedence=2, associativity="left")
+def inv2(x):
+    return ~x
+
+
+@operator("x * x", precedence=3, associativity="left")
 def mul(a, b):
     return a * b
 
 
-@operator("x / x", precedence=5, associativity="left")
+@operator("x / x", precedence=3, associativity="left")
 def div(a, b):
     return a // b
 
 
-@operator("x + x", precedence=6, associativity="left")
+@operator("x % x", precedence=3, associativity="left")
+def mod(a, b):
+    return a % b
+
+
+@operator("x + x", precedence=4, associativity="left")
 def add(a, b):
     return a + b
 
 
-@operator("x - x", precedence=6, associativity="left")
+@operator("x - x", precedence=4, associativity="left")
 def sub(a, b):
     return a - b
 
 
-@operator("#x", precedence=17, associativity="left")
+@operator("x << x", precedence=5, associativity="left")
+def lshift(a, b):
+    return a << b
+
+
+@operator("x >> x", precedence=5, associativity="left")
+def rshift(a, b):
+    return a >> b
+
+
+# It seems they were running out of characters.
+@operator("x _ x", precedence=5, associativity="left")
+def lsh(a, b):
+    if b >= 0:
+        return a << b
+    else:
+        return a >> -b
+
+
+@operator("x & x", precedence=8, associativity="left")
+def and_(a, b):
+    return a & b
+
+
+@operator("x ^ x", precedence=9, associativity="left")
+def xor(a, b):
+    return a ^ b
+
+
+@operator("x | x", precedence=10, associativity="left")
+def or_(a, b):
+    return a | b
+
+
+@operator("x ! x", precedence=10, associativity="left")
+def or2(a, b):
+    return a | b
+
+
+@operator("#x", precedence=15, associativity="left")
 def immediate(x):
     raise NotImplementedError()
 
 
-@operator("@x", precedence=17, associativity="left")
+@operator("@x", precedence=15, associativity="left")
 def deferred(x):
     raise NotImplementedError()
 

@@ -16,13 +16,12 @@ def main():
     # path = "/home/ivanq/Documents/k1801vm1/test.mac"
     path = "test.mac"
 
-    with reports.handle_reports(reports.TextHandler()):
-        with open(path) as f:
-            source = f.read()
-            # source = "clr lbl"
-            # source = "insn 1:"
-            # source = ".ascii \"\\x00\""
-#         source = """
+    with open(path) as f:
+        source = f.read()
+        # source = "clr lbl"
+        # source = "insn 1:"
+        # source = ".ascii \"\\x00\""
+        # source = """
 # e:
 # .repeat b - a {
 #     inc r2
@@ -37,17 +36,18 @@ def main():
 # }
 # """.strip()
 
-        with reports.handle_reports(reports.TextHandler()):
-            comp = Compiler()
-            comp.add_files(
-                [
-                    parse(path, source)
-                ]
-            )
-            base, code = comp.link()
 
-        with open("result.bin", "wb") as f:
-            f.write(struct.pack("<HH", base, len(code)) + code)
+    with reports.handle_reports(reports.TextHandler()):
+        comp = Compiler()
+        comp.add_files(
+            [
+                parse(path, source)
+            ]
+        )
+        base, code = comp.link()
+
+    with open("result.bin", "wb") as f:
+        f.write(struct.pack("<HH", base, len(code)) + code)
 
 
 main()

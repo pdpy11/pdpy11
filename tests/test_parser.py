@@ -1,18 +1,18 @@
-import json
 import pytest
 
 from pdp.operators import *
-from pdp.parser import parse
+from pdp.parser import parse as parse_
 from pdp.types import *
 
 import util
 
 
+def parse(code):
+    return parse_("test.mac", code)
+
+
 def expect_code(code, *insns):
-    with util.expect_no_warnings():
-        parsed = parse("test.mac", code)
-        expected = File("test.mac", CodeBlock(None, None, list(insns)))
-        assert parsed == expected
+    assert parse(code) == File("test.mac", CodeBlock(None, None, list(insns)))
 
 
 def c(fn):
@@ -29,7 +29,8 @@ A = c(Symbol)("a")
 B = c(Symbol)("b")
 C = c(Symbol)("c")
 DOT = c(InstructionPointer)()
-paren = c(ParenthesizedExpression)
+paren = lambda expr: c(ParenthesizedExpression)(expr)
+angle = lambda expr: c(BracketedExpression)(expr)
 
 def INSN(*operands):
     return c(Instruction)(c(Symbol)("insn"), list(operands))
@@ -125,10 +126,24 @@ def test_precedence_two(a_code, a_value, b_code, b_value, op_code, op):
 
 def test_precedence_three():
     expect_code("insn #1 + 2 * 3", INSN(c(immediate)(c(add)(ONE, c(mul)(TWO, THREE)))))
-    expect_code("insn #(1 + 2) * 3", INSN(c(immediate)(c(mul)(paren(c(add)(ONE, TWO)), THREE))))
     expect_code("insn #1 * 2 + 3", INSN(c(immediate)(c(add)(c(mul)(ONE, TWO), THREE))))
-    expect_code("insn #1 * (2 + 3)", INSN(c(immediate)(c(mul)(ONE, paren(c(add)(TWO, THREE))))))
     expect_code("insn #1 * 2 * 3", INSN(c(immediate)(c(mul)(c(mul)(ONE, TWO), THREE))))
+
+
+def test_brackets():
+    expect_code("insn #(1 + 2) * 3", INSN(c(immediate)(c(mul)(paren(c(add)(ONE, TWO)), THREE))))
+    expect_code("insn #1 * (2 + 3)", INSN(c(immediate)(c(mul)(ONE, paren(c(add)(TWO, THREE))))))
+
+    expect_code("insn #<1 + 2> * 3", INSN(c(immediate)(c(mul)(angle(c(add)(ONE, TWO)), THREE))))
+    expect_code("insn #1 * <2 + 3>", INSN(c(immediate)(c(mul)(ONE, angle(c(add)(TWO, THREE))))))
+
+    expect_code("insn (1)(2)", INSN(c(call)(paren(ONE), TWO)))
+    expect_code("insn <1>(2)", INSN(c(call)(angle(ONE), TWO)))
+
+    with util.expect_error("invalid-insn", "missing-whitespace"):
+        expect_code("insn (1)<2>", INSN(c(call)(paren(ONE), TWO)))
+    with util.expect_error("invalid-insn", "missing-whitespace"):
+        expect_code("insn <1><2>", INSN(c(call)(angle(ONE), TWO)))
 
 
 @pytest.mark.parametrize(
@@ -146,12 +161,76 @@ def test_precedence_three():
         ("0b10110", 0b10110)
     ]
 )
-def test_numbers(code, value):
+def test_numbers1(code, value):
     expect_code(f"insn #{code}", INSN(c(immediate)(c(Number)(code, value))))
 
 def test_numbers2():
     expect_code("insn #81", INSN(c(immediate)(c(Number)("81", 81, invalid_base8=True))))
     expect_code("insn #91", INSN(c(immediate)(c(Number)("91", 91, invalid_base8=True))))
+
+
+@pytest.mark.parametrize("name", ["hello", "HELLO", "1", "0", "99", "12$", "a_"])
+def test_labels(name):
+    expect_code(f"{name}: insn\n{name}:", c(Label)(name), INSN(), c(Label)(name))
+    if not name[0].isdigit():
+        expect_code(f"insn {name}", INSN(c(Symbol)(name)))
+    expect_code(f"insn {name}:", INSN(c(Symbol)(name)))
+
+
+@pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_"])
+def test_assignment(name):
+    expect_code(f"{name} = 1", c(Assignment)(c(Symbol)(name), ONE))
+    expect_code(f"{name} = 1 + 2", c(Assignment)(c(Symbol)(name), c(add)(ONE, TWO)))
+
+
+def test_comments():
+    expect_code(f"a = 1 ; amazing, isn't it?", c(Assignment)(A, ONE))
+    expect_code(f"a = 1\n; amazing, isn't it?", c(Assignment)(A, ONE))
+    expect_code(f"a = 1\n; amazing, isn't it?\n; one more comment\nb = 2", c(Assignment)(A, ONE), c(Assignment)(B, TWO))
+
+
+def test_context():
+    # TODO: much more throughout tests
+    parsed = parse(" insn\n   insn2")
+    assert repr(parsed.body.insns[0].ctx_start) == "test.mac:1:2"
+    assert repr(parsed.body.insns[0].ctx_end) == "test.mac:1:6"
+    assert repr(parsed.body.insns[1].ctx_start) == "test.mac:2:4"
+    assert repr(parsed.body.insns[1].ctx_end) == "test.mac:2:9"
+
+
+def test_unexpected_reserved_name():
+    with util.expect_warning("suspicious-name"):
+        parse("mov: nop")
+    with util.expect_warning("suspicious-name"):
+        parse("fadd: nop")
+    with util.expect_warning("suspicious-name"):
+        parse("r0: nop")
+
+    with util.expect_warning("suspicious-name"):
+        parse("mov = 1")
+    with util.expect_warning("suspicious-name"):
+        parse("fadd = 1")
+    with util.expect_warning("suspicious-name"):
+        parse("r0 = 1")
+
+    with util.expect_warning("suspicious-name"):
+        parse("clr mov:")
+    with util.expect_warning("suspicious-name"):
+        parse("clr fadd:")
+    with util.expect_warning("suspicious-name"):
+        parse("clr r0:")
+
+    with util.expect_warning("suspicious-name"):
+        parse("mov clr, r1")
+
+    with util.expect_warning("missing-newline"):
+        parse("clr mov")
+    with util.expect_warning("missing-newline"):
+        parse("clr fadd")
+    parse("clr r0")
+
+    with util.expect_warning("suspicious-name"):
+        parse("r0")
 
 
 @pytest.mark.parametrize(
@@ -177,34 +256,32 @@ def test_numbers2():
         ("'x", "x")
     ]
 )
-def test_string(code, value):
+def test_string1(code, value):
     expect_code(f"insn {code}", INSN(c(String)(code[0], value)))
 
 
-@pytest.mark.parametrize("name", ["hello", "HELLO", "1", "0", "99", "12$", "a_"])
-def test_labels(name):
-    expect_code(f"{name}: insn\n{name}:", c(Label)(name), INSN(), c(Label)(name))
-    if not name[0].isdigit():
-        expect_code(f"insn {name}", INSN(c(Symbol)(name)))
-    expect_code(f"insn {name}:", INSN(c(Symbol)(name)))
+def test_string2():
+    with util.expect_error("invalid-escape"):
+        parse("s = \"\\f\"")
+    with util.expect_error("unterminated-string"):
+        parse("s = '")
+    with util.expect_error("invalid-character"):
+        parse("s = 'a'")
+    with util.expect_error("invalid-character"):
+        parse("s = ''")
+    with util.expect_error("unterminated-string"):
+        parse("s = \"a")
 
 
-@pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_"])
-def test_assignment(name):
-    expect_code(f"{name} = 1", c(Assignment)(c(Symbol)(name), ONE))
-    expect_code(f"{name} = 1 + 2", c(Assignment)(c(Symbol)(name), c(add)(ONE, TWO)))
-
-
-def test_comments():
-    expect_code(f"a = 1 ; amazing, isn't it?", c(Assignment)(A, ONE))
-    expect_code(f"a = 1\n; amazing, isn't it?", c(Assignment)(A, ONE))
-    expect_code(f"a = 1\n; amazing, isn't it?\n; one more comment\nb = 2", c(Assignment)(A, ONE), c(Assignment)(B, TWO))
-
-
-def test_context():
-    # TODO: much more throughout tests
-    parsed = parse("test.mac", " insn\n   insn2")
-    assert repr(parsed.body.insns[0].ctx_start) == "test.mac:1:2"
-    assert repr(parsed.body.insns[0].ctx_end) == "test.mac:1:6"
-    assert repr(parsed.body.insns[1].ctx_start) == "test.mac:2:4"
-    assert repr(parsed.body.insns[1].ctx_end) == "test.mac:2:9"
+def test_insn_syntax():
+    parse("insn #(1) nop")
+    with util.expect_error("invalid-insn"):
+        parse("insn,")
+    with util.expect_error("missing-whitespace"):
+        parse("insn#1")
+    with util.expect_error("missing-whitespace"):
+        parse("insn #(1)nop")
+    with util.expect_warning("missing-newline"):
+        parse("insn .word 1")
+    with util.expect_error("missing-newline", "invalid-insn"):
+        parse("insn%")

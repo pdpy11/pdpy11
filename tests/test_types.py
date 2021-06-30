@@ -16,7 +16,8 @@ def test_repr():
             mov #(1 + 2), r1 ;
             inc -(r1) ;
             dec (r2)+ ;
-            mov #1, 4(sp)
+            mov #1, 4(sp) ;
+            .word <12>
         } ;
         x = 1 ;
         .ascii "Hello, world!" ;

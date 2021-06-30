@@ -44,12 +44,3 @@ def expect_error(*errors):
     matched_errors = sorted(matched_errors)
     errors = sorted(errors)
     assert matched_errors == errors, f"{matched_errors} != {errors}"
-
-
-@contextmanager
-def expect_no_warnings():
-    def report_handler(priority, identifier, *lst_reports):
-        raise Exception(identifier)  # pragma: no cover
-
-    with reports.handle_reports(report_handler):
-        yield
