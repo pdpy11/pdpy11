@@ -1,3 +1,4 @@
+from .containers import CaseInsensitiveDict
 from .types import ExpressionToken
 
 
@@ -57,9 +58,9 @@ class PostfixOperator(ExpressionToken):
 
 
 operators = {
-    InfixOperator: {},
-    PrefixOperator: {},
-    PostfixOperator: {}
+    InfixOperator: CaseInsensitiveDict(),
+    PrefixOperator: CaseInsensitiveDict(),
+    PostfixOperator: CaseInsensitiveDict()
 }
 
 
@@ -80,6 +81,8 @@ def operator(signature, precedence, associativity):
         kind = PostfixOperator
     else:
         assert False  # pragma: no cover
+
+    assert char, "Operator must not be empty"
 
     class Class(kind):
         pass
@@ -123,7 +126,7 @@ def inv(x):
     return ~x
 
 
-@operator("^C x", precedence=2, associativity="left")
+@operator("^c x", precedence=2, associativity="left")
 def inv2(x):
     return ~x
 

@@ -23,3 +23,8 @@ class CaseInsensitiveDict:
 
     def items(self):
         return self.container.values()
+
+
+    def __iter__(self):
+        for key, value in self.container.values():
+            yield key

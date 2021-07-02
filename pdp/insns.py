@@ -9,6 +9,13 @@ from . import operators
 from . import reports
 
 
+def try_accumulator_from_symbol(operand):
+    if isinstance(operand, Symbol):
+        name = operand.name.lower()
+        if len(name) == 3 and "ac0" <= name <= "ac5":
+            return int(name[2])
+    return None
+
 
 REGISTER_NAMES = {
     "r0": 0,
@@ -23,7 +30,6 @@ REGISTER_NAMES = {
     "pc": 7
 }
 
-
 def try_register_from_symbol(operand):
     if isinstance(operand, Symbol) and operand.name.lower() in REGISTER_NAMES:
         return REGISTER_NAMES[operand.name.lower()]
@@ -32,8 +38,9 @@ def try_register_from_symbol(operand):
 
 
 class RegisterOperandStub:
-    def __init__(self, pattern_char):
+    def __init__(self, pattern_char, bit_indexes):
         self.pattern_char = pattern_char
+        self.bit_indexes = bit_indexes
 
     def encode(self, operand, state):
         if (register := try_register_from_symbol(operand)) is not None:
@@ -43,15 +50,16 @@ class RegisterOperandStub:
             idx = {"s": "first", "d": "second"}[self.pattern_char]
             reports.error(
                 "invalid-addressing",
-                (insn.ctx_start, insn.ctx_end, f"'{insn.name.name}' command accepts a register as the {idx} argument"),
+                (insn.ctx_start, insn.ctx_end, f"Instruction '{insn.name.name}' accepts a register as the {idx} argument"),
                 (operand.ctx_start, operand.ctx_end, "...but this value does not look like a register")
             )
             raise reports.RecoverableError("Register expected, expression passed")
 
 
 class RegisterModeOperandStub:
-    def __init__(self, pattern_char):
+    def __init__(self, pattern_char, bit_indexes):
         self.pattern_char = pattern_char
+        self.bit_indexes = bit_indexes
 
     def encode(self, operand, state):
         # Good luck debugging this
@@ -66,7 +74,7 @@ class RegisterModeOperandStub:
             # Register deferred
             reports.warning(
                 "legacy-deferred",
-                (operand.ctx_start, operand.ctx_end, f"@{register!r} is a legacy way of spelling ({register!r}), please use the new syntax")
+                (operand.ctx_start, operand.ctx_end, f"{operand!r} is a legacy way of spelling ({operand.operand!r}), please use the new syntax")
             )
             return 0o10 | register, b""
         elif isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
@@ -91,7 +99,7 @@ class RegisterModeOperandStub:
             # Index deferred with implicit zero index
             reports.warning(
                 "implicit-index",
-                (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have @({register!r}) mode. This expression is parsed as @0({register!r}), which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for explicitness.")
+                (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have {operand!r} addressing mode.\nThis expression is parsed as @0{operand.operand!r}, which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for clarity.")
             )
             return 0o70 | register, b"\x00\x00"
         elif isinstance(operand, operators.immediate):
@@ -108,10 +116,29 @@ class RegisterModeOperandStub:
             return 0o67, SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(operand.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
 
 
+class FP11RMOperandStub(RegisterModeOperandStub):
+    def encode(self, operand, state):
+        if (acc := try_accumulator_from_symbol(operand)) is not None:
+            # FP11 accumulator
+            return acc, b""
+        elif (register := try_register_from_symbol(operand)) is not None:
+            (reports.warning if register < 6 else reports.error)(
+                "implicit-accumulator",
+                (
+                    operand.ctx_start, operand.ctx_end,
+                    f"This FP11 instruction takes either an accumulator, or any CPU addressing mode except simple register for this operand.\n{operand!r} will be implicitly treated as ac{register} in this context -- please use the latter mnemonic for clarity."
+                    + ("" if register < 6 else "\nMoreover, accumulator ac{register} does not exist, because only accumulators ac0 to ac5 exist.")
+                )
+            )
+            return register, b""
+        else:
+            return super().encode(operand, state)
+
+
 class OffsetOperandStub:
-    def __init__(self, pattern_char, bitness, unsigned):
+    def __init__(self, pattern_char, bit_indexes, unsigned):
         self.pattern_char = pattern_char
-        self.bitness = bitness
+        self.bit_indexes = bit_indexes
         self.unsigned = unsigned
 
 
@@ -158,8 +185,9 @@ class OffsetOperandStub:
                 )
                 error = True
             else:
-                min_offset = -2 ** (self.bitness + self.unsigned) + 2 * self.unsigned
-                max_offset = 0 if self.unsigned else 2 ** self.bitness - 2
+                bitness = len(self.bit_indexes)
+                min_offset = -2 ** (bitness + self.unsigned) + 2 * self.unsigned
+                max_offset = 0 if self.unsigned else 2 ** bitness - 2
                 if not min_offset <= offset <= max_offset:
                     reports.error(
                         "branch-out-of-bounds",
@@ -185,9 +213,9 @@ class OffsetOperandStub:
 
 
 class ImmediateOperandStub:
-    def __init__(self, pattern_char, bitness, unsigned):
+    def __init__(self, pattern_char, bit_indexes, unsigned):
         self.pattern_char = pattern_char
-        self.bitness = bitness
+        self.bit_indexes = bit_indexes
         self.unsigned = unsigned
 
 
@@ -202,6 +230,7 @@ class ImmediateOperandStub:
             operand = operand.operand
 
         def fn():
+            bitness = len(self.bit_indexes)
             value = wait(operand.resolve(state))
             if self.unsigned and value < 0:
                 reports.error(
@@ -211,8 +240,8 @@ class ImmediateOperandStub:
                 )
                 return 0
             else:
-                min_value = 0 if self.unsigned else -2 ** self.bitness + 1
-                max_value = 2 ** self.bitness - 1
+                min_value = 0 if self.unsigned else -2 ** bitness + 1
+                max_value = 2 ** bitness - 1
                 if not min_value <= value <= max_value:
                     reports.error(
                         "value-out-of-bounds",
@@ -220,34 +249,50 @@ class ImmediateOperandStub:
                         (operand.ctx_start, operand.ctx_end, f"...but this value is out of bounds ({value})")
                     )
                     return 0
-            return value % (2 ** self.bitness)
+            return value % (2 ** bitness)
         return Deferred[int](fn), b""
 
 
 
+class FP11AccumulatorOperandStub:
+    def __init__(self, pattern_char, bit_indexes):
+        self.pattern_char = pattern_char
+        self.bit_indexes = bit_indexes
+
+    def encode(self, operand, state):
+        if (acc := try_accumulator_from_symbol(operand)) is None:
+            insn = state["insn"]
+            idx = {"S": "first", "D": "second"}[self.pattern_char]
+            reports.error(
+                "invalid-addressing",
+                (insn.ctx_start, insn.ctx_end, f"'{insn.name.name}' FP11 instruction accepts an accumulator as the {idx} argument"),
+                (operand.ctx_start, operand.ctx_end, "...but this value does not look like a accumulator.\nThe supported accumulator names are 'ac0' to 'ac5'.")
+            )
+            raise reports.RecoverableError("FP11 accumulator expected, expression passed")
+
+        return acc, b""
+
+
 class Instruction:
-    def __init__(self, name, opcode_pattern, src_operand, dst_operand):
+    def __init__(self, name, opcode_pattern, operands):
         self.name = name
         self.opcode_pattern = opcode_pattern
-        self.src_operand = src_operand
-        self.dst_operand = dst_operand
+        self.operands = operands
 
 
     def compile(self, state, compiler, insn):
         state = {**state, "insn": insn, "compiler": compiler}
 
-        operand_stubs = [op for op in (self.src_operand, self.dst_operand) if op is not None]
-
-        if len(insn.operands) < len(operand_stubs):
+        if len(insn.operands) < len(self.operands):
             reports.error(
                 "wrong-operands",
-                (insn.ctx_start, insn.ctx_end, f"Too few operands for '{self.name}' instruction: {len(operand_stubs)} expected, {len(insn.operands)} given")
+                (insn.ctx_start, insn.ctx_end, f"Too few operands for '{self.name}' instruction: {len(self.operands)} expected, {len(insn.operands)} given")
             )
             return None
-        elif len(insn.operands) > len(operand_stubs):
+        elif len(insn.operands) > len(self.operands):
             reports.error(
                 "wrong-operands",
-                (insn.ctx_start, insn.ctx_end, f"Too many operands for '{self.name}' instruction: {len(operand_stubs)} expected, {len(insn.operands)} given")
+                (insn.ctx_start, insn.ctx_end, f"Too many operands for '{self.name}' instruction: {len(self.operands)} expected, {len(insn.operands)} given")
             )
             return None
 
@@ -255,19 +300,26 @@ class Instruction:
         replacements = []
         operands_encoding = b""
 
-        for stub, operand_expr in zip(operand_stubs, insn.operands):
+        for stub, operand_expr in zip(self.operands, insn.operands):
             opcode_inline_value, operand_encoding = stub.encode(operand_expr, {**state, "rel_address": state["emit_address"] + 2 + len(operands_encoding)})
-            replacements.append((stub.pattern_char, opcode_inline_value))
+            replacements.append((stub, opcode_inline_value))
             operands_encoding += operand_encoding
 
         def get_opcode():
-            opcode_pattern = self.opcode_pattern
-            for pattern_char, opcode_inline_value in replacements:
+            indexes_of_char = {}
+            for i, char in enumerate(self.opcode_pattern):
+                if char not in indexes_of_char:
+                    indexes_of_char[char] = []
+                indexes_of_char[char].append(i)
+
+            opcode_pattern = list(self.opcode_pattern)
+            for stub, opcode_inline_value in replacements:
                 value = wait(opcode_inline_value)
-                splitted = opcode_pattern.split(pattern_char)
-                opcode_pattern = "".join(splitted[i] + str((value >> (len(splitted) - 2 - i)) & 1) for i in range(0, len(splitted) - 1)) + splitted[-1]
-            assert opcode_pattern.isdigit()
-            return struct.pack("<H", int(opcode_pattern, 2))
+                for i, index in enumerate(stub.bit_indexes):
+                    opcode_pattern[indexes_of_char[stub.pattern_char][index]] = str((value >> i) & 1)
+            str_opcode_pattern = "".join(opcode_pattern)
+            assert str_opcode_pattern.isdigit()
+            return struct.pack("<H", int(str_opcode_pattern, 2))
 
         if any(isinstance(opcode_inline_value, BaseDeferred) for _, opcode_inline_value in replacements):
             return SizedDeferred[bytes](2, get_opcode) + operands_encoding
@@ -297,45 +349,78 @@ def init():
                     opcode_pattern += char
                 else:
                     opcode_pattern += bin(int(char, 8))[2:].rjust(3, "0")
-        assert len(opcode_pattern) == 16
+        assert len(opcode_pattern) == 16, insn_name
 
         # Detect operand types
-        src_operand = None
-        dst_operand = None
+        operands = []
 
         cnt_s = opcode_pattern.count("s")
-        if cnt_s > 0:
-            assert cnt_s in (3, 6)
-            if cnt_s == 6:
-                src_operand = RegisterModeOperandStub("s")
-            else:
-                src_operand = RegisterOperandStub("s")
+        if cnt_s == 0:
+            pass
+        elif cnt_s == 3:
+            operands.append(RegisterOperandStub("s", [2, 1, 0]))
+        elif cnt_s == 6:
+            operands.append(RegisterModeOperandStub("s", [5, 4, 3, 2, 1, 0]))
+        elif cnt_s == 12:
+            operands.append(RegisterModeOperandStub("s", [5, 4, 3, 2, 1, 0]))
+            operands.append(RegisterModeOperandStub("s", [11, 10, 9, 8, 7, 6]))
+        else:
+            assert False, insn_name  # pragma: no cover
+
+        cnt_float_s = opcode_pattern.count("S")
+        if cnt_float_s == 0:
+            pass
+        elif cnt_float_s == 2:
+            operands.append(FP11AccumulatorOperandStub("S", [1, 0]))
+        elif cnt_float_s == 6:
+            operands.append(FP11RMOperandStub("S", [5, 4, 3, 2, 1, 0]))
+        elif cnt_float_s == 8:
+            operands.append(FP11RMOperandStub("S", [7, 6, 5, 4, 3, 2]))
+            operands.append(FP11AccumulatorOperandStub("S", [1, 0]))
+        else:
+            assert False, insn_name  # pragma: no cover
 
         cnt_d = opcode_pattern.count("d")
-        if cnt_d > 0:
-            assert cnt_d in (3, 6)
-            if cnt_d == 6:
-                dst_operand = RegisterModeOperandStub("d")
-            else:
-                dst_operand = RegisterOperandStub("d")
+        if cnt_d == 0:
+            pass
+        elif cnt_d == 3:
+            operands.append(RegisterOperandStub("d", [2, 1, 0]))
+        elif cnt_d == 6:
+            operands.append(RegisterModeOperandStub("d", [5, 4, 3, 2, 1, 0]))
+        else:
+            assert False, insn_name  # pragma: no cover
+
+        cnt_float_d = opcode_pattern.count("D")
+        if cnt_float_d == 0:
+            pass
+        elif cnt_float_d == 2:
+            operands.append(FP11AccumulatorOperandStub("D", [1, 0]))
+        elif cnt_float_d == 6:
+            operands.append(FP11RMOperandStub("D", [5, 4, 3, 2, 1, 0]))
+        else:
+            assert False, insn_name  # pragma: no cover
 
         if "o" in opcode_pattern or "O" in opcode_pattern:
             unsigned = "O" in opcode_pattern
             char = "O" if unsigned else "o"
-            if src_operand is None:
-                src_operand = OffsetOperandStub(char, opcode_pattern.count(char), unsigned)
+            bitness = opcode_pattern.count(char)
+            operand = OffsetOperandStub(char, list(range(bitness - 1, -1, -1)), unsigned)
+            if cnt_d == 0:
+                operands.append(operand)
             else:
-                assert dst_operand is None
-                dst_operand = OffsetOperandStub(char, opcode_pattern.count(char), unsigned)
+                operands.insert(0, operand)
 
         if "i" in opcode_pattern or "I" in opcode_pattern:
-            assert "o" not in opcode_pattern and "O" not in opcode_pattern
+            assert "o" not in opcode_pattern and "O" not in opcode_pattern, insn_name
             unsigned = "I" in opcode_pattern
             char = "I" if unsigned else "i"
-            assert src_operand is None
-            src_operand = ImmediateOperandStub(char, opcode_pattern.count(char), unsigned)
+            bitness = opcode_pattern.count(char)
+            operand = ImmediateOperandStub(char, list(range(bitness - 1, -1, -1)), unsigned)
+            operands.insert(0, operand)
 
-        instructions[insn_name] = Instruction(insn_name, opcode_pattern, src_operand, dst_operand)
+        assert all(c in "01234567sSdDoOiI" for c in opcode_pattern), insn_name
+
+        instructions[insn_name] = Instruction(insn_name, opcode_pattern, operands)
 
 
 init()

@@ -114,7 +114,8 @@ class Metacommand:
                 self.takes_code_block = True
                 continue
             if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
-                self.min_operands += 1
+                if param.default is inspect.Parameter.empty:
+                    self.min_operands += 1
                 self.max_operands += 1
             if param.kind == inspect.Parameter.VAR_POSITIONAL:
                 self.max_operands = float("+inf")
@@ -309,6 +310,15 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
     return result
 
 
+@metacommand
+def error(state, error=None) -> bytes:
+    reports.error(
+        "user-error",
+        (state["insn"].ctx_start,state["insn"].ctx_end, "Error" + (f": {error!r}" if error else ""))
+    )
+    return b""
+
+
 # TODO: Macro-11 has .page, .print, .sbttl, .list and .nlist metacommands which
 # we can probably ignore as Rhialto's implementation does
 
@@ -318,8 +328,6 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
 # can probably be more loose
 
 # TODO: What's .flt4 / .flt2?
-
-# TODO: Support .error (same as '#pragma error' in C)
 
 # TODO: .save and .restore
 
@@ -354,6 +362,3 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
 # TODO: sections: .asect, .csect, .psect
 
 # TODO: .weak and .globl, no idea what .weak means
-
-# TODO: they say .word on an odd boundary should raise a warning and skip to the
-# nearest even address

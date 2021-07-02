@@ -61,7 +61,7 @@ def test_single_operand(insn, operand):
     compare_with_old(f"{insn} {operand}")
 
 
-@pytest.mark.parametrize("insn", ["mov", "add", "cmpb"])
+@pytest.mark.parametrize("insn", ["mov", "add", "cmp", "cmpb"])
 @pytest.mark.parametrize(
     "op1",
     [
@@ -200,6 +200,8 @@ def test_implicit_casts():
 def test_out_of_bounds():
     with util.expect_error("value-out-of-bounds"):
         compile(".repeat -1 { }")
+
+    expect_same(".blkb 0", "")
     with util.expect_error("value-out-of-bounds"):
         compile(".blkb -1")
 
@@ -232,6 +234,7 @@ def test_math():
     expect_same(".word ~100", ".word 177677")
     expect_same(".word ^C100", ".word 177677")
     expect_same(".word ^C(20+60)", ".word 177677")
+    expect_same(".word ^C1+2", ".word 0")  # as documented in Macro-11 docs
     expect_same(".word 179. % 57", ".word 46")
     expect_same(".word 0b1100 & 0b1010", ".word 0b1000")
     expect_same(".word 0b1100 ^ 0b1010", ".word 0b0110")
@@ -394,3 +397,15 @@ def test_numbers():
         expect_same(".word 18", ".word 18.")
     with util.expect_error("invalid-number"):
         expect_same(".word 19", ".word 19.")
+
+
+def test_error():
+    with util.expect_error("user-error"):
+        compile(".error")
+    with util.expect_error("user-error"):
+        compile(".error Hello, world!")
+
+    with util.expect_error("user-error"):
+        expect_same(".error\nmov r1, r2", "mov r1, r2")
+    with util.expect_error("user-error"):
+        expect_same(".error Hello, world!\nmov r1, r2", "mov r1, r2")
