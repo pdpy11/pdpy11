@@ -35,6 +35,9 @@ angle = lambda expr: c(BracketedExpression)(expr)
 def INSN(*operands):
     return c(Instruction)(c(Symbol)("insn"), list(operands))
 
+def ASCII(*operands):
+    return c(Instruction)(c(Symbol)(".ascii"), list(operands))
+
 
 def test_instruction():
     expect_code("insn", INSN())
@@ -224,8 +227,12 @@ def test_unexpected_reserved_name():
         parse("mov clr, r1")
 
     with util.expect_warning("missing-newline"):
-        parse("clr mov")
+        parse("nop mov")
     with util.expect_warning("missing-newline"):
+        parse("nop fadd")
+    with util.expect_warning("suspicious-name"):
+        parse("clr mov")
+    with util.expect_warning("suspicious-name"):
         parse("clr fadd")
     parse("clr r0")
 
@@ -253,21 +260,21 @@ def test_unexpected_reserved_name():
         (r'"\r"', "\r"),
         (r'"\n"', "\n"),
         ('"a\\\nb"', "ab"),
-        ("'x", "x")
+        ("'x'", "x")
     ]
 )
 def test_string1(code, value):
-    expect_code(f"insn {code}", INSN(c(String)(code[0], value)))
+    expect_code(f".ascii {code}", ASCII(c(QuotedString)(code[0], value)))
 
 
 def test_string2():
     with util.expect_error("invalid-escape"):
-        parse("s = \"\\f\"")
+        parse("s = '\\f")
     with util.expect_error("unterminated-string"):
         parse("s = '")
-    with util.expect_error("invalid-character"):
+    with util.expect_warning("excess-quote"):
         parse("s = 'a'")
-    with util.expect_error("invalid-character"):
+    with util.expect_warning("excess-quote"):
         parse("s = ''")
     with util.expect_error("unterminated-string"):
         parse("s = \"a")

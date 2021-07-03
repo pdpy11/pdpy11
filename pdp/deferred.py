@@ -113,6 +113,24 @@ class BaseDeferred:
         else:
             return Deferred[self.typ](lambda: wait(self) * wait(rhs))
 
+    def __floordiv__(self, rhs):
+        return Deferred[self.typ](lambda: wait(self) // wait(rhs))
+
+    def __mod__(self, rhs):
+        return Deferred[self.typ](lambda: wait(self) % wait(rhs))
+
+    def __and__(self, rhs):
+        return Deferred[self.typ](lambda: wait(self) & wait(rhs))
+
+    def __or__(self, rhs):
+        return Deferred[self.typ](lambda: wait(self) | wait(rhs))
+
+    def __xor__(self, rhs):
+        return Deferred[self.typ](lambda: wait(self) ^ wait(rhs))
+
+    def __invert__(self):
+        return Deferred[self.typ](lambda: ~wait(self))
+
 
 class Deferred(BaseDeferred):
     def __init__(self, typ, fn):

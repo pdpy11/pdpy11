@@ -187,10 +187,6 @@ class TextHandler:
         print()
 
 
-def terminal_link(text, href):
-    return "\x1b]8;;" + href + "\x1b\\" + text + "\x1b]8;;\x1b\\"
-
-
 def emit_report(priority, identifier, *reports):
     if not handle_reports.handlers_stack:
         # Shouldn't happen

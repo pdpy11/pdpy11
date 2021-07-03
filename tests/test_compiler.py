@@ -158,42 +158,65 @@ def test_metacommands():
 
 
 def test_implicit_casts():
-    with util.expect_warning("use-ascii"):
-        expect_binary(".byte 'x", b"x")
-    with util.expect_warning("use-ascii", "empty-pack"):
-        expect_binary(".byte \"\"", b"\x00")
+    # with util.expect_warning("use-ascii"):
+    #     expect_binary(".byte 'x", b"x")
+    # with util.expect_warning("use-ascii", "empty-pack"):
+    #     expect_binary(".byte \"\"", b"\x00")
 
-    with util.expect_warning("use-ascii"):
-        expect_binary(".word 'x", b"x\x00")
-    with util.expect_warning("use-ascii"):
+    # with util.expect_warning("use-ascii"):
+    #     expect_binary(".word 'x", b"x\x00")
+    # with util.expect_warning("use-ascii"):
+    #     expect_binary(".word \"ab\"", b"ab")
+
+    # with util.expect_warning("use-ascii", "empty-pack"):
+    #     expect_binary(".word \"\"", b"\x00\x00")
+
+    # with util.expect_warning("use-ascii"):
+    #     expect_binary(".dword \"abcd\"", b"abcd")
+    # with util.expect_warning("use-ascii"):
+    #     expect_binary(".dword \"abc\"", b"abc\x00")
+    # with util.expect_warning("use-ascii"):
+    #     expect_binary(".dword \"ab\"", b"ab\x00\x00")
+    # with util.expect_warning("use-ascii"):
+    #     expect_binary(".dword \"a\"", b"a\x00\x00\x00")
+
+    # with util.expect_warning("implicit-pack"):
+    #     code = compile("mov #\"a\", r0")
+    # assert code == compile("mov #'a, r0")
+
+    # with util.expect_warning("implicit-pack"):
+    #     code = compile("mov #s, r0\ns = \"ab\"")
+    # assert code == compile("mov #0x6261, r0")
+
+    # with util.expect_error("too-long-string", "use-ascii"):
+    #     expect_same(".byte \"ab\"", ".ascii \"a\"")
+    # with util.expect_error("too-long-string", "use-ascii"):
+    #     expect_same(".word \"abc\"", ".ascii \"ab\"")
+    # with util.expect_error("too-long-string", "use-ascii"):
+    #     expect_same(".dword \"abcde\"", ".ascii \"abcd\"")
+
+    expect_binary(".byte 'x", b"x")
+    expect_binary(".word 'x", b"x\x00")
+    expect_binary(".word \"ab", b"ab")
+
+    with util.expect_warning("excess-quote"):
+        expect_binary(".byte ''", b"\x00")
+    with util.expect_warning("excess-quote"):
+        expect_binary(".byte 'x'", b"x")
+    with util.expect_warning("excess-quote"):
+        expect_binary(".word 'x'", b"x\x00")
+    with util.expect_warning("excess-quote"):
         expect_binary(".word \"ab\"", b"ab")
-
-    with util.expect_warning("use-ascii", "empty-pack"):
+    with util.expect_warning("excess-quote"):
+        expect_binary(".word \"x\"", b"x\x00")
+    with util.expect_warning("excess-quote"):
         expect_binary(".word \"\"", b"\x00\x00")
 
-    with util.expect_warning("use-ascii"):
-        expect_binary(".dword \"abcd\"", b"abcd")
-    with util.expect_warning("use-ascii"):
-        expect_binary(".dword \"abc\"", b"abc\x00")
-    with util.expect_warning("use-ascii"):
-        expect_binary(".dword \"ab\"", b"ab\x00\x00")
-    with util.expect_warning("use-ascii"):
-        expect_binary(".dword \"a\"", b"a\x00\x00\x00")
+    expect_binary(".dword \"ab", b"\x00\x00ab")
+    expect_binary(".dword 'a", b"\x00\x00a\x00")
 
-    with util.expect_warning("implicit-pack"):
-        code = compile("mov #\"a\", r0")
-    assert code == compile("mov #'a, r0")
-
-    with util.expect_warning("implicit-pack"):
-        code = compile("mov #s, r0\ns = \"ab\"")
-    assert code == compile("mov #0x6261, r0")
-
-    with util.expect_error("too-long-string", "use-ascii"):
-        expect_same(".byte \"ab\"", ".ascii \"a\"")
-    with util.expect_error("too-long-string", "use-ascii"):
-        expect_same(".word \"abc\"", ".ascii \"ab\"")
-    with util.expect_error("too-long-string", "use-ascii"):
-        expect_same(".dword \"abcde\"", ".ascii \"abcd\"")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same(".byte \"ab", ".ascii \"a\"")
 
 
 

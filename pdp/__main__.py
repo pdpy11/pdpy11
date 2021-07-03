@@ -1,6 +1,8 @@
+import os
 import struct
 
 from .compiler import Compiler
+from .formats import file_formats
 from .parser import parse
 from . import reports
 
@@ -14,14 +16,15 @@ def main():
     # )
 
     # path = "/home/ivanq/Documents/k1801vm1/test.mac"
-    path = "test.mac"
+    path = os.path.abspath("test.mac")
 
     with open(path) as f:
         source = f.read()
-        # source = "clr lbl"
-        # source = "insn 1:"
-        # source = ".ascii \"\\x00\""
-        # source = """
+
+    # source = "clr lbl"
+    # source = "insn 1:"
+    # source = ".ascii \"\\x00\""
+    # source = """
 # e:
 # .repeat b - a {
 #     inc r2
@@ -46,8 +49,9 @@ def main():
         )
         base, code = comp.link()
 
-    with open("result.bin", "wb") as f:
-        f.write(struct.pack("<HH", base, len(code)) + code)
+        if not comp.emit_files():
+            with open("result.bin", "wb") as f:
+                f.write(file_formats["bin"](base, code))
 
 
 main()

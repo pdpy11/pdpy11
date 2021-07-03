@@ -21,7 +21,7 @@ def test_repr():
         } ;
         x = 1 ;
         .ascii "Hello, world!" ;
-        .ascii 'x
+        .ascii 'x'
     """
 
     assert (

@@ -1,9 +1,10 @@
 import inspect
+import os
 import struct
 
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, wait, BaseDeferred
-from .types import CodeBlock, String
+from .types import CodeBlock
 from . import operators
 from . import reports
 
@@ -30,47 +31,47 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii
             )
             raise reports.RecoverableError("Too large value")
         return value % (2 ** bitness)
-    elif isinstance(value, str):
-        if recommend_ascii:
-            reports.warning(
-                "use-ascii",
-                (arg_token.ctx_start, arg_token.ctx_end, f"Passing a string to metacommand '{token.name.name}', which implicitly converts it\nto a number and then writes back as a series of bytes is not particularly graceful.\nConsider using '.ascii' metacommand instead.")
-            )
-        else:
-            if isinstance(arg_token, String) and len(value) == 1 and arg_token.quote != "'":
-                reports.warning(
-                    "implicit-pack",
-                    (arg_token.ctx_start, arg_token.ctx_end, f"A character that is used as {what} is implicitly converted to a number.\nConsider using a single quote ' as a cleaner solution, e.g. 'A instead of \"A\".")
-                )
-            elif not isinstance(arg_token, String) or (arg_token.quote != "'" and len(value) != 2):
-                reports.warning(
-                    "implicit-pack",
-                    (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention explicitly by casting the string like this: 'pack(\"...\")'.\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
-                )
+    # elif isinstance(value, str):
+    #     if recommend_ascii:
+    #         reports.warning(
+    #             "use-ascii",
+    #             (arg_token.ctx_start, arg_token.ctx_end, f"Passing a string to metacommand '{token.name.name}', which implicitly converts it\nto a number and then writes back as a series of bytes is not particularly graceful.\nConsider using '.ascii' metacommand instead.")
+    #         )
+    #     else:
+    #         if isinstance(arg_token, String) and len(value) == 1 and arg_token.quote != "'":
+    #             reports.warning(
+    #                 "implicit-pack",
+    #                 (arg_token.ctx_start, arg_token.ctx_end, f"A character that is used as {what} is implicitly converted to a number.\nConsider using a single quote ' as a cleaner solution, e.g. 'A instead of \"A\".")
+    #             )
+    #         elif not isinstance(arg_token, String) or (arg_token.quote != "'" and len(value) != 2):
+    #             reports.warning(
+    #                 "implicit-pack",
+    #                 (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention explicitly by casting the string like this: 'pack(\"...\")'.\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
+    #             )
 
-        if value == "":
-            reports.warning(
-                "empty-pack",
-                (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug" + (f".\nThis inserts {bitness // 8} null byte{'s' if bitness > 8 else ''} into the binary file." if recommend_ascii else ""))
-            )
-        value = value.encode("koi8-r")
-        if len(value) * 8 > bitness:
-            if bitness > 8:
-                reports.error(
-                    "too-long-string",
-                    (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to {bitness // 8} bytes to be converted to an integer")
-                )
-            else:
-                reports.error(
-                    "too-long-string",
-                    (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to a single byte to be converted to an integer")
-                )
-            value = value[:bitness // 8]
-        value = value.ljust(bitness // 8, b"\x00")
-        assert bitness in (8, 16, 32)
-        if bitness == 32:
-            value = value[2:] + value[:2]
-        return int.from_bytes(value, byteorder="little")
+    #     if value == "":
+    #         reports.warning(
+    #             "empty-pack",
+    #             (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug" + (f".\nThis inserts {bitness // 8} null byte{'s' if bitness > 8 else ''} into the binary file." if recommend_ascii else ""))
+    #         )
+    #     value = value.encode("koi8-r")
+    #     if len(value) * 8 > bitness:
+    #         if bitness > 8:
+    #             reports.error(
+    #                 "too-long-string",
+    #                 (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to {bitness // 8} bytes to be converted to an integer")
+    #             )
+    #         else:
+    #             reports.error(
+    #                 "too-long-string",
+    #                 (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to a single byte to be converted to an integer")
+    #             )
+    #         value = value[:bitness // 8]
+    #     value = value.ljust(bitness // 8, b"\x00")
+    #     assert bitness in (8, 16, 32)
+    #     if bitness == 32:
+    #         value = value[2:] + value[:2]
+    #     return int.from_bytes(value, byteorder="little")
     else:
         reports.error(
             "type-mismatch",
@@ -98,11 +99,11 @@ builtins = CaseInsensitiveDict(instructions)
 
 
 class Metacommand:
-    def __init__(self, fn, size_fn, literal_string_operand):
+    def __init__(self, fn, size_fn=None, literal_string_operand=False, no_dot=False):
         self.fn = fn
         self.size_fn = size_fn
         self.literal_string_operand = literal_string_operand
-        self.name = "." + fn.__name__
+        self.name = ("" if no_dot else ".") + fn.__name__
 
         sig = inspect.signature(fn)
         assert list(sig.parameters.keys())[:1] == ["state"]
@@ -110,7 +111,14 @@ class Metacommand:
         self.min_operands = 0
         self.max_operands = 0
         self.takes_code_block = False
+        self.operand_types = []
         for param in list(sig.parameters.values())[1:]:
+            annotation = param.annotation
+            assert annotation is not inspect.Parameter.empty
+            if not isinstance(annotation, str):
+                annotation = annotation.__name__
+            self.operand_types.append(annotation)
+
             if param.annotation in (CodeBlock, "CodeBlock"):
                 self.takes_code_block = True
                 continue
@@ -187,18 +195,18 @@ class Metacommand:
             return SizedDeferred[bytes](self.size_fn(state, *operands), fn)
 
 
-def metacommand(fn=None, size=None, literal_string_operand=False):
+def metacommand(fn=None, **kwargs):
     if fn is None:
-        return lambda fn: metacommand(fn, size=size, literal_string_operand=literal_string_operand)
+        return lambda fn: metacommand(fn, **kwargs)
 
-    name = "." + fn.__name__
-    builtins[name] = Metacommand(fn, size, literal_string_operand)
+    name = ("" if kwargs.get("no_dot") else ".") + fn.__name__
+    builtins[name] = Metacommand(fn, **kwargs)
     # That is not to override globals with the same name, e.g. list
     return __builtins__.get(fn.__name__, None)
 
 
-@metacommand(size=lambda state, *operands: len(operands) or 1)
-def byte(state, *operands) -> bytes:
+@metacommand(size_fn=lambda state, *operands: len(operands) or 1)
+def byte(state, *operands: int) -> bytes:
     if not operands:
         reports.warning(
             "implicit-operand",
@@ -213,8 +221,8 @@ def byte(state, *operands) -> bytes:
     return b"".join(encode_i8(operand) for operand in operands)
 
 
-@metacommand(size=lambda state, *operands: 2 * (len(operands) or 1))
-def word(state, *operands) -> bytes:
+@metacommand(size_fn=lambda state, *operands: 2 * (len(operands) or 1))
+def word(state, *operands: int) -> bytes:
     prefix = b""
     if wait(state["emit_address"]) % 2 == 1:
         prefix = b"\x00"
@@ -236,8 +244,8 @@ def word(state, *operands) -> bytes:
     return prefix + b"".join(encode_i16(operand) for operand in operands)
 
 
-@metacommand(size=lambda state, *operands: 4 * (len(operands) or 1))
-def dword(state, *operands) -> bytes:
+@metacommand(size_fn=lambda state, *operands: 4 * (len(operands) or 1))
+def dword(state, *operands: int) -> bytes:
     prefix = b""
     if wait(state["emit_address"]) % 2 == 1:
         prefix = b"\x00"
@@ -261,23 +269,23 @@ def dword(state, *operands) -> bytes:
 
 # pylint: disable=redefined-builtin
 @metacommand
-def ascii(state, operand) -> bytes:
+def ascii(state, operand: str) -> bytes:
     return get_as_str(state, "'.ascii' operand", state["insn"], operand).encode("koi8-r")
 
 
 @metacommand
-def asciz(state, operand) -> bytes:
+def asciz(state, operand: str) -> bytes:
     return get_as_str(state, "'.asciz' operand", state["insn"], operand).encode("koi8-r") + b"\x00"
 
 
 @metacommand
-def blkb(state, cnt) -> bytes:
+def blkb(state, cnt: int) -> bytes:
     cnt_val = get_as_int(state, "'.blkb' count", state["insn"], cnt, 16, unsigned=True)
     return b"\x00" * cnt_val
 
 
 @metacommand
-def blkw(state, cnt) -> bytes:
+def blkw(state, cnt: int) -> bytes:
     cnt_val = get_as_int(state, "'.blkw' count", state["insn"], cnt, 16, unsigned=True)
     return b"\x00\x00" * cnt_val
 
@@ -296,7 +304,7 @@ def odd(state) -> bytes:
 # TODO: Macro-11 seems to have .rept metacommand. That is probably the same as
 # .repeat but '.rept X [code] .endr' instead of '.repeat X { [code] }'
 @metacommand
-def repeat(state, cnt, body: CodeBlock) -> bytes:
+def repeat(state, cnt: int, body: CodeBlock) -> bytes:
     addr = state["emit_address"]
     result = b""
     cnt_val = wait(cnt.resolve(state))
@@ -306,7 +314,7 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
             (cnt.ctx_start, cnt.ctx_end, f"Repetitions count cannot be negative ({cnt_val} given)")
         )
     for _ in range(cnt_val):
-        chunk = state["compiler"].compile_block(body, addr, "repeat")
+        chunk = state["compiler"].compile_block({**state, "context": "repeat"}, body, addr)
         if isinstance(chunk, BaseDeferred):
             addr += chunk.len()
         else:
@@ -316,7 +324,7 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
 
 
 @metacommand(literal_string_operand=True)
-def error(state, error=None) -> bytes:
+def error(state, error: str=None) -> bytes:
     reports.error(
         "user-error",
         (state["insn"].ctx_start,state["insn"].ctx_end, "Error" + (f": {error!r}" if error else ""))
@@ -325,41 +333,41 @@ def error(state, error=None) -> bytes:
 
 
 @metacommand
-def list(state, _=None) -> bytes:
+def list(state, _: int=None) -> bytes:
     # TODO: Does it make sense to implement this stuff?
     reports.warning(
         "not-implemented",
-        ".list metacommand is not supported by pdpy"
+        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".list metacommand is not supported by pdpy")
     )
     return b""
 
 
 @metacommand
-def nlist(state, _=None) -> bytes:
+def nlist(state, _: int=None) -> bytes:
     # TODO: Does it make sense to implement this stuff?
     reports.warning(
         "not-implemented",
-        ".nlist metacommand is not supported by pdpy"
+        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".nlist metacommand is not supported by pdpy")
     )
     return b""
 
 
 @metacommand(literal_string_operand=True)
-def title(state, title) -> bytes:
+def title(state, title: str) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        ".title metacommand is not supported by pdpy"
+        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".title metacommand is not supported by pdpy")
     )
     return b""
 
 
 @metacommand(literal_string_operand=True)
-def sbttl(state, text) -> bytes:
+def sbttl(state, text: str) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        ".sbttl metacommand is not supported by pdpy"
+        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".sbttl metacommand is not supported by pdpy")
     )
     return b""
 
@@ -369,7 +377,7 @@ def ident(state, identification: str) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        ".ident metacommand is not supported by pdpy"
+        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".ident metacommand is not supported by pdpy")
     )
     return b""
 
@@ -379,8 +387,60 @@ def page(state) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        ".page metacommand is not supported by pdpy"
+        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".page metacommand is not supported by pdpy")
     )
+    return b""
+
+
+@metacommand(no_dot=True)
+def insert_file(state, filepath: str) -> bytes:
+    path = get_as_str(state, "'insert_file' path", state["insn"], filepath)
+    include_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), path))
+    try:
+        with open(include_path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        reports.error(
+            "io-error",
+            (filepath.ctx_start, filepath.ctx_end, f"There is no file at path '{include_path}'. Double-check file paths?")
+        )
+    except IsADirectoryError:
+        reports.error(
+            "io-error",
+            (filepath.ctx_start, filepath.ctx_end, f"The file at path '{include_path}' is a directory.")
+        )
+    except IOError:
+        reports.error(
+            "io-error",
+            (filepath.ctx_start, filepath.ctx_end, f"Could not read file at path '{include_path}'.")
+        )
+    return b""
+
+
+@metacommand(no_dot=True)
+def make_bin(state, filepath: str=None) -> bytes:
+    if filepath is not None:
+        path = get_as_str(state, "'make_bin' path", state["insn"], filepath)
+        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), path))
+    else:
+        write_path = state["filename"]
+        if write_path.lower().endswith(".mac"):
+            write_path = write_path[:-4]
+        write_path += ".bin"
+    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, "bin", write_path))
+    return b""
+
+
+@metacommand(no_dot=True)
+def make_raw(state, filepath: str=None) -> bytes:
+    if filepath is not None:
+        path = get_as_str(state, "'make_raw' path", state["insn"], filepath)
+        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), path))
+    else:
+        write_path = state["filename"]
+        if write_path.lower().endswith(".mac"):
+            write_path = write_path[:-4]
+    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, "raw", write_path))
     return b""
 
 

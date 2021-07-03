@@ -36,6 +36,9 @@ def try_register_from_symbol(operand):
     else:
         return None
 
+def is_register(operand):
+    return try_register_from_symbol(operand) is not None
+
 
 class RegisterOperandStub:
     def __init__(self, pattern_char, bit_indexes):
@@ -62,6 +65,29 @@ class RegisterModeOperandStub:
         self.bit_indexes = bit_indexes
 
     def encode(self, operand, state):
+        # Hoisting. 'a+b(c)' is parsed as 'a+(b(c))', not as '(a+b)(c)'. This is
+        # great for function calls, but terrible for index addressing. Hence
+        # we're 'hoisting' registers up here.
+        def hoist(token):
+            if isinstance(token, operators.InfixOperator):
+                token.rhs = hoist(token.rhs)
+                if isinstance(token.rhs, operators.call) and is_register(token.rhs.operand):
+                    register = token.rhs.operand
+                    ctx_end = token.ctx_end
+                    token.rhs = token.rhs.callee
+                    token.ctx_end = token.rhs.ctx_end
+                    return operators.call(token.ctx_start, ctx_end, token, register)
+            elif isinstance(token, operators.PrefixOperator):
+                token.operand = hoist(token.operand)
+                if isinstance(token.operand, operators.call) and is_register(token.operand.operand):
+                    register = token.operand.operand
+                    ctx_end = token.ctx_end
+                    token.operand = token.operand.callee
+                    token.ctx_end = token.operand.ctx_end
+                    return operators.call(token.ctx_start, ctx_end, token, register)
+            return token
+        operand = hoist(operand)
+
         # Good luck debugging this
         # pylint: disable=isinstance-second-argument-not-valid-type
         if (register := try_register_from_symbol(operand)) is not None:
@@ -89,12 +115,14 @@ class RegisterModeOperandStub:
         elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)) is not None:
             # Autodecrement deferred
             return 0o50 | register, b""
+        elif isinstance(operand, operators.call) and isinstance(operand.callee, operators.deferred) and (register := try_register_from_symbol(operand.operand)) is not None:
+            # Yes, I am aware that the nesting is broken here, but that's thanks
+            # to hoisting and that's the least hacky way I had come up with.
+            # Index deferred
+            return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee.operand, bitness=16, unsigned=False)))
         elif isinstance(operand, operators.call) and (register := try_register_from_symbol(operand.operand)) is not None:
             # Index
             return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee, bitness=16, unsigned=False)))
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.call) and (register := try_register_from_symbol(operand.operand.operand)) is not None:
-            # Index deferred
-            return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.operand.callee, bitness=16, unsigned=False)))
         elif isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
             # Index deferred with implicit zero index
             reports.warning(
@@ -278,6 +306,8 @@ class Instruction:
         self.name = name
         self.opcode_pattern = opcode_pattern
         self.operands = operands
+        self.min_operands = len(operands)
+        self.max_operands = len(operands)
 
 
     def compile(self, state, compiler, insn):

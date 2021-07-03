@@ -1,4 +1,5 @@
 import re
+import struct
 
 from .builtins import builtins, Metacommand
 from .context import Context
@@ -14,31 +15,6 @@ class Goto(BaseException):
         return exc_type is Goto
 goto = Goto()
 
-
-COMMON_BUILTIN_INSTRUCTION_NAMES = {
-    "mov", "movb", "cmp", "cmpb", "bit", "bitb", "bic", "bicb", "bis", "bisb",
-    "add", "sub", "mul", "div", "ash", "ashc", "xor", "jmp", "swab", "clr",
-    "clrb", "com", "comb", "inc", "incb", "dec", "decb", "neg", "negb", "adc",
-    "adcb", "sbc", "sbcb", "tst", "tstb", "ror", "rorb", "rol", "rolb", "asr",
-    "asrb", "asl", "aslb", "mtps", "mfpi", "mfpd", "mtpi", "mtpd", "sxt",
-    "mfps", "br", "bne", "beq", "bge", "blt", "bgt", "ble", "bpl", "bmi", "bhi",
-    "blos", "bvc", "bvs", "bcc", "bhis", "bcs", "blo", "sob", "jsr", "rts",
-    "emt", "trap", "rti", "bpt", "iot", "rtt", "halt", "wait", "reset", "cln",
-    "clz", "clv", "clc", "clnz", "clnv", "clnc", "clzv", "clzc", "clvc",
-    "clnzv", "clnzc", "clnvc", "clzvc", "ccc", "sen", "sez", "sev", "sec",
-    "senz", "senv", "senc", "sezv", "sezc", "sevc", "senzv", "senzc", "senvc",
-    "sezvc", "scc", "spl"
-}
-
-UNCOMMON_BUILTIN_INSTRUCTION_NAMES = {
-    "ret": "'ret' is a classic alias for 'rts sp'",
-    "return": "'return' is a compatibility alias for 'ret'",
-    "fadd": "'fadd' is a floating-point addition instruction",
-    "fsub": "'fsub' is a floating-point subtraction instruction",
-    "fmul": "'fmul' is a floating-point multiplication instruction",
-    "fdiv": "'fdiv' is a floating-point division instruction",
-    "call": "'call X' is a classic alias for 'jsr sp, X'"
-}
 
 REGISTER_NAMES = ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "sp", "pc")
 
@@ -176,7 +152,8 @@ at_sign = Parser.literal("@")
 hash_sign = Parser.literal("#")
 equals_sign = Parser.literal("=")
 single_quote = Parser.literal("'")
-string_quote = Parser.literal("\"")
+double_quote = Parser.literal("\"")
+string_quote = Parser.regex(r"['\"/]")
 character = Parser.regex(r"[\s\S]", skip_whitespace_before=False)
 string_backslash = Parser.literal("\\", skip_whitespace_before=False)
 
@@ -254,15 +231,10 @@ def label(ctx):
     name = Parser.regex(r"([a-zA-Z_0-9$]+)\s*:")(ctx)
     name = name[:-1].strip()
 
-    if name.lower() in COMMON_BUILTIN_INSTRUCTION_NAMES:
+    if name in builtins:
         reports.warning(
             "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction")
-        )
-    elif name.lower() in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
-        reports.warning(
-            "suspicious-name",
-            (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[name.lower()])
         )
     elif name.lower() in REGISTER_NAMES:
         reports.warning(
@@ -298,20 +270,15 @@ def assignment(ctx):
         (ctx, ctx, "...yet no expression was matched here")
     ))
 
-    if symbol.lower() in COMMON_BUILTIN_INSTRUCTION_NAMES:
+    if symbol in builtins:
         reports.warning(
             "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction")
         )
-    elif symbol.lower() in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
-        reports.warning(
-            "suspicious-name",
-            (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[symbol.lower()])
-        )
     elif symbol.lower() in REGISTER_NAMES:
         reports.warning(
             "suspicious-name",
-            (ctx_start, ctx_after_symbol, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'? " + reports.terminal_link("Read an intro on PDP-11 assembly.", "https://pdpy.github.io/intro"))
+            (ctx_start, ctx_after_symbol, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'?")
         )
 
     return types.Assignment(ctx_start, ctx, types.Symbol(ctx_start, ctx_after_symbol, symbol), value)
@@ -323,15 +290,10 @@ def symbol_expression(ctx):
     ctx_start = ctx.save()
 
     symbol = symbol_literal(ctx)
-    if symbol.lower() in COMMON_BUILTIN_INSTRUCTION_NAMES:
+    if symbol in builtins:
         reports.warning(
             "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it.")
-        )
-    elif symbol.lower() in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
-        reports.warning(
-            "suspicious-name",
-            (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it.\n" + UNCOMMON_BUILTIN_INSTRUCTION_NAMES[symbol.lower()])
         )
 
     if colon(ctx, maybe=True) and symbol.lower() in REGISTER_NAMES:
@@ -392,7 +354,7 @@ string_char = string_escape | character
 
 
 @Parser
-def character_string(ctx):
+def single_quoted_literal(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
@@ -410,84 +372,60 @@ def character_string(ctx):
 
     if ctx.pos < len(ctx.code) and ctx.code[ctx.pos] == "'":
         single_quote(ctx)
-        reports.error(
-            "invalid-character",
-            (ctx_start, ctx, "Single quotation mark denotes not a string, but a character.\nUnlike C, a character must not be terminated by a single quotation mark.\nFor example, 'a should be used instead of 'a'. Please remove the second quotation mark.")
+        reports.warning(
+            "excess-quote",
+            (ctx_start, ctx, "Single quotation mark denotes not a string, but an ASCII value of a character.\nUnlike C, a character must not be terminated by a single quotation mark.\nFor example, 'a should be used instead of 'a'. Please remove the second quotation mark.")
         )
 
-    return types.String(ctx_start, ctx, "'", value)
+    return types.Number(ctx_start, ctx, "'" + value, ord(value) if value else 0)
 
 
 @Parser
-def string(ctx):
-    # TODO: Terrible. Macro-11 supports 'x for single-character constants and
-    # "ab for two-character constants which are implicitly converted to a
-    # number, immediately. Other assemblers support closing quotes: 'x' and
-    # "ab".
-
-    # Old PDPy11 handles this in a different way, it requires closing quotes
-    # like 'x' and "ab", doesn't see any difference between ' and " and even
-    # allows longer strings. Then it supports /abacaba/ for strings which other
-    # assemblers (except maybe pdp11asm) don't support, and doesn't support
-    # ^/abacaba/ and <abacaba> which other compilers do support (although in
-    # a different context)
-
-    # Another problem is that the new assembler silently interprets #"a"+"b" as
-    # #"ab" while other assemblers (including older PDPy11, luckily) interpret
-    # it as #97.+98., because the new compiler supports + for concatenation. We
-    # should come up with a better solution.
-
-
-    # Now let's talk about 'bracketing'. Macro-11 supports two bracketing
-    # formats: <...> and ^/.../, in the latter case '/' may be any puncutation
-    # character, though '/' is much more common. In usual context, these two
-    # are the same and are used for the same purpose as parentheses in math.
-
-
-    # When Macro-11 expects a string (which happens after ^R (radix 50), .nchr,
-    # '.if b', '.if idn' and others, '=' in macro defaults, .irp and .irpc), the
-    # two types of brackets are redefined to contain a string. For example, all
-    # the following codes encode the string 'abacaba':
-    #   <abacaba>
-    #   ^/abacaba/
-    #   ^"abacaba"
-    #   ^,abacaba,
-    # Angle brackets can be nested, e.g. this encodes string 'aba<ca>ba':
-    #   <aba<ca>ba>
-    # If, however, neither ^ nor < are matched, it just assumes the next token
-    # (until whitespace, a comma or a semicolon) is the string contents.
-
-    # However!
-
-    # After .include and .library, the following formats are okay:
-    #   /abacaba/
-    #   "abacaba"
-    #   ,abacaba,
-    # But angle brackets and ^/.../ are not supported.
-
-    # After .ascii, .asciz and .rad50 it's almost the same as .include, but
-    # angle brackets are defined to encode single bytes. The following strings
-    # all decode to 'abacaba':
-    #   /abacaba/
-    #   "abacaba"
-    #   ,abacaba,
-    #   /aba/ <99.> /aba/
-
-
-    # The above means that we can no longer parse all instructions (meta- or
-    # not) the same way. This highlights a problem with macros because at
-    # parsing time we can no longer detect whether "ab" is a number or a string
-    # and whether "ab c" is a single string or two tokens and whether that
-    # causes a parsing error.
-
-
+def double_quoted_literal(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    quotation_sign = string_quote(ctx)
+    double_quote(ctx)
 
     value = ""
-    while ctx.pos < len(ctx.code) and ctx.code[ctx.pos] != quotation_sign:
+
+    for _ in range(2):
+        if ctx.pos == len(ctx.code):
+            reports.critical(
+                "unterminated-string",
+                (ctx_start, ctx, "Unterminated string literal")
+            )
+        if ctx.code[ctx.pos] != "\"":
+            value += string_char(ctx)
+
+    if ctx.pos < len(ctx.code) and ctx.code[ctx.pos] == "\"":
+        double_quote(ctx)
+        reports.warning(
+            "excess-quote",
+            (ctx_start, ctx, "Double quotation mark does not denote a string. It denotes an ASCII conversion operator,\nwhich means that the two characters after \" are converted to a 16-bit word.\nFor example, \"AB is the same as 0x4142 (or ^H4142).\nUnlike C, this literal must not be terminated by a quotation mark -- please remove it.")
+        )
+
+    bytes_value = value.encode("koi8-r")
+    if len(bytes_value) > 2:
+        reports.error(
+            "excess-quote",
+            (ctx_start, ctx, f"These characaters, encoded to KOI8-R, take {len(bytes_value)} bytes, which does not fit in 16 bits.\nPlease fix that. Changing the encoding via '.charset ???' directive or '--charset=???' CLI argument may help.")
+        )
+        bytes_value = bytes_value[:2]
+
+    bytes_value = bytes_value.ljust(2, b"\x00")
+
+    return types.Number(ctx_start, ctx, "\"" + value, struct.unpack("<H", bytes_value)[0])
+
+
+@Parser
+def quoted_string(ctx):
+    ctx.skip_whitespace()
+    ctx_start = ctx.save()
+
+    quote = string_quote(ctx)
+    value = ""
+    while ctx.pos < len(ctx.code) and ctx.code[ctx.pos] != quote:
         value += string_char(ctx)
 
     if ctx.pos == len(ctx.code):
@@ -497,7 +435,95 @@ def string(ctx):
         )
 
     ctx.pos += 1
-    return types.String(ctx_start, ctx, quotation_sign, value)
+    return types.QuotedString(ctx_start, ctx, quote, value)
+
+
+@Parser
+def angle_bracketed_char(ctx):
+    ctx_start = ctx.save()
+    opening_angle_bracket(ctx)
+    expr = expression(ctx)
+    closing_angle_bracket(ctx)
+    return types.AngleBracketedChar(ctx_start, ctx, expr)
+
+
+@Parser
+def long_string(ctx):
+    ctx.skip_whitespace()
+    ctx_start = ctx.save()
+
+    chunks = [(quoted_string | angle_bracketed_char)(ctx)]
+
+    while (chunk := (quoted_string | angle_bracketed_char)(ctx, maybe=True)) is not None:
+        chunks.append(chunk)
+
+    if len(chunks) == 1:
+        # For performance. Maybe.
+        return chunks[0]
+    else:
+        return types.StringConcatenation(ctx_start, ctx, chunks)
+
+
+# TODO: Terrible. Macro-11 supports 'x for single-character constants and
+# "ab for two-character constants which are implicitly converted to a
+# number, immediately. Other assemblers support closing quotes: 'x' and
+# "ab".
+
+# Old PDPy11 handles this in a different way, it requires closing quotes
+# like 'x' and "ab", doesn't see any difference between ' and " and even
+# allows longer strings. Then it supports /abacaba/ for strings which other
+# assemblers (except maybe pdp11asm) don't support, and doesn't support
+# ^/abacaba/ and <abacaba> which other compilers do support (although in
+# a different context)
+
+# Another problem is that the new assembler silently interprets #"a"+"b" as
+# #"ab" while other assemblers (including older PDPy11, luckily) interpret
+# it as #97.+98., because the new compiler supports + for concatenation. We
+# should come up with a better solution.
+
+
+# Now let's talk about 'bracketing'. Macro-11 supports two bracketing
+# formats: <...> and ^/.../, in the latter case '/' may be any puncutation
+# character, though '/' is much more common. In usual context, these two
+# are the same and are used for the same purpose as parentheses in math.
+
+
+# When Macro-11 expects a string (which happens after ^R (radix 50), .nchr,
+# '.if b', '.if idn' and others, '=' in macro defaults, .irp and .irpc), the
+# two types of brackets are redefined to contain a string. For example, all
+# the following codes encode the string 'abacaba':
+#   <abacaba>
+#   ^/abacaba/
+#   ^"abacaba"
+#   ^,abacaba,
+# Angle brackets can be nested, e.g. this encodes string 'aba<ca>ba':
+#   <aba<ca>ba>
+# If, however, neither ^ nor < are matched, it just assumes the next token
+# (until whitespace, a comma or a semicolon) is the string contents.
+
+# However!
+
+# After .include and .library, the following formats are okay:
+#   /abacaba/
+#   "abacaba"
+#   ,abacaba,
+# But angle brackets and ^/.../ are not supported.
+
+# After .ascii, .asciz and .rad50 it's almost the same as .include, but
+# angle brackets are defined to encode single bytes. The following strings
+# all decode to 'abacaba':
+#   /abacaba/
+#   "abacaba"
+#   ,abacaba,
+#   /aba/ <99.> /aba/
+
+
+# The above means that we can no longer parse all instructions (meta- or
+# not) the same way. This highlights a problem with macros because at
+# parsing time we can no longer detect whether "ab" is a number or a string
+# and whether "ab c" is a single string or two tokens and whether that
+# causes a parsing error.
+
 
 
 @Parser
@@ -507,7 +533,7 @@ def instruction_pointer(ctx):
     Parser.regex(r"\.(?![a-zA-Z_0-9])")(ctx)
     return types.InstructionPointer(ctx_start, ctx)
 
-expression_literal = symbol_expression | number | local_symbol_expression | character_string | string | instruction_pointer
+expression_literal = symbol_expression | number | local_symbol_expression | single_quoted_literal | double_quoted_literal | instruction_pointer
 
 infix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.InfixOperator]])
 prefix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PrefixOperator]])
@@ -667,6 +693,34 @@ def expression(ctx):
     return stack[-1]
 
 
+def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
+    if insn_name in builtins:
+        insn = builtins[insn_name]
+    elif "." + insn_name in builtins:
+        # A warning will be emitted later by the compiler, no need to emit it
+        # now
+        insn = builtins["." + insn_name]
+    else:
+        insn = None
+
+    if isinstance(insn, Metacommand):
+        if insn.operand_types:
+            operand_type = insn.operand_types[min(operand_idx, len(insn.operand_types) - 1)]
+        else:
+            # If the metacommand doesn't take any operand but was somehow passed
+            # one, we can only hope this invalid operand does not break the
+            # parser. Parsing it as an expression, not as a string, is probably
+            # the safest way.
+            operand_type = "int"
+    else:
+        operand_type = "int"
+
+    if operand_type == "str":
+        return long_string(ctx, **kwargs)
+    else:
+        return expression(ctx, **kwargs)
+
+
 @Parser
 def instruction(ctx):
     # TODO: Macro-11 supports .rem metacommand for comments, like this:
@@ -696,7 +750,7 @@ def instruction(ctx):
             ctx.skip_whitespace()
             ctx_before_message = ctx.save()
             ctx.pos += len(text)
-            operands = [types.String(ctx_before_message, ctx, "", text)]
+            operands = [types.QuotedString(ctx_before_message, ctx, "", text)]
         else:
             operands = []
 
@@ -733,12 +787,13 @@ def instruction(ctx):
             raise goto
 
         name = (instruction_name + ~colon)(ctx, maybe=True, lookahead=True)
-        if name in COMMON_BUILTIN_INSTRUCTION_NAMES or name in UNCOMMON_BUILTIN_INSTRUCTION_NAMES:
+        if name in builtins and (insn_name not in builtins or builtins[insn_name].max_operands == 0):
+            # Does not take an operand for sure
             ctx_new = ctx.save()
             ctx_new.skip_whitespace()
             ctx_before_insn = ctx_new.save()
             next_insn_name = instruction_name(ctx_new)
-            if not (comma | newline | infix_operator | postfix_operator)(ctx_new, maybe=True, lookahead=True):
+            if not (comma | infix_operator | postfix_operator)(ctx_new, maybe=True, lookahead=True):
                 reports.warning(
                     "missing-newline",
                     (ctx_start, ctx_state_after_name, "There is no newline after the name of this instruction, hence an operand must follow,"),
@@ -746,10 +801,10 @@ def instruction(ctx):
                 )
                 raise goto
 
-        first_operand = expression(ctx, maybe=True)
+        first_operand = parse_insn_operand(ctx, insn_name, 0, maybe=True)
 
         if first_operand:
-            if ctx.code[ctx_state_after_name.pos].strip() != "":
+            if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
                 reports.error(
                     "missing-whitespace",
                     (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that an operand follows.")
@@ -761,7 +816,7 @@ def instruction(ctx):
             while comma(ctx, maybe=True):
                 ctx_after_comma = ctx.save()
                 ctx.skip_whitespace()
-                oper = expression(ctx, report=(
+                oper = parse_insn_operand(ctx, insn_name, len(operands), report=(
                     reports.critical,
                     "invalid-operand",
                     (ctx_before_comma, ctx_after_comma, "Expected operand after comma in an instruction"),

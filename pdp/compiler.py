@@ -1,6 +1,9 @@
+import sys
+
 from .builtins import builtins
 from .containers import CaseInsensitiveDict
 from .deferred import Promise, wait, BaseDeferred
+from .formats import file_formats
 from .types import Instruction, Label, Assignment
 from . import reports
 
@@ -12,13 +15,18 @@ class Compiler:
         self.cur_emit_location = self.link_base
         self.generated_code = b""
         self.files = []
+        self.emitted_files = []
 
 
     def compile_file(self, file, start):
-        return self.compile_block(file.body, start, "file")
+        state = {
+            "filename": file.filename,
+            "context": "file"
+        }
+        return self.compile_block(state, file.body, start)
 
 
-    def compile_block(self, block, start, context):
+    def compile_block(self, state, block, start):
         addr = start
         data = b""
 
@@ -33,7 +41,7 @@ class Compiler:
                     )
                 break
 
-            state = {"emit_address": addr, "local_symbols": local_symbols, "compiler": self}
+            state = {**state, "emit_address": addr, "local_symbols": local_symbols}
             if isinstance(insn, Instruction):
                 chunk = self.compile_insn(insn, state)
                 if chunk is not None:
@@ -44,7 +52,7 @@ class Compiler:
                         addr += len(chunk)
 
             elif isinstance(insn, Label):
-                if context == "repeat":
+                if state["context"] == "repeat":
                     if not hasattr(insn, "label_error_emitted"):
                         reports.error(
                             "unexpected-symbol-definition",
@@ -59,7 +67,7 @@ class Compiler:
                     local_symbols = CaseInsensitiveDict()
 
             elif isinstance(insn, Assignment):
-                if context == "repeat":
+                if state["context"] == "repeat":
                     if not hasattr(insn, "assignment_error_emitted"):
                         reports.error(
                             "unexpected-symbol-definition",
@@ -131,14 +139,14 @@ class Compiler:
                 reports.error(
                     "meta-type-mismatch",
                     (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. " + reports.terminal_link("Are you looking for macros?", "https://pdpy.github.io/macros"))
+                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. Are you looking for macros?")
                 )
                 return None
             elif isinstance(symbol, Assignment):
                 reports.error(
                     "meta-type-mismatch",
                     (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. " + reports.terminal_link("You may be looking for MACRO-11 macros.", "https://pdpy.github.io/macros") + "\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
+                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. You may be looking for MACRO-11 macros.\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
                 )
                 return None
             else:
@@ -147,7 +155,7 @@ class Compiler:
         else:
             reports.error(
                 "unknown-insn",
-                (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is an undefined {'metainstruction' if insn.name.name[0] == '.' else 'instruction'}.\nIs our database incomplete? " + reports.terminal_link("Report that on GitHub.", "https://github.com/imachug/pdpy11/issues/new"))
+                (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is an undefined {'metainstruction' if insn.name.name[0] == '.' else 'instruction'}.\nIs our database incomplete? Report that on GitHub: https://github.com/imachug/pdpy11/issues/new")
             )
             return None
 
@@ -168,5 +176,27 @@ class Compiler:
         if not self.link_base.settled:
             self.link_base.settle(0o1000)  # TODO: maybe report a warning?
 
+        return wait(self.link_base), wait(self.generated_code)
+
+
+    def emit_files(self):
+        if not self.emitted_files:
+            return False
+
+        base = wait(self.link_base)
         code = wait(self.generated_code)
-        return (wait(self.link_base), code)
+
+        for ctx_start, ctx_end, file_format, filepath, *arguments in self.emitted_files:
+            result = file_formats[file_format](base, code, *arguments)
+            try:
+                with open(filepath, "wb") as f:
+                    f.write(result)
+            except IOError as ex:
+                reports.error(
+                    "io-error",
+                    (ctx_start, ctx_end, f"Could not write file at path '{filepath}'. The error is:\n{ex!r}")
+                )
+            else:
+                print(f"File {filepath} was written", file=sys.stderr)
+
+        return True

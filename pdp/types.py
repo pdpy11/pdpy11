@@ -1,5 +1,5 @@
 from .context import Context
-from .deferred import not_ready
+from .deferred import not_ready, SizedDeferred, wait
 from . import reports
 
 
@@ -163,20 +163,52 @@ class CodeBlock(Token):
         return isinstance(rhs, type(self)) and self.insns == rhs.insns
 
 
-class String(ExpressionToken):
+class AngleBracketedChar(ExpressionToken):
     # pylint: disable=arguments-differ
-    def init(self, quote: str, string: str):
+    def init(self, expr):
+        self.expr = expr
+
+    def __repr__(self):
+        return f"<{self.expr!r}>"
+
+    def __eq__(self, rhs):
+        return isinstance(rhs, type(self)) and self.expr == rhs.expr
+
+    def resolve(self, state):
+        resolved = self.expr.resolve(state)
+        # TODO: handle exception here
+        return SizedDeferred[str](1, lambda: chr(wait(resolved)))
+
+
+class QuotedString(ExpressionToken):
+    # pylint: disable=arguments-differ
+    def init(self, quote, string: str):
         self.quote: str = quote
         self.string: str = string
 
     def __repr__(self):
-        return self.quote + self.string + ("" if self.quote == "'" else self.quote)
+        return self.quote + self.string + self.quote
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.string == rhs.string
+        return isinstance(rhs, type(self)) and (self.quote, self.string) == (rhs.quote, rhs.string)
 
     def resolve(self, state):
         return self.string
+
+
+class StringConcatenation(ExpressionToken):
+    # pylint: disable=arguments-differ
+    def init(self, chunks):
+        self.chunks = chunks
+
+    def __repr__(self):
+        return " ".join(map(repr, self.chunks))
+
+    def __eq__(self, rhs):
+        return isinstance(rhs, type(self)) and self.chunks == rhs.chunks
+
+    def resolve(self, state):
+        return "".join(chunk.resolve(state) for chunk in self.chunks)
 
 
 class Number(ExpressionToken):

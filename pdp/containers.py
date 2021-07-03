@@ -7,7 +7,7 @@ class CaseInsensitiveDict:
 
 
     def __contains__(self, key):
-        return key.lower() in self.container
+        return isinstance(key, str) and key.lower() in self.container
 
 
     def __getitem__(self, key):
