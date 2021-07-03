@@ -4,15 +4,16 @@ import re
 
 
 class Report:
-    def __init__(self, text: str):
+    def __init__(self, text: str, raw_text: str):
         self.text: str = text
+        self.raw_text: str = raw_text
 
     def __call__(self, *args, **kwargs):
         emit_report(self, *args, **kwargs)
 
-error = Report("\x1b[91mError\x1b[0m")
-critical = Report("\x1b[91mError\x1b[0m")
-warning = Report("\x1b[33mWarning\x1b[0m")
+error = Report("\x1b[91mError\x1b[0m", "Error")
+critical = Report("\x1b[91mError\x1b[0m", "Error")
+warning = Report("\x1b[33mWarning\x1b[0m", "Warning")
 
 
 ReportInfo = namedtuple("ReportInfo", "line_no,start_col_no,end_col_no,text,closing_line_no,max_column")
@@ -74,7 +75,7 @@ class BareHandler:
     def __call__(self, priority, identifier, *reports):
         for ctx_start, ctx_end, text in reports:
             text = text.replace("\n", " ")
-            print(f"{ctx_start!r}: {text}")
+            print(f"{ctx_start!r}: {priority.raw_text}: {text}")
 
 
 class GraphicalHandler:
