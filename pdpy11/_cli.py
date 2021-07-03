@@ -17,6 +17,8 @@ argparser.add_argument("infiles", metavar="infile", type=str, nargs="+", help="a
 
 argparser.add_argument("-o", metavar="outfile", dest="outfile", type=str, help="name of output file")
 
+argparser.add_argument("--implicit-bin", action="store_true", help="if no output file is configured in both source and CLI arguments, assume an implicit make_bin directive")
+
 # argparser.add_argument("--charset", metavar="coding", type=str, nargs=1, help="output string encoding for .ascii and other directives")
 argparser.add_argument("--report-format", choices=["graphical", "bare"], default="graphical", help="format in which error messages and warnings are printed")
 
@@ -69,6 +71,16 @@ def main_cli():
             was_emitted = comp.emit_files()
 
 
+        if args.outfile is None and not was_emitted:
+            if args.implicit_bin:
+                filename = files_to_parse[0][0]
+                if filename.lower().endswith(".mac"):
+                    filename = filename[:-4]
+                args.outfile = filename + ".bin"
+            else:
+                print("The file was compiled successfully, but no output files were saved because 'make_xxx' directive was not encountered and '-o' option was not passed.", file=sys.stderr)
+
+
         if args.outfile is not None:
             output_file = args.outfile
 
@@ -87,9 +99,6 @@ def main_cli():
                 raise SystemExit(1)
             else:
                 print(f"File {output_filename} was saved in format '{output_format}'", file=sys.stderr)
-
-        if args.outfile is None and not was_emitted:
-            print("The file was compiled successfully, but no output files were saved because 'make_xxx' directive was not encountered and '-o' option was not passed.", file=sys.stderr)
     except reports.UnrecoverableError:
         raise SystemExit(1)
     except Exception as ex:
