@@ -98,9 +98,10 @@ builtins = CaseInsensitiveDict(instructions)
 
 
 class Metacommand:
-    def __init__(self, fn, size_fn):
+    def __init__(self, fn, size_fn, literal_string_operand):
         self.fn = fn
         self.size_fn = size_fn
+        self.literal_string_operand = literal_string_operand
         self.name = "." + fn.__name__
 
         sig = inspect.signature(fn)
@@ -119,6 +120,9 @@ class Metacommand:
                 self.max_operands += 1
             if param.kind == inspect.Parameter.VAR_POSITIONAL:
                 self.max_operands = float("+inf")
+
+        if literal_string_operand:
+            assert 0 <= self.min_operands <= 1 and self.max_operands == 1, "A metacommand with a literal string operand is expected to have exactly one operand (optional or not)"
 
 
     def compile(self, state, compiler, insn):
@@ -183,13 +187,14 @@ class Metacommand:
             return SizedDeferred[bytes](self.size_fn(state, *operands), fn)
 
 
-def metacommand(fn=None, size=None):
+def metacommand(fn=None, size=None, literal_string_operand=False):
     if fn is None:
-        return lambda fn: metacommand(fn, size=size)
+        return lambda fn: metacommand(fn, size=size, literal_string_operand=literal_string_operand)
 
     name = "." + fn.__name__
-    builtins[name] = Metacommand(fn, size)
-    return fn
+    builtins[name] = Metacommand(fn, size, literal_string_operand)
+    # That is not to override globals with the same name, e.g. list
+    return __builtins__.get(fn.__name__, None)
 
 
 @metacommand(size=lambda state, *operands: len(operands) or 1)
@@ -310,7 +315,7 @@ def repeat(state, cnt, body: CodeBlock) -> bytes:
     return result
 
 
-@metacommand
+@metacommand(literal_string_operand=True)
 def error(state, error=None) -> bytes:
     reports.error(
         "user-error",
@@ -319,10 +324,67 @@ def error(state, error=None) -> bytes:
     return b""
 
 
-# TODO: Macro-11 has .page, .print, .sbttl, .list and .nlist metacommands which
-# we can probably ignore as Rhialto's implementation does
+@metacommand
+def list(state, _=None) -> bytes:
+    # TODO: Does it make sense to implement this stuff?
+    reports.warning(
+        "not-implemented",
+        ".list metacommand is not supported by pdpy"
+    )
+    return b""
 
-# TODO: What's .ident?
+
+@metacommand
+def nlist(state, _=None) -> bytes:
+    # TODO: Does it make sense to implement this stuff?
+    reports.warning(
+        "not-implemented",
+        ".nlist metacommand is not supported by pdpy"
+    )
+    return b""
+
+
+@metacommand(literal_string_operand=True)
+def title(state, title) -> bytes:
+    # TODO: handle this
+    reports.warning(
+        "not-implemented",
+        ".title metacommand is not supported by pdpy"
+    )
+    return b""
+
+
+@metacommand(literal_string_operand=True)
+def sbttl(state, text) -> bytes:
+    # TODO: handle this
+    reports.warning(
+        "not-implemented",
+        ".sbttl metacommand is not supported by pdpy"
+    )
+    return b""
+
+
+@metacommand
+def ident(state, identification: str) -> bytes:
+    # TODO: handle this
+    reports.warning(
+        "not-implemented",
+        ".ident metacommand is not supported by pdpy"
+    )
+    return b""
+
+
+@metacommand
+def page(state) -> bytes:
+    # TODO: handle this
+    reports.warning(
+        "not-implemented",
+        ".page metacommand is not supported by pdpy"
+    )
+    return b""
+
+
+# TODO: Macro-11 has .print metacommand which we can probably ignore as Rhialto's implementation does
 
 # TODO: implement .radix. Macro-11 supports only radix 8, 10, 16 and 2 but we
 # can probably be more loose
@@ -353,8 +415,6 @@ def error(state, error=None) -> bytes:
 
 # TODO: .limit
 
-# TODO: .title
-
 # TODO: .end seems to take an optional operand?
 
 # TODO: conditionals: .ifdf, .iif, .if, .iff, .ift, .iftf, .endc
@@ -362,3 +422,6 @@ def error(state, error=None) -> bytes:
 # TODO: sections: .asect, .csect, .psect
 
 # TODO: .weak and .globl, no idea what .weak means
+
+# TODO: .byte and .word may take null arguments, e.g. '.word ,5' is the same as
+# '.word 0, 5'

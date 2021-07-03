@@ -123,6 +123,10 @@ class Compiler:
         elif insn.name.name in self.symbols:
             # Resolve a macro
             symbol, _ = self.symbols[insn.name.name]
+            # TODO: pdpy in Macro-11 compatibility mode should support implicit
+            # .word directive. That is when 'x = 5; x' is the same as
+            # 'x = 5; .word x'. This is probably the right place to add the
+            # check.
             if isinstance(symbol, Label):
                 reports.error(
                     "meta-type-mismatch",

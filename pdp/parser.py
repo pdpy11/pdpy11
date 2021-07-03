@@ -1,5 +1,6 @@
 import re
 
+from .builtins import builtins, Metacommand
 from .context import Context
 from . import operators
 from . import reports
@@ -667,32 +668,6 @@ def expression(ctx):
 
 
 @Parser
-def error_metacommand(ctx):
-    ctx_start = ctx.save()
-    name = Parser.literal(".error")(ctx)
-    ctx_state_after_name = ctx.save()
-
-    idx = ctx.code.find("\n", ctx.pos)
-    if idx == -1:
-        idx = len(ctx.code)
-
-    error_message = ctx.code[ctx.pos:idx].strip()
-    if error_message:
-        ctx.skip_whitespace()
-        ctx_before_message = ctx.save()
-        ctx.pos += len(error_message)
-        operands = [types.String(ctx_before_message, ctx, "", error_message)]
-    else:
-        operands = []
-
-    # Do not emit the error message at the moment because it may be behind .if
-    return types.Instruction(ctx_start, ctx, types.Symbol(ctx_start, ctx_state_after_name, name), operands)
-
-
-special_metacommand = error_metacommand
-
-
-@Parser
 def instruction(ctx):
     # TODO: Macro-11 supports .rem metacommand for comments, like this:
     #   .rem / My comment goes here
@@ -708,6 +683,26 @@ def instruction(ctx):
             (ctx_start, ctx, "Instruction name suspiciously resembles a register.\nCheck for an excess newline or a missing comma before the register name")
         )
     ctx_state_after_name = ctx.save()
+    insn_name_symbol = types.Symbol(ctx_start, ctx_state_after_name, insn_name)
+
+
+    if insn_name in builtins and isinstance(builtins[insn_name], Metacommand) and builtins[insn_name].literal_string_operand:
+        idx = ctx.code.find("\n", ctx.pos)
+        if idx == -1:
+            idx = len(ctx.code)
+
+        text = ctx.code[ctx.pos:idx].strip()
+        if text:
+            ctx.skip_whitespace()
+            ctx_before_message = ctx.save()
+            ctx.pos += len(text)
+            operands = [types.String(ctx_before_message, ctx, "", text)]
+        else:
+            operands = []
+
+        return types.Instruction(ctx_start, ctx, insn_name_symbol, operands)
+
+
 
     operands = []
 
@@ -796,7 +791,7 @@ def instruction(ctx):
                     (ctx_start, ctx_state_after_name, "The previous instruction started here")
                 )
 
-    return types.Instruction(ctx_start, ctx, types.Symbol(ctx_start, ctx_state_after_name, insn_name), operands)
+    return types.Instruction(ctx_start, ctx, insn_name_symbol, operands)
 
 
 @Parser
@@ -811,7 +806,7 @@ def code(ctx, break_on_closing_bracket=False):
         if break_on_closing_bracket and closing_bracket(ctx, maybe=True):
             break
 
-        insn = (label | assignment | special_metacommand | instruction)(ctx, report=(
+        insn = (label | assignment | instruction)(ctx, report=(
             reports.critical,
             "invalid-insn",
             (ctx_start, ctx_start, "Could not parse instruction starting from here")
