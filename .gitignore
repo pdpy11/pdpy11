@@ -3,3 +3,4 @@ __pycache__/
 .coverage
 .hammett-db
 .mutmut-cache
+*.egg-info/

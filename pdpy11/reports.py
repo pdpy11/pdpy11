@@ -55,17 +55,29 @@ class handle_reports:
         assert self.handlers_stack.pop() is self
 
         if hasattr(self.obj, "__exit__"):
-            return_code = self.obj.__exit__(exc_type, exc_value, exc_tb)
+            swallow = self.obj.__exit__(exc_type, exc_value, exc_tb)
         else:
-            return_code = False
+            swallow = False
 
-        if exc_type is not UnrecoverableError and self.is_error_condition:
-            raise UnrecoverableError()
+        if self.is_error_condition:
+            if swallow:
+                if exc_type is not UnrecoverableError:
+                    raise UnrecoverableError()
+            else:
+                if exc_type is None or exc_type is RecoverableError:
+                    raise UnrecoverableError()
 
-        return return_code
+        return swallow
 
 
-class TextHandler:
+class BareHandler:
+    def __call__(self, priority, identifier, *reports):
+        for ctx_start, ctx_end, text in reports:
+            text = text.replace("\n", " ")
+            print(f"{ctx_start!r}: {text}")
+
+
+class GraphicalHandler:
     def __call__(self, priority, identifier, *reports):
         for file_i, (filename, file_reports) in enumerate(itertools.groupby(reports, key=lambda report: report[0].filename)):
             file_reports = list(file_reports)
