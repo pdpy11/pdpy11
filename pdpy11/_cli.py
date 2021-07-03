@@ -95,20 +95,23 @@ def main_cli():
             output_file = args.outfile
 
             output_filename = output_file.split("/")[-1]
-            output_ext = output_filename.split(".")[-1] if "." in output_filename else None
+            output_ext = output_filename.split(".")[-1] if "." in output_filename else ""
             if output_ext.lower() in ("bin", "wav"):
                 output_format = output_ext.lower()
             else:
                 output_format = "raw"
 
-            try:
-                with open(output_filename, "wb") as f:
-                    f.write(file_formats[output_format](base, code))
-            except IOError as ex:
-                print(f"Could not write to output file '{output_file}':\n{ex}", file=sys.stderr)
-                raise SystemExit(1)
+            if output_file == "-" or output_file == "-." + output_ext:
+                sys.stdout.buffer.write(file_formats[output_format](base, code))
             else:
-                print(f"File {output_filename} was saved in format '{output_format}'", file=sys.stderr)
+                try:
+                    with open(output_file, "wb") as f:
+                        f.write(file_formats[output_format](base, code))
+                except IOError as ex:
+                    print(f"Could not write to output file '{output_file}':\n{ex}", file=sys.stderr)
+                    raise SystemExit(1)
+                else:
+                    print(f"File {output_file} was saved in format '{output_format}'", file=sys.stderr)
     except reports.UnrecoverableError:
         raise SystemExit(1)
     except Exception as ex:
