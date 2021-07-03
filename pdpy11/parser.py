@@ -179,9 +179,43 @@ def number(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    first_digit = Parser.regex(r"\d")(ctx)
-
     boundary = r"(?![$_])\b"
+
+    if Parser.literal("^X")(ctx, maybe=True):
+        base = 2
+        num = Parser.regex(rf"[0-9a-fA-F]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+            reports.critical,
+            "invalid-number",
+            (ctx_start, ctx, "A hexadecimal number was expected after '^X'")
+        ))
+        return types.Number(ctx_start, ctx, f"{sign_str}^X{num}", int(num, 16) * sign)
+    elif Parser.literal("^O")(ctx, maybe=True):
+        # Octal number
+        num = Parser.regex(rf"[0-7]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+            reports.critical,
+            "invalid-number",
+            (ctx_start, ctx, "An octal number was expected after '^O'")
+        ))
+        return types.Number(ctx_start, ctx, f"{sign_str}^O{num}", int(num, 8) * sign)
+    elif Parser.literal("^B")(ctx, maybe=True):
+        # Binary number
+        num = Parser.regex(rf"[01]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+            reports.critical,
+            "invalid-number",
+            (ctx_start, ctx, "A binary number was expected after '^B'")
+        ))
+        return types.Number(ctx_start, ctx, f"{sign_str}^B{num}", int(num, 2) * sign)
+    elif Parser.literal("^D")(ctx, maybe=True):
+        # Decimal number
+        num = Parser.regex(rf"\d+{boundary}", skip_whitespace_before=False)(ctx, report=(
+            reports.critical,
+            "invalid-number",
+            (ctx_start, ctx, "A decimal number was expected after '^D'")
+        ))
+        return types.Number(ctx_start, ctx, f"{sign_str}^D{num}", int(num, 10) * sign)
+
+
+    first_digit = Parser.regex(r"\d")(ctx)
 
     if first_digit == "0":
         if Parser.regex(r"[xX]", skip_whitespace_before=False)(ctx, maybe=True):
