@@ -1,4 +1,4 @@
-from pdp.parser import parse
+from pdpy11.parser import parse
 
 
 def test_repr():

@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 
-from pdp import reports
+from pdpy11 import reports
 
 
 @contextmanager

@@ -1,8 +1,8 @@
 import pytest
 
-from pdp.operators import *
-from pdp.parser import parse as parse_
-from pdp.types import *
+from pdpy11.operators import *
+from pdpy11.parser import parse as parse_
+from pdpy11.types import *
 
 import util
 

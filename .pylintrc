@@ -283,7 +283,7 @@ missing-member-hint-distance=1
 missing-member-max-choices=1
 
 # List of decorators that change the signature of a decorated function.
-signature-mutators=pdp.parser.Parser
+signature-mutators=pdpy11.parser.Parser
 
 
 [MISCELLANEOUS]

@@ -1,8 +1,8 @@
 import pytest
 import warnings
 
-from pdp.compiler import Compiler
-from pdp.parser import parse
+from pdpy11.compiler import Compiler
+from pdpy11.parser import parse
 
 from old_pdpy11.pdpy11.compiler import Compiler as OldCompiler
 import util
