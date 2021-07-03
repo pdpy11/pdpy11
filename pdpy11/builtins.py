@@ -56,7 +56,7 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii
     #             "empty-pack",
     #             (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug" + (f".\nThis inserts {bitness // 8} null byte{'s' if bitness > 8 else ''} into the binary file." if recommend_ascii else ""))
     #         )
-    #     value = value.encode("koi8-r")
+    #     value = value.encode(state["compiler"].output_charset)
     #     if len(value) * 8 > bitness:
     #         if bitness > 8:
     #             reports.error(
@@ -273,12 +273,12 @@ def dword(state, *operands: int) -> bytes:
 # pylint: disable=redefined-builtin
 @metacommand
 def ascii_(state, operand: str) -> bytes:
-    return get_as_str(state, "'.ascii' operand", state["insn"], operand).encode("koi8-r")
+    return get_as_str(state, "'.ascii' operand", state["insn"], operand).encode(state["compiler"].output_charset)
 
 
 @metacommand
 def asciz(state, operand: str) -> bytes:
-    return get_as_str(state, "'.asciz' operand", state["insn"], operand).encode("koi8-r") + b"\x00"
+    return get_as_str(state, "'.asciz' operand", state["insn"], operand).encode(state["compiler"].output_charset) + b"\x00"
 
 
 @metacommand

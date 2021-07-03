@@ -440,7 +440,7 @@ def single_quoted_literal(ctx):
             (ctx_start, ctx, "Single quotation mark denotes not a string, but an ASCII value of a character.\nUnlike C, a character must not be terminated by a single quotation mark.\nFor example, 'a should be used instead of 'a'. Please remove the second quotation mark.")
         )
 
-    return types.Number(ctx_start, ctx, "'" + value, ord(value) if value else 0)
+    return types.CharLiteral(ctx_start, ctx, "'" + value, value)
 
 
 @Parser
@@ -468,17 +468,7 @@ def double_quoted_literal(ctx):
             (ctx_start, ctx, "Double quotation mark does not denote a string. It denotes an ASCII conversion operator,\nwhich means that the two characters after \" are converted to a 16-bit word.\nFor example, \"AB is the same as 0x4142 (or ^H4142).\nUnlike C, this literal must not be terminated by a quotation mark -- please remove it.")
         )
 
-    bytes_value = value.encode("koi8-r")
-    if len(bytes_value) > 2:
-        reports.error(
-            "excess-quote",
-            (ctx_start, ctx, f"These characaters, encoded to KOI8-R, take {len(bytes_value)} bytes, which does not fit in 16 bits.\nPlease fix that. Changing the encoding via '.charset ???' directive or '--charset=???' CLI argument may help.")
-        )
-        bytes_value = bytes_value[:2]
-
-    bytes_value = bytes_value.ljust(2, b"\x00")
-
-    return types.Number(ctx_start, ctx, "\"" + value, struct.unpack("<H", bytes_value)[0])
+    return types.CharLiteral(ctx_start, ctx, "\"" + value, value)
 
 
 @Parser

@@ -1,6 +1,7 @@
 import pytest
 import warnings
 
+from pdpy11 import bk_encoding
 from pdpy11.compiler import Compiler
 from pdpy11.parser import parse
 

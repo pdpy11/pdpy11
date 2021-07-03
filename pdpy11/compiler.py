@@ -9,13 +9,14 @@ from . import reports
 
 
 class Compiler:
-    def __init__(self):
+    def __init__(self, output_charset="bk"):
         self.symbols = CaseInsensitiveDict()
         self.link_base: Promise = Promise[int]("LA")
         self.cur_emit_location = self.link_base
         self.generated_code = b""
         self.files = []
         self.emitted_files = []
+        self.output_charset = output_charset
 
 
     def compile_file(self, file, start):

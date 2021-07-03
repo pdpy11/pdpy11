@@ -1,3 +1,5 @@
+import struct
+
 from .context import Context
 from .deferred import not_ready, SizedDeferred, wait
 from . import reports
@@ -226,13 +228,43 @@ class Number(ExpressionToken):
         return isinstance(rhs, type(self)) and (self.representation, self.value, self.invalid_base8) == (rhs.representation, rhs.value, rhs.invalid_base8)
 
     def resolve(self, state):
-        if self.invalid_base8:
+        if not self.reported_invalid_base8 and self.invalid_base8:
+            self.reported_invalid_base8 = True
             char = "8" if "8" in self.representation else "9"
             reports.error(
                 "invalid-number",
                 (self.ctx_start, self.ctx_end, f"In PDP-11 assembly, numbers are considered base-8 by default.\nThis number has digit {char}, so you probably wanted it base-10.\nAdd a dot after the number to switch to decimal: '{self.representation}.'\nIf you wanted to specify a local label of the same name, add a colon: '{self.representation}:'")
             )
         return self.value
+
+
+class CharLiteral(ExpressionToken):
+    # pylint: disable=arguments-differ
+    def init(self, representation, string):
+        self.representation = representation
+        self.string = string
+        self.reported_invalid_characters = False
+
+    def __repr__(self):
+        return f"{self.representation}"
+
+    def __eq__(self, rhs):
+        return isinstance(rhs, type(self)) and (self.representation, self.string) == (rhs.representation, rhs.string)
+
+    def resolve(self, state):
+        bytes_value = self.string.encode(state["compiler"].output_charset)
+        n_bytes = 1 if self.representation[0] == "'" else 2
+        if len(bytes_value) > n_bytes:
+            if not self.reported_invalid_characters:
+                self.reported_invalid_characters = True
+                reports.error(
+                    "too-long-string",
+                    (self.ctx_start, self.ctx_end, f"These characaters, encoded to {state['compiler'].output_charset}, take {len(bytes_value)} bytes, which does not fit in {n_bytes * 8} bits.\nPlease fix that. Changing the encoding via '.charset ???' directive or '--charset=???' CLI argument may help.")
+                )
+            bytes_value = bytes_value[:n_bytes]
+        bytes_value = bytes_value.ljust(2, b"\x00")
+        return struct.unpack("<H", bytes_value)[0]
+
 
 
 class File:

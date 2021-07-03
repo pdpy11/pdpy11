@@ -1,9 +1,11 @@
 import argparse
+import codecs
 import os
 import platform
 import sys
 import traceback
 
+from . import bk_encoding
 from .compiler import Compiler
 from .formats import file_formats
 from . import parser
@@ -19,7 +21,7 @@ argparser.add_argument("-o", metavar="outfile", dest="outfile", type=str, help="
 
 argparser.add_argument("--implicit-bin", action="store_true", help="if no output file is configured in both source and CLI arguments, assume an implicit make_bin directive")
 
-# argparser.add_argument("--charset", metavar="coding", type=str, nargs=1, help="output string encoding for .ascii and other directives")
+argparser.add_argument("--charset", metavar="encoding", type=str, default="bk", help="output string encoding for .ascii and other directives (default: bk)")
 argparser.add_argument("--report-format", choices=["graphical", "bare"], default="graphical", help="format in which error messages and warnings are printed")
 
 argparser.add_argument("--version", "-v", action="version", version=f"%(prog)s {version} running on {platform.python_implementation()} {platform.python_version()}")
@@ -27,6 +29,14 @@ argparser.add_argument("--version", "-v", action="version", version=f"%(prog)s {
 
 def main_cli():
     args = argparser.parse_args()
+
+
+    try:
+        codecs.lookup(args.charset)
+    except LookupError:
+        print(f"'{args.charset}' encoding is unsupported", file=sys.stderr)
+        raise SystemExit(1)
+
 
     error = False
     files_to_parse = []
@@ -61,7 +71,7 @@ def main_cli():
             for path, source in files_to_parse:
                 parsed_files.append(parser.parse(path, source))
 
-            comp = Compiler()
+            comp = Compiler(output_charset=args.charset)
             comp.add_files(parsed_files)
 
             base, code = comp.link()
