@@ -4,6 +4,7 @@ import struct
 from .builtins import builtin_commands, Metacommand
 from .context import Context
 from . import operators
+from . import radix50
 from . import reports
 from . import types
 
@@ -96,13 +97,12 @@ class Parser:
                     raise
                 else:
                     reports.emit_report(*report)
-                    # unreachable
-                    assert False  # pragma: no cover
+                    return None
 
 
     @classmethod
-    def regex(cls, regex, skip_whitespace_before=True):
-        regex = re.compile(regex)
+    def regex(cls, regex, skip_whitespace_before=True, case_sensitive=False):
+        regex = re.compile(regex, flags=re.I)
         def fn(ctx):
             if skip_whitespace_before:
                 ctx.skip_whitespace()
@@ -160,9 +160,9 @@ character = Parser.regex(r"[\s\S]", skip_whitespace_before=False)
 string_backslash = Parser.literal("\\", skip_whitespace_before=False)
 
 
-local_symbol_literal = Parser.regex(r"\d[a-zA-Z_0-9$]*")
-symbol_literal = Parser.regex(r"[a-zA-Z_$][a-zA-Z_0-9$]*")
-instruction_name = Parser.regex(r"\.?[a-zA-Z_][a-zA-Z_0-9]*")
+local_symbol_literal = Parser.regex(r"\d[a-z_0-9$]*")
+symbol_literal = Parser.regex(r"[a-z_$][a-z_0-9$]*")
+instruction_name = Parser.regex(r"\.?[a-z_][a-z_0-9]*")
 
 
 @Parser
@@ -183,7 +183,7 @@ def number(ctx):
 
     if Parser.literal("^X")(ctx, maybe=True):
         base = 2
-        num = Parser.regex(rf"[0-9a-fA-F]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+        num = Parser.regex(rf"[0-9a-f]+{boundary}", skip_whitespace_before=False)(ctx, report=(
             reports.critical,
             "invalid-number",
             (ctx_start, ctx, "A hexadecimal number was expected after '^X'")
@@ -218,15 +218,15 @@ def number(ctx):
     first_digit = Parser.regex(r"\d")(ctx)
 
     if first_digit == "0":
-        if Parser.regex(r"[xX]", skip_whitespace_before=False)(ctx, maybe=True):
+        if Parser.literal("x", skip_whitespace_before=False)(ctx, maybe=True):
             # Hexadecimal number
-            num = Parser.regex(rf"[0-9a-fA-F]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+            num = Parser.regex(rf"[0-9a-f]+{boundary}", skip_whitespace_before=False)(ctx, report=(
                 reports.critical,
                 "invalid-number",
                 (ctx_start, ctx, "A hexadecimal number was expected after '0x'")
             ))
             return types.Number(ctx_start, ctx, f"{sign_str}0x{num}", int(num, 16) * sign)
-        elif Parser.regex(r"[oO]", skip_whitespace_before=False)(ctx, maybe=True):
+        elif Parser.literal("o", skip_whitespace_before=False)(ctx, maybe=True):
             # Octal number
             num = Parser.regex(rf"[0-7]+{boundary}", skip_whitespace_before=False)(ctx, report=(
                 reports.critical,
@@ -234,7 +234,7 @@ def number(ctx):
                 (ctx_start, ctx, "An octal number was expected after '0o'")
             ))
             return types.Number(ctx_start, ctx, f"{sign_str}0o{num}", int(num, 8) * sign)
-        elif Parser.regex(r"[bB]", skip_whitespace_before=False)(ctx, maybe=True):
+        elif Parser.literal("b", skip_whitespace_before=False)(ctx, maybe=True):
             # Binary number
             num = Parser.regex(rf"[01]+{boundary}", skip_whitespace_before=False)(ctx, report=(
                 reports.critical,
@@ -259,12 +259,39 @@ def number(ctx):
     return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num, 8) * sign)
 
 
+radix50_chars = Parser.regex("[" + re.escape(radix50.TABLE.replace(" ", "")) + "]+")
+
+@Parser
+def radix50_literal(ctx):
+    ctx.skip_whitespace()
+    ctx_start = ctx.save()
+
+    Parser.literal("^R")(ctx)
+
+    string = radix50_chars(ctx, report=(
+        reports.error,
+        "invalid-string",
+        (ctx_start, ctx, "Up to three radix-50 characters are expected after ^R.")
+    ))
+    if string is None:
+        string = ""
+
+    if len(string) > 3:
+        reports.error(
+            "invalid-string",
+            (ctx_start, ctx, f"This radix-50 literal contains more than 3 characters ({len(string)}, in particular).")
+        )
+        string = string[:3]
+
+    return types.Number(ctx_start, ctx, f"^R{string}", radix50.pack_to_int(string))
+
+
 @Parser
 def label(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    name = Parser.regex(r"([a-zA-Z_0-9$]+)\s*:")(ctx)
+    name = Parser.regex(r"([a-z_0-9$]+)\s*:")(ctx)
     name = name[:-1].strip()
 
     if name in builtin_commands:
@@ -373,7 +400,7 @@ def string_escape(ctx):
     elif char == "\n":
         return ""
     elif char == "x":
-        num = Parser.regex(r"[0-9a-fA-F]{2}")(ctx, report=(
+        num = Parser.regex(r"[0-9a-f]{2}")(ctx, report=(
             reports.error,
             "invalid-escape",
             (ctx_start, ctx, "Two hexadecimal digits are expected after '\\x' in a string")
@@ -569,10 +596,10 @@ def long_string(ctx):
 def instruction_pointer(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
-    Parser.regex(r"\.(?![a-zA-Z_0-9])")(ctx)
+    Parser.regex(r"\.(?![a-z_0-9])")(ctx)
     return types.InstructionPointer(ctx_start, ctx)
 
-expression_literal = symbol_expression | number | local_symbol_expression | single_quoted_literal | double_quoted_literal | instruction_pointer
+expression_literal = symbol_expression | radix50_literal | number | local_symbol_expression | single_quoted_literal | double_quoted_literal | instruction_pointer
 
 infix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.InfixOperator]])
 prefix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PrefixOperator]])

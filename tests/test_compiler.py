@@ -451,3 +451,10 @@ def test_radix50():
 
     with util.expect_error("invalid-character"):
         expect_same(".rad50 /AB#/", ".rad50 /AB /")
+
+    expect_same(".word ^RABC", ".rad50 /ABC/")
+    expect_same(".word ^RAB", ".rad50 /AB/")
+    with util.expect_error("invalid-string"):
+        expect_same(".word ^RABCDEF", ".word ^RABC")
+    with util.expect_error("invalid-string"):
+        expect_same(".word ^R", ".word 0")
