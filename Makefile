@@ -1,19 +1,20 @@
-.PHONY: all test lint cov mut
+PYTHON ?= python3
 
+
+.PHONY: all test lint cov mut
 
 all:
 
-
 test:
-	python3 -m pytest tests
+	$(PYTHON) -m pytest tests
 
 lint:
-	python3 -m pylint pdp
+	$(PYTHON) -m pylint pdp
 
 cov:
-	python3 -m coverage run -m pytest tests
-	python3 -m coverage report -m
+	$(PYTHON) -m coverage run -m pytest tests
+	$(PYTHON) -m coverage report -m
 
 mut:
-	python3 mutation.py run
-	python3 -m mutmut results
+	$(PYTHON) mutation.py run
+	$(PYTHON) -m mutmut results

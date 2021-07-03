@@ -1,6 +1,6 @@
 import sys
 
-from .builtins import builtins
+from .builtins import builtin_commands
 from .containers import CaseInsensitiveDict
 from .deferred import Promise, wait, BaseDeferred
 from .formats import file_formats
@@ -47,7 +47,7 @@ class Compiler:
                 if chunk is not None:
                     data += chunk
                     if isinstance(chunk, BaseDeferred):
-                        addr += chunk.len()
+                        addr += chunk.length()
                     else:
                         addr += len(chunk)
 
@@ -120,14 +120,14 @@ class Compiler:
 
 
     def compile_insn(self, insn, state):
-        if insn.name.name in builtins:
-            return builtins[insn.name.name].compile(state, self, insn)
-        elif "." + insn.name.name in builtins:
+        if insn.name.name in builtin_commands:
+            return builtin_commands[insn.name.name].compile_insn(state, self, insn)
+        elif "." + insn.name.name in builtin_commands:
             reports.warning(
                 "meta-typo",
                 (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is not a metacommand by itself, but '.{insn.name.name}' is.\nPlease be explicit and add a dot."),
             )
-            return builtins["." + insn.name.name].compile(state, self, insn)
+            return builtin_commands["." + insn.name.name].compile_insn(state, self, insn)
         elif insn.name.name in self.symbols:
             # Resolve a macro
             symbol, _ = self.symbols[insn.name.name]
@@ -167,7 +167,7 @@ class Compiler:
             data = self.compile_file(file_ast, self.cur_emit_location)
             self.generated_code += data
             if isinstance(data, BaseDeferred):
-                self.cur_emit_location += data.len()
+                self.cur_emit_location += data.length()
             else:
                 self.cur_emit_location += len(data)
 

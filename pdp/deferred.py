@@ -9,7 +9,10 @@ def wait(deferred):
 
 
 def optimize(deferred):
-    while isinstance(deferred, BaseDeferred) and (upd := deferred.optimize()) is not deferred:
+    while isinstance(deferred, BaseDeferred):
+        upd = deferred.optimize()
+        if upd is deferred:
+            break
         deferred = upd
     return deferred
 
@@ -33,7 +36,12 @@ def not_ready():
         raise NotReadyError()
 
 
-class BaseDeferred:
+class BaseDeferredMetaclass(type):
+    def __getitem__(cls, typ):
+        return lambda *args, **kwargs: cls.construct(typ, *args, **kwargs)
+
+
+class BaseDeferred(metaclass=BaseDeferredMetaclass):
     def __new__(cls, *args, **kwargs):  # pylint: disable=unused-argument
         if not args or not isinstance(args[0], type):
             raise TypeError(f"{cls.__name__} must be passed a type in brackets")  # pragma: no cover
@@ -46,16 +54,12 @@ class BaseDeferred:
     def construct(cls, *args, **kwargs):
         return cls(*args, **kwargs)
 
-    @classmethod
-    def __class_getitem__(cls, typ):
-        return lambda *args, **kwargs: cls.construct(typ, *args, **kwargs)
-
     def __len__(self):
         raise NotImplementedError()  # pragma: no cover
 
-    def len(self):
+    def length(self):
         if self.typ is not bytes:  # pragma: no cover
-            raise TypeError(f"Can only calculate len() of {type(self).__name__}[bytes], not {type(self).__name__}[{self.typ.__name__}]")
+            raise TypeError(f"Can only calculate length() of {type(self).__name__}[bytes], not {type(self).__name__}[{self.typ.__name__}]")
         return Deferred[int](lambda: len(wait(self)))
 
     def __repr__(self):
@@ -150,12 +154,12 @@ class Deferred(BaseDeferred):
     def __repr__(self):
         return f"d{self.instance_id}"
 
-    def len(self):
+    def length(self):
         def fn():
             if not self.settled:
                 self.wait()
             if isinstance(self.value, BaseDeferred):
-                return wait(self.value.len())
+                return wait(self.value.length())
             else:
                 return len(self.value)
         return Deferred[int](fn)
@@ -267,11 +271,11 @@ class Concatenator(BaseDeferred):
     def wait(self):
         return self.typ().join(map(wait, self.lst))
 
-    def len(self):
+    def length(self):
         total_len = 0
         for elem in self.lst:
             if isinstance(elem, BaseDeferred):
-                total_len += elem.len()
+                total_len += elem.length()
             else:
                 total_len += len(elem)
         return total_len
@@ -313,7 +317,7 @@ class SizedDeferred(Deferred):
     def __len__(self):
         return self.size
 
-    def len(self):
+    def length(self):
         return self.size
 
 

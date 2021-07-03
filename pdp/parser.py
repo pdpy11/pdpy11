@@ -1,7 +1,7 @@
 import re
 import struct
 
-from .builtins import builtins, Metacommand
+from .builtins import builtin_commands, Metacommand
 from .context import Context
 from . import operators
 from . import reports
@@ -28,7 +28,8 @@ class Parser:
     def either(cls, parsers):
         def fn(ctx):
             for parser in parsers:
-                if (result := parser(ctx, maybe=True)) is not None:
+                result = parser(ctx, maybe=True)
+                if result is not None:
                     return result
             raise reports.RecoverableError("Failed to match either of the alternatives")
         return cls(fn)
@@ -37,7 +38,8 @@ class Parser:
     def __or__(self, rhs):
         assert isinstance(rhs, Parser)
         def fn(ctx):
-            if (result := self(ctx, maybe=True)) is not None:
+            result = self(ctx, maybe=True)
+            if result is not None:
                 return result
             return rhs(ctx)
         return Parser(fn)
@@ -231,7 +233,7 @@ def label(ctx):
     name = Parser.regex(r"([a-zA-Z_0-9$]+)\s*:")(ctx)
     name = name[:-1].strip()
 
-    if name in builtins:
+    if name in builtin_commands:
         reports.warning(
             "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction")
@@ -270,7 +272,7 @@ def assignment(ctx):
         (ctx, ctx, "...yet no expression was matched here")
     ))
 
-    if symbol in builtins:
+    if symbol in builtin_commands:
         reports.warning(
             "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction")
@@ -290,7 +292,7 @@ def symbol_expression(ctx):
     ctx_start = ctx.save()
 
     symbol = symbol_literal(ctx)
-    if symbol in builtins:
+    if symbol in builtin_commands:
         reports.warning(
             "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it.")
@@ -454,7 +456,10 @@ def long_string(ctx):
 
     chunks = [(quoted_string | angle_bracketed_char)(ctx)]
 
-    while (chunk := (quoted_string | angle_bracketed_char)(ctx, maybe=True)) is not None:
+    while True:
+        chunk = (quoted_string | angle_bracketed_char)(ctx, maybe=True)
+        if chunk is None:
+            break
         chunks.append(chunk)
 
     if len(chunks) == 1:
@@ -603,7 +608,10 @@ def expression(ctx):
 
     # Try to match a full expression before matching a prefix operator, so that
     # -1 is parsed as -1, not -(1)
-    while (expr := expression_literal_rec(ctx, maybe=True)) is None:
+    while True:
+        expr = expression_literal_rec(ctx, maybe=True)
+        if expr is not None:
+            break
         char = prefix_operator(ctx, report=(
             reports.critical,
             "invalid-expression",
@@ -694,12 +702,12 @@ def expression(ctx):
 
 
 def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
-    if insn_name in builtins:
-        insn = builtins[insn_name]
-    elif "." + insn_name in builtins:
+    if insn_name in builtin_commands:
+        insn = builtin_commands[insn_name]
+    elif "." + insn_name in builtin_commands:
         # A warning will be emitted later by the compiler, no need to emit it
         # now
-        insn = builtins["." + insn_name]
+        insn = builtin_commands["." + insn_name]
     else:
         insn = None
 
@@ -740,7 +748,7 @@ def instruction(ctx):
     insn_name_symbol = types.Symbol(ctx_start, ctx_state_after_name, insn_name)
 
 
-    if insn_name in builtins and isinstance(builtins[insn_name], Metacommand) and builtins[insn_name].literal_string_operand:
+    if insn_name in builtin_commands and isinstance(builtin_commands[insn_name], Metacommand) and builtin_commands[insn_name].literal_string_operand:
         idx = ctx.code.find("\n", ctx.pos)
         if idx == -1:
             idx = len(ctx.code)
@@ -787,7 +795,7 @@ def instruction(ctx):
             raise goto
 
         name = (instruction_name + ~colon)(ctx, maybe=True, lookahead=True)
-        if name in builtins and (insn_name not in builtins or builtins[insn_name].max_operands == 0):
+        if name in builtin_commands and (insn_name not in builtin_commands or builtin_commands[insn_name].max_operands == 0):
             # Does not take an operand for sure
             ctx_new = ctx.save()
             ctx_new.skip_whitespace()

@@ -95,15 +95,15 @@ def get_as_str(state, what, token, arg_token):
 
 
 from .insns import instructions  # pylint: disable=wrong-import-position
-builtins = CaseInsensitiveDict(instructions)
+builtin_commands = CaseInsensitiveDict(instructions)
 
 
 class Metacommand:
-    def __init__(self, fn, size_fn=None, literal_string_operand=False, no_dot=False):
+    def __init__(self, fn, name, size_fn=None, literal_string_operand=False, no_dot=False):
         self.fn = fn
         self.size_fn = size_fn
         self.literal_string_operand = literal_string_operand
-        self.name = ("" if no_dot else ".") + fn.__name__
+        self.name = name
 
         sig = inspect.signature(fn)
         assert list(sig.parameters.keys())[:1] == ["state"]
@@ -133,7 +133,7 @@ class Metacommand:
             assert 0 <= self.min_operands <= 1 and self.max_operands == 1, "A metacommand with a literal string operand is expected to have exactly one operand (optional or not)"
 
 
-    def compile(self, state, compiler, insn):
+    def compile_insn(self, state, compiler, insn):
         state = {**state, "insn": insn, "compiler": compiler}
 
         insn_operands = insn.operands
@@ -199,8 +199,9 @@ def metacommand(fn=None, **kwargs):
     if fn is None:
         return lambda fn: metacommand(fn, **kwargs)
 
-    name = ("" if kwargs.get("no_dot") else ".") + fn.__name__
-    builtins[name] = Metacommand(fn, **kwargs)
+    name = ("" if kwargs.get("no_dot") else ".") + fn.__name__.rstrip("_")
+
+    builtin_commands[name] = Metacommand(fn, name, **kwargs)
     # That is not to override globals with the same name, e.g. list
     return __builtins__.get(fn.__name__, None)
 
@@ -269,7 +270,7 @@ def dword(state, *operands: int) -> bytes:
 
 # pylint: disable=redefined-builtin
 @metacommand
-def ascii(state, operand: str) -> bytes:
+def ascii_(state, operand: str) -> bytes:
     return get_as_str(state, "'.ascii' operand", state["insn"], operand).encode("koi8-r")
 
 
@@ -316,7 +317,7 @@ def repeat(state, cnt: int, body: CodeBlock) -> bytes:
     for _ in range(cnt_val):
         chunk = state["compiler"].compile_block({**state, "context": "repeat"}, body, addr)
         if isinstance(chunk, BaseDeferred):
-            addr += chunk.len()
+            addr += chunk.length()
         else:
             addr += len(chunk)
         result += chunk
@@ -333,7 +334,7 @@ def error(state, error: str=None) -> bytes:
 
 
 @metacommand
-def list(state, _: int=None) -> bytes:
+def list_(state, _: int=None) -> bytes:
     # TODO: Does it make sense to implement this stuff?
     reports.warning(
         "not-implemented",

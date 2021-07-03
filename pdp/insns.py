@@ -46,17 +46,18 @@ class RegisterOperandStub:
         self.bit_indexes = bit_indexes
 
     def encode(self, operand, state):
-        if (register := try_register_from_symbol(operand)) is not None:
+        register = try_register_from_symbol(operand)
+        if register is not None:
             return register, b""
-        else:
-            insn = state["insn"]
-            idx = {"s": "first", "d": "second"}[self.pattern_char]
-            reports.error(
-                "invalid-addressing",
-                (insn.ctx_start, insn.ctx_end, f"Instruction '{insn.name.name}' accepts a register as the {idx} argument"),
-                (operand.ctx_start, operand.ctx_end, "...but this value does not look like a register")
-            )
-            raise reports.RecoverableError("Register expected, expression passed")
+
+        insn = state["insn"]
+        idx = {"s": "first", "d": "second"}[self.pattern_char]
+        reports.error(
+            "invalid-addressing",
+            (insn.ctx_start, insn.ctx_end, f"Instruction '{insn.name.name}' accepts a register as the {idx} argument"),
+            (operand.ctx_start, operand.ctx_end, "...but this value does not look like a register")
+        )
+        raise reports.RecoverableError("Register expected, expression passed")
 
 
 class RegisterModeOperandStub:
@@ -90,66 +91,100 @@ class RegisterModeOperandStub:
 
         # Good luck debugging this
         # pylint: disable=isinstance-second-argument-not-valid-type
-        if (register := try_register_from_symbol(operand)) is not None:
+        register = try_register_from_symbol(operand)
+        if register is not None:
             # Register
             return register, b""
-        elif isinstance(operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.expr)) is not None:
-            # Register deferred
-            return 0o10 | register, b""
-        elif isinstance(operand, operators.deferred) and (register := try_register_from_symbol(operand.operand)) is not None:
-            # Register deferred
-            reports.warning(
-                "legacy-deferred",
-                (operand.ctx_start, operand.ctx_end, f"{operand!r} is a legacy way of spelling ({operand.operand!r}), please use the new syntax")
-            )
-            return 0o10 | register, b""
-        elif isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
-            # Autoincrement
-            return 0o20 | register, b""
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)) is not None:
-            # Autoincrement deferred
-            return 0o30 | register, b""
-        elif isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
-            # Autodecrement
-            return 0o40 | register, b""
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.operand.expr)) is not None:
-            # Autodecrement deferred
-            return 0o50 | register, b""
-        elif isinstance(operand, operators.call) and isinstance(operand.callee, operators.deferred) and (register := try_register_from_symbol(operand.operand)) is not None:
-            # Yes, I am aware that the nesting is broken here, but that's thanks
-            # to hoisting and that's the least hacky way I had come up with.
-            # Index deferred
-            return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee.operand, bitness=16, unsigned=False)))
-        elif isinstance(operand, operators.call) and (register := try_register_from_symbol(operand.operand)) is not None:
-            # Index
-            return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee, bitness=16, unsigned=False)))
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and (register := try_register_from_symbol(operand.operand.expr)) is not None:
-            # Index deferred with implicit zero index
-            reports.warning(
-                "implicit-index",
-                (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have {operand!r} addressing mode.\nThis expression is parsed as @0{operand.operand!r}, which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for clarity.")
-            )
-            return 0o70 | register, b"\x00\x00"
-        elif isinstance(operand, operators.immediate):
+
+        if isinstance(operand, ParenthesizedExpression):
+            register = try_register_from_symbol(operand.expr)
+            if register is not None:
+                # Register deferred
+                return 0o10 | register, b""
+
+        if isinstance(operand, operators.deferred):
+            register = try_register_from_symbol(operand.operand)
+            if register is not None:
+                # Register deferred
+                reports.warning(
+                    "legacy-deferred",
+                    (operand.ctx_start, operand.ctx_end, f"{operand!r} is a legacy way of spelling ({operand.operand!r}), please use the new syntax")
+                )
+                return 0o10 | register, b""
+
+        if isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression):
+            register = try_register_from_symbol(operand.operand.expr)
+            if register is not None:
+                # Autoincrement
+                return 0o20 | register, b""
+
+        if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression):
+            register = try_register_from_symbol(operand.operand.operand.expr)
+            if register is not None:
+                # Autoincrement deferred
+                return 0o30 | register, b""
+
+        if isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression):
+            register = try_register_from_symbol(operand.operand.expr)
+            if register is not None:
+                # Autodecrement
+                return 0o40 | register, b""
+
+        if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression):
+            register = try_register_from_symbol(operand.operand.operand.expr)
+            if register is not None:
+                # Autodecrement deferred
+                return 0o50 | register, b""
+
+        # Yes, I am aware that the nesting is broken here, but that's thanks to
+        # hoisting and that's the least hacky way I had come up with.
+        if isinstance(operand, operators.call) and isinstance(operand.callee, operators.deferred):
+            register = try_register_from_symbol(operand.operand)
+            if register is not None:
+                # Index deferred
+                return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee.operand, bitness=16, unsigned=False)))
+
+        if isinstance(operand, operators.call):
+            register = try_register_from_symbol(operand.operand)
+            if register is not None:
+                # Index
+                return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee, bitness=16, unsigned=False)))
+
+        if isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression):
+            register = try_register_from_symbol(operand.operand.expr)
+            if register is not None:
+                # Index deferred with implicit zero index
+                reports.warning(
+                    "implicit-index",
+                    (operand.ctx_start, operand.ctx_end, f"PDP-11 doesn't have {operand!r} addressing mode.\nThis expression is parsed as @0{operand.operand!r}, which does what you probably expect.\nHowever, this is in fact index deferred addressing with an implicit zero offset.\nYou might want to insert a zero for clarity.")
+                )
+                return 0o70 | register, b"\x00\x00"
+
+        if isinstance(operand, operators.immediate):
             # Immediate
             return 0o27, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an immediate value", operand, operand.operand, bitness=16, unsigned=False)))
-        elif isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.immediate):
+
+        if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.immediate):
             # Absolute
             return 0o37, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an absolute address", operand, operand.operand.operand, bitness=16, unsigned=False)))
-        elif isinstance(operand, operators.deferred):
+
+        if isinstance(operand, operators.deferred):
             # Relative deferred
             return 0o77, SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(operand.operand.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
-        else:
-            # Relative
-            return 0o67, SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(operand.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
+
+        # Relative
+        return 0o67, SizedDeferred[bytes](2, lambda: struct.pack("<H", wait(operand.resolve(state) - state["rel_address"] - 2) % (2 ** 16)))
 
 
 class FP11RMOperandStub(RegisterModeOperandStub):
     def encode(self, operand, state):
-        if (acc := try_accumulator_from_symbol(operand)) is not None:
+        acc = try_accumulator_from_symbol(operand)
+        if acc is not None:
             # FP11 accumulator
             return acc, b""
-        elif (register := try_register_from_symbol(operand)) is not None:
+
+        register = try_register_from_symbol(operand)
+        if register is not None:
             (reports.warning if register < 6 else reports.error)(
                 "implicit-accumulator",
                 (
@@ -159,8 +194,8 @@ class FP11RMOperandStub(RegisterModeOperandStub):
                 )
             )
             return register, b""
-        else:
-            return super().encode(operand, state)
+
+        return super().encode(operand, state)
 
 
 class OffsetOperandStub:
@@ -288,7 +323,8 @@ class FP11AccumulatorOperandStub:
         self.bit_indexes = bit_indexes
 
     def encode(self, operand, state):
-        if (acc := try_accumulator_from_symbol(operand)) is None:
+        acc = try_accumulator_from_symbol(operand)
+        if acc is None:
             insn = state["insn"]
             idx = {"S": "first", "D": "second"}[self.pattern_char]
             reports.error(
@@ -310,7 +346,7 @@ class Instruction:
         self.max_operands = len(operands)
 
 
-    def compile(self, state, compiler, insn):
+    def compile_insn(self, state, compiler, insn):
         state = {**state, "insn": insn, "compiler": compiler}
 
         if len(insn.operands) < len(self.operands):

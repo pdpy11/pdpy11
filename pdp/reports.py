@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from collections import namedtuple
 import itertools
 import re
 
@@ -15,14 +15,7 @@ critical = Report("\x1b[91mError\x1b[0m")
 warning = Report("\x1b[33mWarning\x1b[0m")
 
 
-@dataclass
-class ReportInfo:
-    line_no: int
-    start_col_no: int
-    end_col_no: int
-    text: str
-    closing_line_no: int = None
-    max_column: int = -1
+ReportInfo = namedtuple("ReportInfo", "line_no,start_col_no,end_col_no,text,closing_line_no,max_column")
 
 
 def colorize(text):
@@ -97,7 +90,7 @@ class TextHandler:
                 else:
                     end_col_no = start_col_no + (ctx_end.pos - ctx_start.pos)
 
-                reports_lst.append(ReportInfo(line_no, start_col_no, end_col_no, text))
+                reports_lst.append(ReportInfo(line_no, start_col_no, end_col_no, text, None, -1))
 
             min_line_no = max(min(report.line_no for report in reports_lst) - 2, 0)
             max_line_no = min(max(report.line_no for report in reports_lst) + 3, len(lines))
