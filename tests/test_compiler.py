@@ -432,3 +432,22 @@ def test_error():
         expect_same(".error\nmov r1, r2", "mov r1, r2")
     with util.expect_error("user-error"):
         expect_same(".error Hello, world!\nmov r1, r2", "mov r1, r2")
+
+
+def test_radix50():
+    expect_same(".rad50 /ABC/", ".word 3223")
+    expect_same(".rad50 /AB /", ".rad50 /AB/")
+    expect_same(".rad50 //", "")
+    expect_same(".rad50 /ABCDEF/", ".rad50 /ABC/\n.rad50 /DEF/")
+    expect_same(".rad50 /AB/<35>", ".word 3255")
+    expect_same(".rad50 /abc/", ".rad50 /ABC/")
+
+    expect_same(".rad50 /AB/<0>", ".rad50 /AB /")
+    expect_same(".rad50 /AB/<47>", ".rad50 /AB9/")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same(".rad50 /AB/<-1>", ".rad50 /AB /")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same(".rad50 /AB/<50>", ".rad50 /AB /")
+
+    with util.expect_error("invalid-character"):
+        expect_same(".rad50 /AB#/", ".rad50 /AB /")

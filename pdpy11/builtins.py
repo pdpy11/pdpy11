@@ -4,9 +4,11 @@ import struct
 
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, wait, BaseDeferred
-from .types import CodeBlock
+from . import radix50
 from . import operators
 from . import reports
+from . import types
+from .types import CodeBlock
 
 
 def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii=False):
@@ -277,6 +279,48 @@ def ascii_(state, operand: str) -> bytes:
 @metacommand
 def asciz(state, operand: str) -> bytes:
     return get_as_str(state, "'.asciz' operand", state["insn"], operand).encode("koi8-r") + b"\x00"
+
+
+@metacommand
+def rad50(state, operand: str) -> bytes:
+    if isinstance(operand, types.StringConcatenation):
+        chunks = operand.chunks
+    else:
+        chunks = [operand]
+
+    characters = []
+    for chunk in chunks:
+        if isinstance(chunk, types.AngleBracketedChar):
+            # Raw number in range 0:50 (octal)
+            val = wait(chunk.expr.resolve(state))
+            if not (0 <= val < 40):
+                reports.error(
+                    "value-out-of-bounds",
+                    (chunk.ctx_start, chunk.ctx_end, f"Character {val} cannot be packed into a radix-50 word.\nA value in range [0; 50) is expected (decimal).")
+                )
+                val = 0
+            characters.append(val)
+        else:
+            string = get_as_str(state, "'.rad50' operand", state["insn"], chunk)
+            for char in string:
+                try:
+                    val = radix50.TABLE.index(char.upper())
+                except ValueError:
+                    reports.error(
+                        "invalid-character",
+                        (chunk.ctx_start, chunk.ctx_end, f"Character '{char}' cannot be converted using radix-50.\nThe supported characters are: ' ABCDEFGHIJKLMNOPQRSTUVWXYZ$.%0123456789'.")
+                    )
+                    val = 0
+                characters.append(val)
+
+    while len(characters) % 3 != 0:
+        characters.append(0)
+
+    result = b""
+    for i in range(0, len(characters), 3):
+        a, b, c = characters[i:i + 3]
+        result += struct.pack("<H", a * 1600 + b * 40 + c)
+    return result
 
 
 @metacommand
