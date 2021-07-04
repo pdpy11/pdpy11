@@ -118,3 +118,4 @@ def main_cli():
         print("An unexpected internal compiler error happened.\nPlease report this to https://github.com/pdpy11/pdpy11/issues.\nThe following information will be of interest to the maintainer\n(hopefully along with some samples for reproduction):\n\n---\n", file=sys.stderr)
         print(f"Version: pdpy11 {version}\nPython: {platform.python_implementation()} {platform.python_version()}\nPlatform: {platform.platform()}\n", file=sys.stderr)
         traceback.print_exc()
+        raise SystemExit(1)
