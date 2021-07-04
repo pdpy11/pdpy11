@@ -423,10 +423,10 @@ def single_quoted_literal(ctx):
 
     single_quote(ctx)
 
-    if ctx.pos == len(ctx.code):
+    if ctx.pos == len(ctx.code) or ctx.code[ctx.pos].strip() == "":
         reports.critical(
             "unterminated-string",
-            (ctx_start, ctx, "Unterminated string literal")
+            (ctx_start, ctx, "Unterminated string literal. A single character is expected after '.")
         )
 
     value = ""
@@ -437,7 +437,7 @@ def single_quoted_literal(ctx):
         single_quote(ctx)
         reports.warning(
             "excess-quote",
-            (ctx_start, ctx, "Single quotation mark denotes not a string, but an ASCII value of a character.\nUnlike C, a character must not be terminated by a single quotation mark.\nFor example, 'a should be used instead of 'a'. Please remove the second quotation mark.")
+            (ctx_start, ctx, "Single quotation mark denotes not a string, but an ASCII value of a character.\nUnlike C, a character must not be terminated by a single quotation mark.\nFor example, 'a should be used instead of 'a'. " + ["An empty string can be safely replaced with a zero.", "Please remove the second quotation mark."][len(value)])
         )
 
     return types.CharLiteral(ctx_start, ctx, "'" + value, value)
@@ -453,10 +453,10 @@ def double_quoted_literal(ctx):
     value = ""
 
     for _ in range(2):
-        if ctx.pos == len(ctx.code):
+        if ctx.pos == len(ctx.code) or ctx.code[ctx.pos].strip() == "":
             reports.critical(
                 "unterminated-string",
-                (ctx_start, ctx, "Unterminated string literal")
+                (ctx_start, ctx, "Unterminated string literal. Exactly two characters are expected after \".")
             )
         if ctx.code[ctx.pos] != "\"":
             value += string_char(ctx)
@@ -465,7 +465,7 @@ def double_quoted_literal(ctx):
         double_quote(ctx)
         reports.warning(
             "excess-quote",
-            (ctx_start, ctx, "Double quotation mark does not denote a string. It denotes an ASCII conversion operator,\nwhich means that the two characters after \" are converted to a 16-bit word.\nFor example, \"AB is the same as 0x4142 (or ^H4142).\nUnlike C, this literal must not be terminated by a quotation mark -- please remove it.")
+            (ctx_start, ctx, "Double quotation mark does not denote a string. It denotes an ASCII conversion operator,\nwhich means that the two characters after \" are converted to a 16-bit word.\nFor example, \"AB is the same as 0x4142 (or ^H4142).\n" + [f"An empty string, as here, can be safely replaced with a zero.", f"Exactly two characters are expected after the quotation mark, and the closing mark is unnecessary.\nPlease use '{value} instead.", f"Unlike C, this literal must not be terminated by a quotation mark -- please remove it: \"{value}"][len(value)])
         )
 
     return types.CharLiteral(ctx_start, ctx, "\"" + value, value)
