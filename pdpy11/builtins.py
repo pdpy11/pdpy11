@@ -535,6 +535,27 @@ def make_turbo_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
     return b""
 
 
+@metacommand(size_fn=lambda state, address: 0)
+def link(state, address: int) -> bytes:
+    address_value = get_as_int(state, "'.link' operand", state["insn"], address, bitness=16, unsigned=False)
+    compiler = state["compiler"]
+    if not compiler.link_base.settled:
+        compiler.link_base.settle(address_value)
+    else:
+        if compiler.link_base_set_where is None:
+            reports.error(
+                "recursive-definition",
+                (state["insn"].ctx_start, state["insn"].ctx_end, f"The argument of '.link' directive is mathematically equal to {address.resolve(state)!r},\nwhere LA denotes link base. In other words, the link base depends on itself,\nand thus cannot be determined.")
+            )
+        else:
+            prev_link = compiler.link_base_set_where
+            reports.error(
+                "address-conflict",
+                (state["insn"].ctx_start, state["insn"].ctx_end, "A '.link' directive was encountered, but the link base has already been set."),
+                (prev_link.ctx_start, prev_link.ctx_end, "The link address has been previously configured here.")
+            )
+    return b""
+
 # TODO: Macro-11 has .print metacommand which we can probably ignore as Rhialto's implementation does
 
 # TODO: implement .radix. Macro-11 supports only radix 8, 10, 16 and 2 but we

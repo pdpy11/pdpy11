@@ -2,7 +2,7 @@ import sys
 
 from .builtins import builtin_commands
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, wait, BaseDeferred
+from .deferred import Promise, wait, optimize, BaseDeferred
 from .formats import file_formats
 from .types import Instruction, Label, Assignment
 from . import reports
@@ -12,6 +12,7 @@ class Compiler:
     def __init__(self, output_charset="bk"):
         self.symbols = CaseInsensitiveDict()
         self.link_base: Promise = Promise[int]("LA")
+        self.link_base_set_where = None
         self.cur_emit_location = self.link_base
         self.generated_code = b""
         self.files = []
@@ -174,8 +175,13 @@ class Compiler:
 
 
     def link(self):
+        # Forcefully calculate as much code as possible. This should optimize
+        # every instruction and command that does not depend on non-settled
+        # promises, which at this point should only be LA.
+        optimize(self.generated_code)
+
         if not self.link_base.settled:
-            self.link_base.settle(0o1000)  # TODO: maybe report a warning?
+            self.link_base.settle(0o1000)
 
         return wait(self.link_base), wait(self.generated_code)
 

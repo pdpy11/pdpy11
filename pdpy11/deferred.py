@@ -178,6 +178,12 @@ class Deferred(BaseDeferred):
             self.value = optimize(self.value)
             return self.value
         else:
+            with try_compute:
+                try:
+                    self.value = self.fn()
+                    self.settled = True
+                except NotReadyError:
+                    pass
             return self
 
 
@@ -270,6 +276,10 @@ class Concatenator(BaseDeferred):
 
     def wait(self):
         return self.typ().join(map(wait, self.lst))
+
+    def optimize(self):
+        self.lst = list(map(optimize, self.lst))
+        return self
 
     def length(self):
         total_len = 0
