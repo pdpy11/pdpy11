@@ -423,7 +423,7 @@ def single_quoted_literal(ctx):
 
     single_quote(ctx)
 
-    if ctx.pos == len(ctx.code) or ctx.code[ctx.pos].strip() == "":
+    if ctx.pos == len(ctx.code) or ctx.code[ctx.pos] in "\t\r\n":
         reports.critical(
             "unterminated-string",
             (ctx_start, ctx, "Unterminated string literal. A single character is expected after '.")
@@ -453,7 +453,7 @@ def double_quoted_literal(ctx):
     value = ""
 
     for _ in range(2):
-        if ctx.pos == len(ctx.code) or ctx.code[ctx.pos].strip() == "":
+        if ctx.pos == len(ctx.code) or ctx.code[ctx.pos] in "\t\r\n":
             reports.critical(
                 "unterminated-string",
                 (ctx_start, ctx, "Unterminated string literal. Exactly two characters are expected after \".")

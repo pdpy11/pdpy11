@@ -278,10 +278,22 @@ def test_string2():
         parse("s = '\\f")
     with util.expect_error("unterminated-string"):
         parse("s = '")
+
     with util.expect_warning("excess-quote"):
-        parse("s = 'a'")
+        expect_code("insn \"a\"", INSN(c(CharLiteral)("\"a", "a")))
     with util.expect_warning("excess-quote"):
-        parse("s = ''")
+        expect_code("insn \" \"", INSN(c(CharLiteral)("\" ", " ")))
+    with util.expect_warning("excess-quote"):
+        expect_code("insn \"  \"", INSN(c(CharLiteral)("\"  ", "  ")))
+    with util.expect_warning("excess-quote"):
+        expect_code("insn \"\"", INSN(c(CharLiteral)("\"", "")))
+    with util.expect_warning("excess-quote"):
+        expect_code("insn 'a'", INSN(c(CharLiteral)("'a", "a")))
+    with util.expect_warning("excess-quote"):
+        expect_code("insn ' '", INSN(c(CharLiteral)("' ", " ")))
+    with util.expect_warning("excess-quote"):
+        expect_code("insn ''", INSN(c(CharLiteral)("'", "")))
+
     with util.expect_error("unterminated-string"):
         parse("s = \"a")
 
