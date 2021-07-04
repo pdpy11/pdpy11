@@ -487,10 +487,9 @@ def make_raw(state, filepath: str=None) -> bytes:
     return b""
 
 
-@metacommand(no_dot=True)
-def make_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
+def add_emitted_bk_wav(state, filepath, bk_filename, insn_name, file_format):
     if filepath is not None:
-        filepath = get_as_str(state, "'make_wav' output wav path", state["insn"], filepath)
+        filepath = get_as_str(state, f"'{insn_name}' output wav path", state["insn"], filepath)
         write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), filepath))
     else:
         write_path = state["filename"]
@@ -506,11 +505,11 @@ def make_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
         if len(encoded_bk_filename) > 16:
             reports.error(
                 "too-long-string",
-                (state["insn"].ctx_start, state["insn"].ctx_end, f"The BK tape file has a header that contains a 16-byte filename.\nThe filename for this file was inferred from the output file to be '{bk_filename}',\nwhich does not fit in 16 bytes. You can set the filename manually like this:\nmake_wav 'output.wav', 'bk file name'\nChanging the output charset may help too, if the filename contains non-ASCII characters.")
+                (state["insn"].ctx_start, state["insn"].ctx_end, f"The BK tape file has a header that contains a 16-byte filename.\nThe filename for this file was inferred from the output file to be '{bk_filename}',\nwhich does not fit in 16 bytes. You can set the filename manually like this:\n{insn_name} 'output.wav', 'bk file name'\nChanging the output charset may help too, if the filename contains non-ASCII characters.")
             )
             encoded_bk_filename = encoded_bk_filename[:16]
     else:
-        bk_filename = get_as_str(state, "'make_wav' BK file name", state["insn"], bk_filename)
+        bk_filename = get_as_str(state, f"'{insn_name}' BK file name", state["insn"], bk_filename)
         encoded_bk_filename = bk_filename.encode(state["compiler"].output_charset)
         if len(encoded_bk_filename) > 16:
             reports.error(
@@ -521,7 +520,18 @@ def make_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
 
     encoded_bk_filename = encoded_bk_filename.ljust(16, b" ")
 
-    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, "bk_wav", write_path, encoded_bk_filename))
+    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, file_format, write_path, encoded_bk_filename))
+
+
+@metacommand(no_dot=True)
+def make_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
+    add_emitted_bk_wav(state, filepath, bk_filename, "make_wav", "bk_wav")
+    return b""
+
+
+@metacommand(no_dot=True)
+def make_turbo_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
+    add_emitted_bk_wav(state, filepath, bk_filename, "make_turbo_wav", "bk_turbo_wav")
     return b""
 
 

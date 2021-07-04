@@ -24,3 +24,8 @@ def raw(base, code):
 @file_format
 def bk_wav(base, code, bk_filename):
     return encode_as_wav(base, code, bk_filename)
+
+
+@file_format
+def bk_turbo_wav(base, code, bk_filename):
+    return encode_as_wav(base, code, bk_filename, turbo=True)
