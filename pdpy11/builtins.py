@@ -462,30 +462,66 @@ def insert_file(state, filepath: str) -> bytes:
     return b""
 
 
-@metacommand(no_dot=True)
-def make_bin(state, filepath: str=None) -> bytes:
+def add_emitted_file(state, filepath, insn_name, file_format, file_extension, *args):
     if filepath is not None:
-        path = get_as_str(state, "'make_bin' path", state["insn"], filepath)
+        path = get_as_str(state, f"'{insn_name}' path", state["insn"], filepath)
         write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), path))
     else:
         write_path = state["filename"]
         if write_path.lower().endswith(".mac"):
             write_path = write_path[:-4]
-        write_path += ".bin"
-    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, "bin", write_path))
+        if file_extension is not None:
+            write_path += f".{file_extension}"
+    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, file_format, write_path, *args))
+
+
+@metacommand(no_dot=True)
+def make_bin(state, filepath: str=None) -> bytes:
+    add_emitted_file(state, filepath, "make_bin", "bin", "bin")
     return b""
 
 
 @metacommand(no_dot=True)
 def make_raw(state, filepath: str=None) -> bytes:
+    add_emitted_file(state, filepath, "make_raw", "raw", None)
+    return b""
+
+
+@metacommand(no_dot=True)
+def make_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
     if filepath is not None:
-        path = get_as_str(state, "'make_raw' path", state["insn"], filepath)
-        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), path))
+        filepath = get_as_str(state, "'make_wav' output wav path", state["insn"], filepath)
+        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), filepath))
     else:
         write_path = state["filename"]
         if write_path.lower().endswith(".mac"):
             write_path = write_path[:-4]
-    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, "raw", write_path))
+        write_path += ".wav"
+
+    if bk_filename is None:
+        bk_filename = write_path.split("/")[-1]
+        if bk_filename.lower().endswith(".wav"):
+            bk_filename = bk_filename[:-4]
+        encoded_bk_filename = bk_filename.encode(state["compiler"].output_charset)
+        if len(encoded_bk_filename) > 16:
+            reports.error(
+                "too-long-string",
+                (state["insn"].ctx_start, state["insn"].ctx_end, f"The BK tape file has a header that contains a 16-byte filename.\nThe filename for this file was inferred from the output file to be '{bk_filename}',\nwhich does not fit in 16 bytes. You can set the filename manually like this:\nmake_wav 'output.wav', 'bk file name'\nChanging the output charset may help too, if the filename contains non-ASCII characters.")
+            )
+            encoded_bk_filename = encoded_bk_filename[:16]
+    else:
+        bk_filename = get_as_str(state, "'make_wav' BK file name", state["insn"], bk_filename)
+        encoded_bk_filename = bk_filename.encode(state["compiler"].output_charset)
+        if len(encoded_bk_filename) > 16:
+            reports.error(
+                "too-long-string",
+                (state["insn"].ctx_start, state["insn"].ctx_end, f"The BK filename does not fit in 16 bytes ('{bk_filename}').\nPlease truncate the filename. Changing the output charset may help too, if the filename contains non-ASCII characters.")
+            )
+            encoded_bk_filename = encoded_bk_filename[:16]
+
+    encoded_bk_filename = encoded_bk_filename.ljust(16, b" ")
+
+    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, "bk_wav", write_path, encoded_bk_filename))
     return b""
 
 

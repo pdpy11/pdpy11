@@ -1,5 +1,7 @@
 import struct
 
+from .bk_wav import encode_as_wav
+
 
 file_formats = {}
 
@@ -17,3 +19,8 @@ def bin_(base, code):
 @file_format
 def raw(base, code):
     return code
+
+
+@file_format
+def bk_wav(base, code, bk_filename):
+    return encode_as_wav(base, code, bk_filename)
