@@ -112,12 +112,19 @@ class Symbol(ExpressionToken):
             raise reports.RecoverableError("A register is used as a symbol")
 
         compiler = state["compiler"]
-        if self.name in compiler.symbols:
-            symbol, value = compiler.symbols[self.name]
-        elif state["local_symbol_prefix"] + self.name in compiler.symbols:
-            symbol, value = compiler.symbols[state["local_symbol_prefix"] + self.name]
+
+        candidates = (
+            state["local_symbol_prefix"] + self.name,
+            state["internal_symbol_prefix"] + self.name,
+            self.name
+        )
+
+        for name in candidates:
+            if name in compiler.symbols:
+                symbol, value = compiler.symbols[name]
+                break
         else:
-            for name in self.name, state["local_symbol_prefix"] + self.name:
+            for name in candidates:
                 if name not in compiler.on_symbol_defined_listeners:
                     compiler.on_symbol_defined_listeners[name] = {}
                 for elem in BaseDeferred.awaiting_stack[::-1]:

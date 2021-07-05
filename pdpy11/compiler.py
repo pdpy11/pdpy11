@@ -25,7 +25,8 @@ class Compiler:
     def compile_file(self, file, start):
         state = {
             "filename": file.filename,
-            "context": "file"
+            "context": "file",
+            "internal_symbol_prefix": ".internal." + file.filename + ".\x00.",
         }
         return self.compile_block(state, file.body, start)
 
@@ -67,7 +68,7 @@ class Compiler:
                     _ = 1  # for code coverage
                     continue
 
-                self.compile_label(insn, addr, local_symbol_prefix)
+                self.compile_label(insn, addr, state)
                 if not insn.local:
                     local_symbol_prefix = f".local{self.next_local_symbol_prefix}."
                     self.next_local_symbol_prefix += 1
@@ -83,7 +84,7 @@ class Compiler:
                     _ = 1  # for code coverage
                     continue
 
-                self.compile_assignment(insn)
+                self.compile_assignment(insn, state)
 
             else:
                 assert False  # pragma: no cover
@@ -91,11 +92,11 @@ class Compiler:
         return data
 
 
-    def compile_label(self, label, addr, local_symbol_prefix):
+    def compile_label(self, label, addr, state):
         if label.local:
-            name = local_symbol_prefix + label.name
+            name = state["local_symbol_prefix"] + label.name
         else:
-            name = label.name
+            name = state["internal_symbol_prefix"] + label.name
 
         if name not in self.symbols:
             self.symbols[name] = (label, addr)
@@ -110,17 +111,19 @@ class Compiler:
         )
 
 
-    def compile_assignment(self, var):
+    def compile_assignment(self, var, state):
+        name = state["internal_symbol_prefix"] + var.name.name
+
         var.symbol_value = None
-        if var.name.name in self.symbols:
-            prev_sym, _ = self.symbols[var.name.name]
+        if name in self.symbols:
+            prev_sym, _ = self.symbols[name]
             reports.error(
                 "duplicate-symbol",
                 (var.ctx_start, var.ctx_end, f"Duplicate variable '{var.name.name}'"),
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
         else:
-            self.symbols[var.name.name] = (var, None)
+            self.symbols[name] = (var, None)
             self._handle_new_symbol(var.name.name)
 
 
@@ -138,31 +141,34 @@ class Compiler:
                 (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is not a metacommand by itself, but '.{insn.name.name}' is.\nPlease be explicit and add a dot."),
             )
             return builtin_commands["." + insn.name.name].compile_insn(state, self, insn)
-        elif insn.name.name in self.symbols:
-            # Resolve a macro
-            symbol, _ = self.symbols[insn.name.name]
-            # TODO: pdpy in Macro-11 compatibility mode should support implicit
-            # .word directive. That is when 'x = 5; x' is the same as
-            # 'x = 5; .word x'. This is probably the right place to add the
-            # check.
-            if isinstance(symbol, Label):
-                reports.error(
-                    "meta-type-mismatch",
-                    (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. Are you looking for macros?")
-                )
-                return None
-            elif isinstance(symbol, Assignment):
-                reports.error(
-                    "meta-type-mismatch",
-                    (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. You may be looking for MACRO-11 macros.\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
-                )
-                return None
-            else:
-                # TODO: macros
-                assert False  # pragma: no cover
         else:
+            candidates = (state["internal_symbol_prefix"] + insn.name.name, insn.name.name)
+            for name in candidates:
+                if name in self.symbols:
+                    # Resolve a macro
+                    symbol, _ = self.symbols[name]
+                    # TODO: pdpy in Macro-11 compatibility mode should support implicit
+                    # .word directive. That is when 'x = 5; x' is the same as
+                    # 'x = 5; .word x'. This is probably the right place to add the
+                    # check.
+                    if isinstance(symbol, Label):
+                        reports.error(
+                            "meta-type-mismatch",
+                            (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
+                            (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. Are you looking for macros?")
+                        )
+                        return None
+                    elif isinstance(symbol, Assignment):
+                        reports.error(
+                            "meta-type-mismatch",
+                            (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
+                            (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. You may be looking for MACRO-11 macros.\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
+                        )
+                        return None
+                    else:
+                        # TODO: macros
+                        assert False  # pragma: no cover
+
             reports.error(
                 "unknown-insn",
                 (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is an undefined {'metainstruction' if insn.name.name[0] == '.' else 'instruction'}.\nIs our database incomplete? Report that on GitHub: https://github.com/imachug/pdpy11/issues/new")
