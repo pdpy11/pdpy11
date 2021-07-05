@@ -2,7 +2,7 @@ import sys
 
 from .builtins import builtin_commands
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, wait, optimize, BaseDeferred
+from .deferred import Promise, wait, BaseDeferred
 from .formats import file_formats
 from .types import Instruction, Label, Assignment
 from . import reports

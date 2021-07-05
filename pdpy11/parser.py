@@ -1,5 +1,4 @@
 import re
-import struct
 
 from .builtins import builtin_commands, Metacommand
 from .context import Context
@@ -102,7 +101,7 @@ class Parser:
 
     @classmethod
     def regex(cls, regex, skip_whitespace_before=True, case_sensitive=False):
-        regex = re.compile(regex, flags=re.I)
+        regex = re.compile(regex, flags=0 if case_sensitive else re.I)
         def fn(ctx):
             if skip_whitespace_before:
                 ctx.skip_whitespace()
@@ -182,7 +181,7 @@ def number(ctx):
     boundary = r"(?![$_])\b"
 
     if Parser.literal("^X")(ctx, maybe=True):
-        base = 2
+        # Hexadimical number
         num = Parser.regex(rf"[0-9a-f]+{boundary}", skip_whitespace_before=False)(ctx, report=(
             reports.critical,
             "invalid-number",
@@ -465,7 +464,7 @@ def double_quoted_literal(ctx):
         double_quote(ctx)
         reports.warning(
             "excess-quote",
-            (ctx_start, ctx, "Double quotation mark does not denote a string. It denotes an ASCII conversion operator,\nwhich means that the two characters after \" are converted to a 16-bit word.\nFor example, \"AB is the same as 0x4142 (or ^H4142).\n" + [f"An empty string, as here, can be safely replaced with a zero.", f"Exactly two characters are expected after the quotation mark, and the closing mark is unnecessary.\nPlease use '{value} instead.", f"Unlike C, this literal must not be terminated by a quotation mark -- please remove it: \"{value}"][len(value)])
+            (ctx_start, ctx, "Double quotation mark does not denote a string. It denotes an ASCII conversion operator,\nwhich means that the two characters after \" are converted to a 16-bit word.\nFor example, \"AB is the same as 0x4142 (or ^H4142).\n" + ["An empty string, as here, can be safely replaced with a zero.", f"Exactly two characters are expected after the quotation mark, and the closing mark is unnecessary.\nPlease use '{value} instead.", f"Unlike C, this literal must not be terminated by a quotation mark -- please remove it: \"{value}"][len(value)])
         )
 
     return types.CharLiteral(ctx_start, ctx, "\"" + value, value)

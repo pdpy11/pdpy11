@@ -11,7 +11,7 @@ from . import types
 from .types import CodeBlock
 
 
-def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii=False):
+def get_as_int(state, what, token, arg_token, bitness, unsigned):
     value = wait(arg_token.resolve(state))
     if isinstance(value, int):
         if unsigned and value < 0:
@@ -33,47 +33,6 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned, recommend_ascii
             )
             raise reports.RecoverableError("Too large value")
         return value % (2 ** bitness)
-    # elif isinstance(value, str):
-    #     if recommend_ascii:
-    #         reports.warning(
-    #             "use-ascii",
-    #             (arg_token.ctx_start, arg_token.ctx_end, f"Passing a string to metacommand '{token.name.name}', which implicitly converts it\nto a number and then writes back as a series of bytes is not particularly graceful.\nConsider using '.ascii' metacommand instead.")
-    #         )
-    #     else:
-    #         if isinstance(arg_token, String) and len(value) == 1 and arg_token.quote != "'":
-    #             reports.warning(
-    #                 "implicit-pack",
-    #                 (arg_token.ctx_start, arg_token.ctx_end, f"A character that is used as {what} is implicitly converted to a number.\nConsider using a single quote ' as a cleaner solution, e.g. 'A instead of \"A\".")
-    #             )
-    #         elif not isinstance(arg_token, String) or (arg_token.quote != "'" and len(value) != 2):
-    #             reports.warning(
-    #                 "implicit-pack",
-    #                 (arg_token.ctx_start, arg_token.ctx_end, f"A string is used as {what}, but a number was expected.\nTechnically, a short string can be encoded as an integer,\nbut this is asking for trouble if you didn't intend that.\nPlease state your intention explicitly by casting the string like this: 'pack(\"...\")'.\nNote that this is not the same as defining a string using '.ascii' elsewhere and then using its address.")
-    #             )
-
-    #     if value == "":
-    #         reports.warning(
-    #             "empty-pack",
-    #             (arg_token.ctx_start, arg_token.ctx_end, "Encoding an empty string as integer may possibly be a bug" + (f".\nThis inserts {bitness // 8} null byte{'s' if bitness > 8 else ''} into the binary file." if recommend_ascii else ""))
-    #         )
-    #     value = value.encode(state["compiler"].output_charset)
-    #     if len(value) * 8 > bitness:
-    #         if bitness > 8:
-    #             reports.error(
-    #                 "too-long-string",
-    #                 (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to {bitness // 8} bytes to be converted to an integer")
-    #             )
-    #         else:
-    #             reports.error(
-    #                 "too-long-string",
-    #                 (arg_token.ctx_start, arg_token.ctx_end, f"Too long string: {value!r} cannot be encoded to a single byte to be converted to an integer")
-    #             )
-    #         value = value[:bitness // 8]
-    #     value = value.ljust(bitness // 8, b"\x00")
-    #     assert bitness in (8, 16, 32)
-    #     if bitness == 32:
-    #         value = value[2:] + value[:2]
-    #     return int.from_bytes(value, byteorder="little")
     else:
         reports.error(
             "type-mismatch",
@@ -199,7 +158,8 @@ class Metacommand:
 
 def metacommand(fn=None, **kwargs):
     if fn is None:
-        return lambda fn: metacommand(fn, **kwargs)
+        # This looks like a false positive from pylint
+        return lambda fn: metacommand(fn, **kwargs)  # pylint: disable=unnecessary-lambda
 
     name = ("" if kwargs.get("no_dot") else ".") + fn.__name__.rstrip("_")
 
@@ -217,7 +177,7 @@ def byte(state, *operands: int) -> bytes:
         )
         return b"\x00"
     def encode_i8(operand):
-        value = get_as_int(state, "'.byte' operand", state["insn"], operand, bitness=8, unsigned=False, recommend_ascii=True)
+        value = get_as_int(state, "'.byte' operand", state["insn"], operand, bitness=8, unsigned=False)
         assert -2 ** 8 < value < 2 ** 8
         value %= 2 ** 8
         return struct.pack("<B", value)
@@ -240,7 +200,7 @@ def word(state, *operands: int) -> bytes:
         )
         return prefix + b"\x00\x00"
     def encode_i16(operand):
-        value = get_as_int(state, "'.word' operand", state["insn"], operand, bitness=16, unsigned=False, recommend_ascii=True)
+        value = get_as_int(state, "'.word' operand", state["insn"], operand, bitness=16, unsigned=False)
         assert -2 ** 16 < value < 2 ** 16
         value %= 2 ** 16
         return struct.pack("<H", value)
@@ -263,7 +223,7 @@ def dword(state, *operands: int) -> bytes:
         )
         return prefix + b"\x00\x00\x00\x00"
     def encode_i32(operand):
-        value = get_as_int(state, "'.dword' operand", state["insn"], operand, bitness=32, unsigned=False, recommend_ascii=True)
+        value = get_as_int(state, "'.dword' operand", state["insn"], operand, bitness=32, unsigned=False)
         assert -2 ** 32 < value < 2 ** 32
         value %= 2 ** 32
         return struct.pack("<H", value >> 16) + struct.pack("<H", value & 0xffff)
@@ -293,7 +253,7 @@ def rad50(state, operand: str) -> bytes:
         if isinstance(chunk, types.AngleBracketedChar):
             # Raw number in range 0:50 (octal)
             val = wait(chunk.expr.resolve(state))
-            if not (0 <= val < 40):
+            if not 0 <= val < 40:
                 reports.error(
                     "value-out-of-bounds",
                     (chunk.ctx_start, chunk.ctx_end, f"Character {val} cannot be packed into a radix-50 word.\nA value in range [0; 50) is expected (decimal).")
@@ -369,7 +329,7 @@ def repeat(state, cnt: int, body: CodeBlock) -> bytes:
 
 
 @metacommand(literal_string_operand=True)
-def error(state, error: str=None) -> bytes:
+def error_(state, error: str=None) -> bytes:
     reports.error(
         "user-error",
         (state["insn"].ctx_start,state["insn"].ctx_end, "Error" + (f": {error!r}" if error else ""))
@@ -382,7 +342,7 @@ def list_(state, _: int=None) -> bytes:
     # TODO: Does it make sense to implement this stuff?
     reports.warning(
         "not-implemented",
-        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".list metacommand is not supported by pdpy")
+        (state["insn"].ctx_start, state["insn"].ctx_end, ".list metacommand is not supported by pdpy")
     )
     return b""
 
@@ -392,17 +352,17 @@ def nlist(state, _: int=None) -> bytes:
     # TODO: Does it make sense to implement this stuff?
     reports.warning(
         "not-implemented",
-        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".nlist metacommand is not supported by pdpy")
+        (state["insn"].ctx_start, state["insn"].ctx_end, ".nlist metacommand is not supported by pdpy")
     )
     return b""
 
 
 @metacommand(literal_string_operand=True)
-def title(state, title: str) -> bytes:
+def title_(state, title: str) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".title metacommand is not supported by pdpy")
+        (state["insn"].ctx_start, state["insn"].ctx_end, ".title metacommand is not supported by pdpy")
     )
     return b""
 
@@ -412,7 +372,7 @@ def sbttl(state, text: str) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".sbttl metacommand is not supported by pdpy")
+        (state["insn"].ctx_start, state["insn"].ctx_end, ".sbttl metacommand is not supported by pdpy")
     )
     return b""
 
@@ -422,7 +382,7 @@ def ident(state, identification: str) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".ident metacommand is not supported by pdpy")
+        (state["insn"].ctx_start, state["insn"].ctx_end, ".ident metacommand is not supported by pdpy")
     )
     return b""
 
@@ -432,7 +392,7 @@ def page(state) -> bytes:
     # TODO: handle this
     reports.warning(
         "not-implemented",
-        (satte["insn"].ctx_start, satte["insn"].ctx_end, ".page metacommand is not supported by pdpy")
+        (state["insn"].ctx_start, state["insn"].ctx_end, ".page metacommand is not supported by pdpy")
     )
     return b""
 

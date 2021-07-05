@@ -9,5 +9,6 @@ def main_cli():
         raise SystemExit(1)
 
 
+    # pylint: disable=redefined-outer-name,import-outside-toplevel
     from ._cli import main_cli
     main_cli()

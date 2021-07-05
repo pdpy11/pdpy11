@@ -5,7 +5,9 @@ import platform
 import sys
 import traceback
 
-from . import bk_encoding
+# Importing bk_encoding is not pure
+from . import bk_encoding  # pylint: disable=unused-import
+
 from .compiler import Compiler
 from .formats import file_formats
 from . import parser
@@ -35,7 +37,7 @@ def main_cli():
         codecs.lookup(args.charset)
     except LookupError:
         print(f"'{args.charset}' encoding is unsupported", file=sys.stderr)
-        raise SystemExit(1)
+        sys.exit(1)
 
 
     error = False
@@ -58,7 +60,7 @@ def main_cli():
             error = True
 
     if error:
-        raise SystemExit(1)
+        sys.exit(1)
 
     report_handler = {
         "graphical": reports.GraphicalHandler,
@@ -101,7 +103,7 @@ def main_cli():
             else:
                 output_format = "raw"
 
-            if output_file == "-" or output_file == "-." + output_ext:
+            if output_file in ("-", "-." + output_ext):
                 sys.stdout.buffer.write(file_formats[output_format](base, code))
             else:
                 try:
@@ -109,13 +111,13 @@ def main_cli():
                         f.write(file_formats[output_format](base, code))
                 except IOError as ex:
                     print(f"Could not write to output file '{output_file}':\n{ex}", file=sys.stderr)
-                    raise SystemExit(1)
+                    sys.exit(1)
                 else:
                     print(f"File {output_file} was saved in format '{output_format}'", file=sys.stderr)
     except reports.UnrecoverableError:
-        raise SystemExit(1)
+        sys.exit(1)
     except Exception as ex:
         print("An unexpected internal compiler error happened.\nPlease report this to https://github.com/pdpy11/pdpy11/issues.\nThe following information will be of interest to the maintainer\n(hopefully along with some samples for reproduction):\n\n---\n", file=sys.stderr)
         print(f"Version: pdpy11 {version}\nPython: {platform.python_implementation()} {platform.python_version()}\nPlatform: {platform.platform()}\n", file=sys.stderr)
         traceback.print_exc()
-        raise SystemExit(1)
+        sys.exit(1)

@@ -9,7 +9,7 @@ test:
 	$(PYTHON) -m pytest tests
 
 lint:
-	$(PYTHON) -m pylint pdp
+	$(PYTHON) -m pylint pdpy11
 
 cov:
 	$(PYTHON) -m coverage run -m pytest tests
