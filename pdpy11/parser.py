@@ -593,6 +593,7 @@ expression_literal = symbol_expression | radix50_literal | number | local_symbol
 infix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.InfixOperator]])
 prefix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PrefixOperator]])
 postfix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PostfixOperator]])
+register_name = Parser.either([Parser.literal(reg) for reg in REGISTER_NAMES])
 
 
 @Parser
@@ -751,6 +752,35 @@ def expression(ctx):
     return stack[-1]
 
 
+@Parser
+def register_literal(ctx):
+    ctx.skip_whitespace()
+    ctx_start = ctx.save()
+    name = register_name(ctx)
+    return types.Symbol(ctx_start, ctx, name)
+
+
+@Parser
+def autoincrement_addressing_operand(ctx):
+    ctx_start = ctx.save()
+    opening_parenthesis(ctx)
+    reg = register_literal(ctx)
+    closing_parenthesis(ctx)
+    ctx_after_paren = ctx.save()
+    plus(ctx)
+    return operators.postadd(ctx_start, ctx, types.ParenthesizedExpression(ctx_start, ctx_after_paren, reg))
+
+
+@Parser
+def deferred_autoincrement_addressing_operand(ctx):
+    ctx_start = ctx.save()
+    at_sign(ctx)
+    inner = autoincrement_addressing_operand(ctx)
+    return operators.deferred(ctx_start, ctx, inner)
+
+
+insn_operand = autoincrement_addressing_operand | deferred_autoincrement_addressing_operand | expression
+
 def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
     if insn_name in builtin_commands:
         insn = builtin_commands[insn_name]
@@ -761,22 +791,37 @@ def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
     else:
         insn = None
 
-    if isinstance(insn, Metacommand):
-        if insn.operand_types:
+    is_metacommand = (
+        isinstance(insn, Metacommand)
+        or (
+            insn is None
+            and (insn_name.startswith(".") or "_" in insn_name)
+        )
+    )
+
+    if is_metacommand:
+        if insn is not None and insn.operand_types:
             operand_type = insn.operand_types[min(operand_idx, len(insn.operand_types) - 1)]
         else:
             # If the metacommand doesn't take any operand but was somehow passed
             # one, we can only hope this invalid operand does not break the
-            # parser. Parsing it as an expression, not as a string, is probably
-            # the safest way.
-            operand_type = "int"
+            # parser. A similar situation is when we don't know that we have to
+            # parse a metacommand we don't know about.
+            #
+            # The safest option seems to be to parse the operand as an
+            # expression, except when it starts with ", ' or /, in which case we
+            # parse it as a string.
+            if string_quote(ctx, maybe=True, lookahead=True):
+                operand_type = "str"
+            else:
+                operand_type = "int"
     else:
         operand_type = "int"
 
     if operand_type == "str":
         return long_string(ctx, **kwargs)
     else:
-        return expression(ctx, **kwargs)
+        return insn_operand(ctx, **kwargs)
 
 
 @Parser
