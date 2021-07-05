@@ -28,3 +28,7 @@ class CaseInsensitiveDict:
     def __iter__(self):
         for key, value in self.container.values():
             yield key
+
+
+    def get(self, key, default=None):
+        return self.container.get(key.lower(), (None, default))[1]

@@ -11,6 +11,7 @@ from . import reports
 class Compiler:
     def __init__(self, output_charset="bk"):
         self.symbols = CaseInsensitiveDict()
+        self.on_symbol_defined_listeners = CaseInsensitiveDict()
         self.link_base: Promise = Promise[int]("LA")
         self.link_base_set_where = None
         self.cur_emit_location = self.link_base
@@ -18,6 +19,7 @@ class Compiler:
         self.files = []
         self.emitted_files = []
         self.output_charset = output_charset
+        self.next_local_symbol_prefix = 1
 
 
     def compile_file(self, file, start):
@@ -32,7 +34,8 @@ class Compiler:
         addr = start
         data = b""
 
-        local_symbols = CaseInsensitiveDict()
+        local_symbol_prefix = f".local{self.next_local_symbol_prefix}."
+        self.next_local_symbol_prefix += 1
 
         for insn in block.insns:
             if isinstance(insn, Instruction) and insn.name.name.lower() in (".end", "end"):
@@ -43,7 +46,7 @@ class Compiler:
                     )
                 break
 
-            state = {**state, "emit_address": addr, "local_symbols": local_symbols}
+            state = {**state, "emit_address": addr, "local_symbol_prefix": local_symbol_prefix}
             if isinstance(insn, Instruction):
                 chunk = self.compile_insn(insn, state)
                 if chunk is not None:
@@ -64,9 +67,10 @@ class Compiler:
                     _ = 1  # for code coverage
                     continue
 
-                self.compile_label(insn, addr, local_symbols)
+                self.compile_label(insn, addr, local_symbol_prefix)
                 if not insn.local:
-                    local_symbols = CaseInsensitiveDict()
+                    local_symbol_prefix = f".local{self.next_local_symbol_prefix}."
+                    self.next_local_symbol_prefix += 1
 
             elif isinstance(insn, Assignment):
                 if state["context"] == "repeat":
@@ -87,25 +91,23 @@ class Compiler:
         return data
 
 
-    def compile_label(self, label, addr, local_symbols):
+    def compile_label(self, label, addr, local_symbol_prefix):
         if label.local:
-            if label.name in local_symbols:
-                prev_sym, _ = local_symbols[label.name]
-                reports.error(
-                    "duplicate-symbol",
-                    (label.ctx_start, label.ctx_end, f"Duplicate local label '{label.name}:'"),
-                    (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
-                )
-            local_symbols[label.name] = (label, addr)
+            name = local_symbol_prefix + label.name
         else:
-            if label.name in self.symbols:
-                prev_sym, _ = self.symbols[label.name]
-                reports.error(
-                    "duplicate-symbol",
-                    (label.ctx_start, label.ctx_end, f"Duplicate symbol '{label.name}'"),
-                    (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
-                )
-            self.symbols[label.name] = (label, addr)
+            name = label.name
+
+        if name not in self.symbols:
+            self.symbols[name] = (label, addr)
+            self._handle_new_symbol(name)
+            return
+
+        prev_sym, _ = self.symbols[name]
+        reports.error(
+            "duplicate-symbol",
+            (label.ctx_start, label.ctx_end, f"Duplicate {'local label' if label.local else 'symbol'} '{label.name}:'"),
+            (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
+        )
 
 
     def compile_assignment(self, var):
@@ -119,6 +121,12 @@ class Compiler:
             )
         else:
             self.symbols[var.name.name] = (var, None)
+            self._handle_new_symbol(var.name.name)
+
+
+    def _handle_new_symbol(self, name):
+        for deferred in self.on_symbol_defined_listeners.get(name, []):
+            deferred.optimize()
 
 
     def compile_insn(self, insn, state):

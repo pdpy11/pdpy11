@@ -1,7 +1,7 @@
 import struct
 
 from .context import Context
-from .deferred import not_ready, SizedDeferred, wait
+from .deferred import not_ready, BaseDeferred, SizedDeferred, wait
 from . import reports
 
 
@@ -110,11 +110,19 @@ class Symbol(ExpressionToken):
                 (self.ctx_start, self.ctx_end, "A register cannot be used here. An integer or a symbol are expected")
             )
             raise reports.RecoverableError("A register is used as a symbol")
-        if self.name in state["compiler"].symbols:
-            symbol, value = state["compiler"].symbols[self.name]
-        elif self.name in state["local_symbols"]:
-            symbol, value = state["local_symbols"][self.name]
+
+        compiler = state["compiler"]
+        if self.name in compiler.symbols:
+            symbol, value = compiler.symbols[self.name]
+        elif state["local_symbol_prefix"] + self.name in compiler.symbols:
+            symbol, value = compiler.symbols[state["local_symbol_prefix"] + self.name]
         else:
+            for name in self.name, state["local_symbol_prefix"] + self.name:
+                if name not in compiler.on_symbol_defined_listeners:
+                    compiler.on_symbol_defined_listeners[name] = {}
+                for elem in BaseDeferred.awaiting_stack[::-1]:
+                    compiler.on_symbol_defined_listeners[name][elem] = True  # Ordered set. Kinda.
+
             not_ready()
             # TODO: check if there's a local symbol with the same name defined out of scope
             reports.error(

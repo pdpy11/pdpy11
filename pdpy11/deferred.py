@@ -42,6 +42,8 @@ class BaseDeferredMetaclass(type):
 
 
 class BaseDeferred(metaclass=BaseDeferredMetaclass):
+    awaiting_stack = []
+
     def __new__(cls, *args, **kwargs):  # pylint: disable=unused-argument
         if not args or not isinstance(args[0], type):
             raise TypeError(f"{cls.__name__} must be passed a type in brackets")  # pragma: no cover
@@ -53,6 +55,16 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
     @classmethod
     def construct(cls, *args, **kwargs):
         return cls(*args, **kwargs)
+
+    def wait(self):
+        BaseDeferred.awaiting_stack.append(self)
+        try:
+            return self._wait()
+        finally:
+            assert BaseDeferred.awaiting_stack.pop() is self
+
+    def _wait(self):
+        raise NotImplementedError()  # pragma: no cover
 
     def __len__(self):
         raise NotImplementedError()  # pragma: no cover
@@ -147,9 +159,10 @@ class Deferred(BaseDeferred):
 
     @classmethod
     def construct(cls, typ, fn):  # pylint: disable=arguments-differ
+        tmp = cls(typ, fn)
         with try_compute:
-            return fn()
-        return cls(typ, fn)
+            return tmp.wait()
+        return tmp
 
     def __repr__(self):
         return f"d{self.instance_id}"
@@ -164,7 +177,7 @@ class Deferred(BaseDeferred):
                 return len(self.value)
         return Deferred[int](fn)
 
-    def wait(self):
+    def _wait(self):
         if self.settled:
             self.value = wait(self.value)
             return self.value
@@ -243,7 +256,7 @@ class LinearPolynomial(BaseDeferred):
     def __neg__(self):
         return LinearPolynomial[int]({key: -value for key, value in self.coeffs.items()}, -self.constant_term)
 
-    def wait(self):
+    def _wait(self):
         return sum(key.wait() * value for key, value in self.coeffs.items()) + self.constant_term
 
     def optimize(self):
@@ -274,7 +287,7 @@ class Concatenator(BaseDeferred):
     def __repr__(self):
         return "+".join(map(repr, self.lst))
 
-    def wait(self):
+    def _wait(self):
         return self.typ().join(map(wait, self.lst))
 
     def optimize(self):
@@ -320,9 +333,10 @@ class SizedDeferred(Deferred):
 
     @classmethod
     def construct(cls, typ, size, fn):  # pylint: disable=arguments-differ
+        tmp = cls(typ, size, fn)
         with try_compute:
-            return fn()
-        return cls(typ, size, fn)
+            return tmp.wait()
+        return tmp
 
     def __len__(self):
         return self.size
@@ -346,7 +360,7 @@ class Promise(BaseDeferred):
     def __repr__(self):
         return self.name
 
-    def wait(self):
+    def _wait(self):
         if not self.settled:
             not_ready()
             raise Exception(f"Promise {self!r} is not ready")  # pragma: no cover
