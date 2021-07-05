@@ -4,7 +4,7 @@ from pdpy11.operators import *
 from pdpy11.parser import parse as parse_
 from pdpy11.types import *
 
-import util
+from . import util
 
 
 def parse(code):

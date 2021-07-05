@@ -5,8 +5,9 @@ from pdpy11 import bk_encoding
 from pdpy11.compiler import Compiler
 from pdpy11.parser import parse
 
-from old_pdpy11.pdpy11.compiler import Compiler as OldCompiler
-import util
+from .old_pdpy11.pdpy11.compiler import Compiler as OldCompiler
+from .resources import resources
+from . import util
 
 
 def compile(source):
@@ -14,6 +15,13 @@ def compile(source):
     comp.add_files([parse("test.mac", source)])
     base, binary = comp.link()
     return base, binary
+
+
+def compile_and_emit(file_path, source):
+    comp = Compiler()
+    comp.add_files([parse(file_path, source)])
+    comp.link()
+    comp.emit_files()
 
 
 def compile_old(source):
@@ -459,3 +467,96 @@ def test_radix50():
         expect_same(".word ^RABCDEF", ".word ^RABC")
     with util.expect_error("invalid-string"):
         expect_same(".word ^R", ".word 0")
+
+
+def test_insert_file(fs):
+    fs.create_file("test_file", contents=b"Hello, world!")
+    fs.create_file("unreadable_file", st_mode=0)
+    fs.create_dir("test_dir")
+
+    expect_binary("insert_file /test_file/", b"Hello, world!")
+
+    with util.expect_error("io-error"):
+        compile("insert_file /non_existant_file/")
+    with util.expect_error("io-error"):
+        compile("insert_file /test_dir/")
+    with util.expect_error("io-error"):
+        compile("insert_file /unreadable_file/")
+
+
+@pytest.mark.parametrize(
+    "suffix,input_file_name,output_file_name,code_prefix",
+    [
+        ("make_bin", "test.mac", "test.bin", b"\x00\x02\x02\x00"),
+        ("make_bin 'test2.bin'", "test.mac", "test2.bin", b"\x00\x02\x02\x00"),
+        ("make_bin", "dir/test.mac", "dir/test.bin", b"\x00\x02\x02\x00"),
+
+        ("make_raw", "test.mac", "test", b""),
+        ("make_raw 'test2.raw'", "test.mac", "test2.raw", b""),
+        ("make_raw", "dir/test.mac", "dir/test", b""),
+
+        # Must not guess file type from extension
+        ("make_bin 'test2.raw'", "test.mac", "test2.raw", b"\x00\x02\x02\x00"),
+        ("make_raw 'test2.bin'", "test.mac", "test2.bin", b""),
+
+        # Source file without .mac extension
+        ("make_bin", "test", "test.bin", b"\x00\x02\x02\x00")
+    ]
+)
+def test_binaries(fs, suffix, input_file_name, output_file_name, code_prefix):
+    fs.create_file(output_file_name)
+    compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
+    with open(output_file_name, "rb") as f:
+        assert f.read() == code_prefix + b"B\x10"
+
+
+@pytest.mark.parametrize(
+    "suffix,input_file_name,output_file_name,test_result_file_name",
+    [
+        ("make_wav", "test.mac", "test.wav", "test.wav"),
+        ("make_wav", "test", "test.wav", "test.wav"),
+        ("make_wav 'test2.wav'", "test.mac", "test2.wav", "test2.wav"),
+        ("make_wav 'test2.wav', 'test2'", "test.mac", "test2.wav", "test2.wav"),
+        ("make_wav 'test2'", "test.mac", "test2", "test2.wav"),
+        ("make_wav", "dir/test.mac", "dir/test.wav", "test.wav"),
+
+        ("make_turbo_wav", "test.mac", "test.wav", "test.turbo.wav"),
+        ("make_turbo_wav 'test2.wav'", "test.mac", "test2.wav", "test2.turbo.wav"),
+        ("make_turbo_wav", "dir/test.mac", "dir/test.wav", "test.turbo.wav")
+    ]
+)
+def test_wavs1(fs, suffix, input_file_name, output_file_name, test_result_file_name):
+    fs.create_file(output_file_name)
+    compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
+    with open(output_file_name, "rb") as f:
+        assert f.read() == resources[test_result_file_name]
+
+def test_wavs2(fs):
+    compile("make_wav 'test.wav', '16 char long str'")
+    compile("make_wav '16 char long str.wav'")
+    with util.expect_error("too-long-string"):
+        compile("make_wav 'test.wav', '17charslongstring'")
+    with util.expect_error("too-long-string"):
+        compile("make_wav '17charslongstring.wav'")
+
+
+def test_link():
+    expect_binary(".word .", b"\x00\x02")
+    expect_binary(".link 1000\n.word .", b"\x00\x02")
+    expect_binary(".link 2000\n.word .", b"\x00\x04")
+    expect_binary(".link 0\n.word .", b"\x00\x00")
+
+    with util.expect_error("address-conflict"):
+        compile(".link 1000\n.link 2000")
+
+    with util.expect_error("address-conflict"):  # maybe this is ok, idk
+        compile(".link 1000\n.link 1000")
+
+    with util.expect_error("recursive-definition"):  # maybe this is ok, idk
+        compile(".link a\na = .")
+    # TODO: check something like
+    # .link a4
+    # if a3 == 1000 { a4 = 1000 }
+    # if a2 == 1000 { a3 = 1000 }
+    # if a1 == 1000 { a2 = 1000 }
+    # a1 = 1000

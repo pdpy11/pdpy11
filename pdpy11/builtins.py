@@ -515,6 +515,7 @@ def link(state, address: int) -> bytes:
     compiler = state["compiler"]
     if not compiler.link_base.settled:
         compiler.link_base.settle(address_value)
+        compiler.link_base_set_where = state["insn"]
     else:
         if compiler.link_base_set_where is None:
             reports.error(
