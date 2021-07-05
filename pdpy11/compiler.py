@@ -27,6 +27,7 @@ class Compiler:
             "filename": file.filename,
             "context": "file",
             "internal_symbol_prefix": ".internal." + file.filename + ".\x00.",
+            "compiler": self
         }
         return self.compile_block(state, file.body, start)
 
@@ -47,7 +48,7 @@ class Compiler:
                     )
                 break
 
-            state = {**state, "emit_address": addr, "local_symbol_prefix": local_symbol_prefix}
+            state = {**state, "insn": insn, "emit_address": addr, "local_symbol_prefix": local_symbol_prefix}
             if isinstance(insn, Instruction):
                 chunk = self.compile_insn(insn, state)
                 if chunk is not None:
@@ -133,13 +134,13 @@ class Compiler:
 
     def compile_insn(self, insn, state):
         if insn.name.name in builtin_commands:
-            return builtin_commands[insn.name.name].compile_insn(state, self, insn)
+            return builtin_commands[insn.name.name].compile_insn(state, insn)
         elif "." + insn.name.name in builtin_commands:
             reports.warning(
                 "meta-typo",
                 (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is not a metacommand by itself, but '.{insn.name.name}' is.\nPlease be explicit and add a dot."),
             )
-            return builtin_commands["." + insn.name.name].compile_insn(state, self, insn)
+            return builtin_commands["." + insn.name.name].compile_insn(state, insn)
         else:
             candidates = (state["internal_symbol_prefix"] + insn.name.name, insn.name.name)
             for name in candidates:

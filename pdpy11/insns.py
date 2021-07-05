@@ -346,9 +346,7 @@ class Instruction:
         self.max_operands = len(operands)
 
 
-    def compile_insn(self, state, compiler, insn):
-        state = {**state, "insn": insn, "compiler": compiler}
-
+    def compile_insn(self, state, insn):
         if len(insn.operands) < len(self.operands):
             reports.error(
                 "wrong-operands",

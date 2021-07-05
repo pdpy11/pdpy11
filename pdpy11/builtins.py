@@ -94,9 +94,7 @@ class Metacommand:
             assert 0 <= self.min_operands <= 1 and self.max_operands == 1, "A metacommand with a literal string operand is expected to have exactly one operand (optional or not)"
 
 
-    def compile_insn(self, state, compiler, insn):
-        state = {**state, "insn": insn, "compiler": compiler}
-
+    def compile_insn(self, state, insn):
         insn_operands = insn.operands
         code_block = None
 
