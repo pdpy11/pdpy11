@@ -60,7 +60,7 @@ builtin_commands = CaseInsensitiveDict(instructions)
 
 
 class Metacommand:
-    def __init__(self, fn, name, size_fn=None, literal_string_operand=False, no_dot=False):
+    def __init__(self, fn, name, size_fn=None, literal_string_operand=False):
         self.fn = fn
         self.size_fn = size_fn
         self.literal_string_operand = literal_string_operand
@@ -156,19 +156,33 @@ class Metacommand:
             return SizedDeferred[bytes](self.size_fn(state, *operands), fn)
 
 
-def metacommand(fn=None, **kwargs):
-    if fn is None:
-        # This looks like a false positive from pylint
-        return lambda fn: metacommand(fn, **kwargs)  # pylint: disable=unnecessary-lambda
+def _metacommand_impl(fn, no_dot=False, alias=None, **kwargs):
+    name = ("" if no_dot else ".") + fn.__name__.rstrip("_")
 
-    name = ("" if kwargs.get("no_dot") else ".") + fn.__name__.rstrip("_")
+    if isinstance(alias, str):
+        aliases = [alias]
+    elif alias is None:
+        aliases = []
+    else:
+        aliases = alias
 
-    builtin_commands[name] = Metacommand(fn, name, **kwargs)
+    cmd = Metacommand(fn, name, **kwargs)
+    for alias in aliases + [name]:
+        builtin_commands[alias] = cmd
+
     # That is not to override globals with the same name, e.g. list
     return __builtins__.get(fn.__name__, None)
 
 
-@metacommand(size_fn=lambda state, *operands: len(operands) or 1)
+def metacommand(fn=None, **kwargs):
+    if fn is None:
+        # This looks like a false positive from pylint
+        return lambda fn: metacommand(fn, **kwargs)  # pylint: disable=unnecessary-lambda
+    else:
+        return _metacommand_impl(fn, **kwargs)
+
+
+@metacommand(size_fn=lambda state, *operands: len(operands) or 1, alias=".db")
 def byte(state, *operands: int) -> bytes:
     if not operands:
         reports.warning(
@@ -184,7 +198,7 @@ def byte(state, *operands: int) -> bytes:
     return b"".join(encode_i8(operand) for operand in operands)
 
 
-@metacommand(size_fn=lambda state, *operands: 2 * (len(operands) or 1))
+@metacommand(size_fn=lambda state, *operands: 2 * (len(operands) or 1), alias=".dw")
 def word(state, *operands: int) -> bytes:
     prefix = b""
     if wait(state["emit_address"]) % 2 == 1:
