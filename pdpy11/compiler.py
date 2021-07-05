@@ -186,7 +186,6 @@ class Compiler:
         # Forcefully calculate as much code as possible. This should optimize
         # every instruction and command that does not depend on non-settled
         # promises, which at this point should only be LA.
-        optimize(self.generated_code)
 
         if not self.link_base.settled:
             self.link_base.settle(0o1000)
