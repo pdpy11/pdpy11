@@ -828,7 +828,10 @@ def instruction(ctx):
         )
 
     with goto:
-        if (newline | closing_bracket)(ctx, maybe=True, lookahead=True):
+        if closing_bracket(ctx, maybe=True, lookahead=True):
+            raise goto
+
+        if newline(ctx, maybe=True, lookahead=True):
             # The recommended way to separate instructions is by newlines, e.g.
             #     mov r0, r1
             #     nop
@@ -842,7 +845,29 @@ def instruction(ctx):
             # Hence we have some sanity checks below to roll back to parsing a
             # zero-operand instruction if we detect that the first operand seems
             # to look like the next instruction.
-            raise goto
+
+            # Other programmers tend to add newlines when that is unnecessary
+            # and even harmful, e.g.
+            #     .byte
+            #     x, y, z
+            # which is parsed by some compilers as
+            #     .byte x, y, z
+            # and by others as
+            #     .byte 0  # .byte without operands is .byte 0
+            #     .word x, y, z  # implicit .word
+
+            # The first interpretation is probably more correct, but the second
+            # interpretation is more Macro-11 compatible.
+            # TODO: assume the second interpretation (and raise a warning) in
+            # Macro-11 compatibility mode
+
+            if (radix50_literal | (number + ~colon) | single_quoted_literal | double_quoted_literal | prefix_operator | opening_parenthesis | opening_angle_bracket)(ctx, maybe=True, lookahead=True):
+                # All of these are invalid at the beginning of instruction, so
+                # they are probably a continuation of the current instruction.
+                # TODO: emit a warning?
+                pass
+            else:
+                raise goto
 
         name = (instruction_name + ~colon)(ctx, maybe=True, lookahead=True)
         if name in builtin_commands and (insn_name not in builtin_commands or builtin_commands[insn_name].max_operands == 0):
