@@ -281,6 +281,7 @@ def test_math():
 def test_variables():
     expect_same("a = 5\n.word a", ".word 5")
     expect_same(".word a\na = 5", ".word 5")
+    expect_same(".word a\na = b\nb = c\nc = 5", ".word 5")
 
 @pytest.mark.parametrize("op", ["+", "-", "*", "/", "%", "<<", ">>", "_"])
 def test_variables_infix(op):
@@ -299,6 +300,7 @@ def test_linear_polynomial():
     expect_same(".link 1000 + x - x\nx: .word 123", ".link 1000\n.word 123")
     expect_same(".link 1000 + y - y\ny = .", ".link 1000")
     expect_same(".link 1000 + z - z\nz = . >> 1", ".link 1000")
+    expect_same(".link 1000 + a - a\na = b >> 1\nb = .", ".link 1000")
 
 
 def test_unexpected_register():

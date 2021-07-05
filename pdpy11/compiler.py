@@ -2,7 +2,7 @@ import sys
 
 from .builtins import builtin_commands
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, wait, BaseDeferred
+from .deferred import Promise, wait, BaseDeferred, Deferred
 from .formats import file_formats
 from .types import Instruction, Label, Assignment
 from . import reports
@@ -123,7 +123,7 @@ class Compiler:
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
         else:
-            self.symbols[name] = (var, var.value.resolve(state))
+            self.symbols[name] = (var, Deferred[int](lambda: var.value.resolve(state)))
             self._handle_new_symbol(var.name.name)
 
 
