@@ -38,6 +38,8 @@ def not_ready():
 
 class BaseDeferredMetaclass(type):
     def __getitem__(cls, typ):
+        if not isinstance(typ, type):
+            raise TypeError(f"{cls.__name__} must be passed a type in brackets, not {typ}")  # pragma: no cover
         return lambda *args, **kwargs: cls.construct(typ, *args, **kwargs)
 
 
@@ -78,7 +80,9 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
         raise NotImplementedError()  # pragma: no cover
 
     def __add__(self, rhs):
-        if self.typ is int:
+        if isinstance(rhs, LinearPolynomial):
+            return NotImplemented
+        elif self.typ is int:
             poly = LinearPolynomial[self.typ]()
             poly += self
             poly += rhs
@@ -91,7 +95,9 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
             raise TypeError(f"Don't know how to add {self.typ.__name__}")  # pragma: no cover
 
     def __radd__(self, lhs):
-        if self.typ is int:
+        if isinstance(lhs, LinearPolynomial):
+            return NotImplemented
+        elif self.typ is int:
             poly = LinearPolynomial[self.typ]()
             poly += lhs
             poly += self
@@ -128,24 +134,6 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
             return LinearPolynomial[self.typ]({self: rhs})
         else:
             return Deferred[self.typ](lambda: wait(self) * wait(rhs))
-
-    def __floordiv__(self, rhs):
-        return Deferred[self.typ](lambda: wait(self) // wait(rhs))
-
-    def __mod__(self, rhs):
-        return Deferred[self.typ](lambda: wait(self) % wait(rhs))
-
-    def __and__(self, rhs):
-        return Deferred[self.typ](lambda: wait(self) & wait(rhs))
-
-    def __or__(self, rhs):
-        return Deferred[self.typ](lambda: wait(self) | wait(rhs))
-
-    def __xor__(self, rhs):
-        return Deferred[self.typ](lambda: wait(self) ^ wait(rhs))
-
-    def __invert__(self):
-        return Deferred[self.typ](lambda: ~wait(self))
 
 
 class Deferred(BaseDeferred):
@@ -192,11 +180,14 @@ class Deferred(BaseDeferred):
             return self.value
         else:
             with try_compute:
+                BaseDeferred.awaiting_stack.append(self)
                 try:
                     self.value = self.fn()
                     self.settled = True
                 except NotReadyError:
                     pass
+                finally:
+                    assert BaseDeferred.awaiting_stack.pop() is self
             return self
 
 
@@ -219,11 +210,17 @@ class LinearPolynomial(BaseDeferred):
                     self.coeffs[key] += value
                 else:
                     self.coeffs[key] = value
-        for key in self.coeffs:
+        for key, value in self.coeffs.items():
             if key.typ is not int:  # pragma: no cover
                 raise TypeError(f"LinearPolynomial variable has an invalid type {key.typ.__name__}")
+            if isinstance(key, LinearPolynomial):
+                raise TypeError(f"LinearPolynomial variable cannot be a linear polynomial itself")
+            if not isinstance(value, int):
+                raise TypeError(f"LinearPolynomial coefficient has an invalid type {type(value).__name__}")
         self.coeffs = {key: value for key, value in self.coeffs.items() if value != 0}
         self.constant_term = constant_term
+        if not isinstance(constant_term, int):
+            raise TypeError(f"LinearPolynomial constant term has an invalid type {type(constant_term).__name__}")
 
     def __repr__(self):
         lst = []
@@ -252,6 +249,14 @@ class LinearPolynomial(BaseDeferred):
             list(self.coeffs.items()) + list(rhs.coeffs.items()),
             self.constant_term + rhs.constant_term
         )
+
+    def __radd__(self, lhs):
+        return self + lhs
+
+    def __mul__(self, rhs):
+        if isinstance(rhs, BaseDeferred):
+            return NotImplemented
+        return LinearPolynomial[int]({key: value * rhs for key, value in self.coeffs.items()}, self.constant_term * rhs)
 
     def __neg__(self):
         return LinearPolynomial[int]({key: -value for key, value in self.coeffs.items()}, -self.constant_term)

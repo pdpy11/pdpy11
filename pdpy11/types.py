@@ -122,24 +122,21 @@ class Symbol(ExpressionToken):
         for name in candidates:
             if name in compiler.symbols:
                 symbol, value = compiler.symbols[name]
-                break
-        else:
-            for name in candidates:
-                if name not in compiler.on_symbol_defined_listeners:
-                    compiler.on_symbol_defined_listeners[name] = {}
-                for elem in BaseDeferred.awaiting_stack[::-1]:
-                    compiler.on_symbol_defined_listeners[name][elem] = True  # Ordered set. Kinda.
+                return value
 
-            not_ready()
-            # TODO: check if there's a local symbol with the same name defined out of scope
-            reports.error(
-                "undefined-symbol",
-                (self.ctx_start, self.ctx_end, f"Unknown symbol '{self.name}' is referenced here")
-            )
-            raise reports.RecoverableError(f"Unknown symbol '{self.name}'")
-        if isinstance(symbol, Assignment):
-            value = symbol.value.resolve(state)
-        return value
+        for name in candidates:
+            if name not in compiler.on_symbol_defined_listeners:
+                compiler.on_symbol_defined_listeners[name] = {}
+            for elem in BaseDeferred.awaiting_stack[::-1]:
+                compiler.on_symbol_defined_listeners[name][elem] = True  # Ordered set. Kinda.
+
+        not_ready()
+        # TODO: check if there's a local symbol with the same name defined out of scope
+        reports.error(
+            "undefined-symbol",
+            (self.ctx_start, self.ctx_end, f"Unknown symbol '{self.name}' is referenced here")
+        )
+        raise reports.RecoverableError(f"Unknown symbol '{self.name}'")
 
 
 class Label(Token):
@@ -194,7 +191,7 @@ class AngleBracketedChar(ExpressionToken):
     def resolve(self, state):
         resolved = self.expr.resolve(state)
         # TODO: handle exception here
-        return SizedDeferred[str](1, lambda: chr(wait(resolved)))
+        return chr(wait(resolved))
 
 
 class QuotedString(ExpressionToken):

@@ -98,8 +98,8 @@ def main_cli():
 
             output_filename = output_file.split("/")[-1]
             output_ext = output_filename.split(".")[-1] if "." in output_filename else ""
-            if output_ext.lower() in ("bin", "wav"):
-                output_format = output_ext.lower()
+            if output_filename.lower().endswith(".bin"):
+                output_format = "bin"
             else:
                 output_format = "raw"
 

@@ -21,7 +21,7 @@ def compile_and_emit(file_path, source):
     comp = Compiler()
     comp.add_files([parse(file_path, source)])
     comp.link()
-    comp.emit_files()
+    return comp.emit_files()
 
 
 def compile_old(source):
@@ -278,6 +278,29 @@ def test_math():
     expect_same(".word 1337 _ -6", ".word 13")
 
 
+def test_variables():
+    expect_same("a = 5\n.word a", ".word 5")
+    expect_same(".word a\na = 5", ".word 5")
+
+@pytest.mark.parametrize("op", ["+", "-", "*", "/", "%", "<<", ">>", "_"])
+def test_variables_infix(op):
+    expect_same(f".word a {op} b\na = 5\nb = 3", f".word 5 {op} 3")
+    expect_same(f".word (. {op} .) & 177777", f".word (1000 {op} 1000) & 177777")
+
+@pytest.mark.parametrize("op", ["+", "-", "~", "^C", "^c"])
+def test_variables_prefix(op):
+    expect_same(f".word {op} a\na = 5", f".word {op} 5")
+    expect_same(f".word {op} .", f".word {op} 1000")
+
+
+def test_linear_polynomial():
+    expect_same(".link 1000 + a - b\na: .word 123\nb:", ".link 776\n.word 123")
+    expect_same(".link 1000 + (a >> 0) - (b << 1) + (b >> 0)\na: .word 123\nb:", ".link 776\n.word 123")
+    expect_same(".link 1000 + x - x\nx: .word 123", ".link 1000\n.word 123")
+    expect_same(".link 1000 + y - y\ny = .", ".link 1000")
+    expect_same(".link 1000 + z - z\nz = . >> 1", ".link 1000")
+
+
 def test_unexpected_register():
     with util.expect_error("unexpected-register"):
         compile("clr r1+1")
@@ -505,9 +528,17 @@ def test_insert_file(fs):
 )
 def test_binaries(fs, suffix, input_file_name, output_file_name, code_prefix):
     fs.create_file(output_file_name)
-    compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
+    assert compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
     with open(output_file_name, "rb") as f:
         assert f.read() == code_prefix + b"B\x10"
+
+
+def test_emit(fs):
+    assert not compile_and_emit("test.mac", "mov r1, r2")
+
+    fs.create_file("test.bin", st_mode=0)
+    with util.expect_error("io-error"):
+        compile_and_emit("test.mac", "make_bin")
 
 
 @pytest.mark.parametrize(
@@ -527,7 +558,7 @@ def test_binaries(fs, suffix, input_file_name, output_file_name, code_prefix):
 )
 def test_wavs1(fs, suffix, input_file_name, output_file_name, test_result_file_name):
     fs.create_file(output_file_name)
-    compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
+    assert compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
     with open(output_file_name, "rb") as f:
         assert f.read() == resources[test_result_file_name]
 

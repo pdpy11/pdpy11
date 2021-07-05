@@ -114,7 +114,6 @@ class Compiler:
     def compile_assignment(self, var, state):
         name = state["internal_symbol_prefix"] + var.name.name
 
-        var.symbol_value = None
         if name in self.symbols:
             prev_sym, _ = self.symbols[name]
             reports.error(
@@ -123,7 +122,7 @@ class Compiler:
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
         else:
-            self.symbols[name] = (var, None)
+            self.symbols[name] = (var, var.value.resolve(state))
             self._handle_new_symbol(var.name.name)
 
 
@@ -189,10 +188,6 @@ class Compiler:
 
 
     def link(self):
-        # Forcefully calculate as much code as possible. This should optimize
-        # every instruction and command that does not depend on non-settled
-        # promises, which at this point should only be LA.
-
         if not self.link_base.settled:
             self.link_base.settle(0o1000)
 

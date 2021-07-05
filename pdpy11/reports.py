@@ -195,7 +195,7 @@ class GraphicalHandler:
 
 def emit_report(priority, identifier, *reports):
     if not handle_reports.handlers_stack:
-        # Shouldn't happen
+        # Shouldn't happen in normal operation mode, but may be used in tests
         raise Exception(f"Unhandled report: {identifier}")  # pragma: no cover
 
     handler = handle_reports.handlers_stack[-1]

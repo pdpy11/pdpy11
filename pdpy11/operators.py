@@ -1,10 +1,15 @@
+import inspect
+
 from .containers import CaseInsensitiveDict
+from .deferred import wait, Deferred, BaseDeferred
 from .types import ExpressionToken
 
 
 class InfixOperator(ExpressionToken):
     fn: ...
     char: str
+    awaited: bool
+    return_type: type
 
     # pylint: disable=arguments-differ
     def init(self, lhs: ExpressionToken, rhs: ExpressionToken):
@@ -12,7 +17,14 @@ class InfixOperator(ExpressionToken):
         self.rhs: ExpressionToken = rhs
 
     def resolve(self, state):
-        return type(self).fn(self.lhs.resolve(state), self.rhs.resolve(state))
+        lhs = self.lhs.resolve(state)
+        rhs = self.rhs.resolve(state)
+        if not isinstance(lhs, BaseDeferred) and not isinstance(rhs, BaseDeferred):
+            return type(self).fn(lhs, rhs)
+        if self.awaited:
+            return Deferred[self.return_type](lambda: type(self).fn(wait(lhs), wait(rhs)))
+        else:
+            return Deferred[self.return_type](lambda: type(self).fn(lhs, rhs))
 
     def __eq__(self, other):
         return isinstance(other, type(self)) and (self.lhs, self.rhs) == (other.lhs, other.rhs)
@@ -21,38 +33,35 @@ class InfixOperator(ExpressionToken):
         return f"{self.lhs!r} {self.char} {self.rhs!r}"
 
 
-class PrefixOperator(ExpressionToken):
+class UnaryOperator(ExpressionToken):
     fn: ...
     char: str
+    awaited: bool
+    return_type: type
 
     # pylint: disable=arguments-differ
     def init(self, operand: ExpressionToken):
         self.operand: ExpressionToken = operand
 
     def resolve(self, state):
-        return type(self).fn(self.operand.resolve(state))
+        operand = self.operand.resolve(state)
+        if not isinstance(operand, BaseDeferred):
+            return type(self).fn(operand)
+        if self.awaited:
+            return Deferred[self.return_type](lambda: type(self).fn(wait(operand)))
+        else:
+            return Deferred[self.return_type](lambda: type(self).fn(operand))
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and self.operand == rhs.operand
 
+
+class PrefixOperator(UnaryOperator):
     def __repr__(self):
         return f"{self.char}{self.operand!r}"
 
 
-class PostfixOperator(ExpressionToken):
-    fn: ...
-    char: str
-
-    # pylint: disable=arguments-differ
-    def init(self, operand: ExpressionToken):
-        self.operand: ExpressionToken = operand
-
-    def resolve(self, state):
-        return type(self).fn(self.operand.resolve(state))
-
-    def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.operand == rhs.operand
-
+class PostfixOperator(UnaryOperator):
     def __repr__(self):
         return f"{self.operand!r}{self.char}"
 
@@ -64,7 +73,7 @@ operators = {
 }
 
 
-def operator(signature, precedence, associativity):
+def operator(signature, precedence, associativity, awaited=True):
     assert associativity in ("left", "right")
 
     if signature[0] == signature[-1] == "x":
@@ -89,11 +98,18 @@ def operator(signature, precedence, associativity):
     Class.precedence = precedence
     Class.associativity = associativity
     Class.char = char
+    Class.awaited = awaited
     operators[kind][char] = Class
 
     def decorator(fn):
         Class.fn = fn
         Class.__name__ = fn.__name__
+        annot = inspect.signature(fn).return_annotation
+        if isinstance(annot, str):
+            annot = eval(annot)
+        elif annot is inspect.Signature.empty:
+            annot = None
+        Class.return_type = annot
         return Class
 
     return decorator
@@ -111,64 +127,71 @@ def postsub(x):
     raise NotImplementedError()
 
 
-@operator("+x", precedence=2, associativity="left")
-def pos(x):
+@operator("+x", precedence=2, associativity="left", awaited=False)
+def pos(x: int) -> int:
     return +x
 
 
-@operator("-x", precedence=2, associativity="left")
-def neg(x):
+@operator("-x", precedence=2, associativity="left", awaited=False)
+def neg(x: int) -> int:
     return -x
 
 
 @operator("~x", precedence=2, associativity="left")
-def inv(x):
+def inv(x: int) -> int:
     return ~x
 
 
 @operator("^c x", precedence=2, associativity="left")
-def inv2(x):
+def inv2(x: int) -> int:
     return ~x
 
 
-@operator("x * x", precedence=3, associativity="left")
-def mul(a, b):
+@operator("x * x", precedence=3, associativity="left", awaited=False)
+def mul(a: int, b: int) -> int:
     return a * b
 
 
 @operator("x / x", precedence=3, associativity="left")
-def div(a, b):
+def div(a: int, b: int) -> int:
     return a // b
 
 
 @operator("x % x", precedence=3, associativity="left")
-def mod(a, b):
+def mod(a: int, b: int) -> int:
     return a % b
 
 
-@operator("x + x", precedence=4, associativity="left")
-def add(a, b):
+@operator("x + x", precedence=4, associativity="left", awaited=False)
+def add(a: int, b: int) -> int:
     return a + b
 
 
-@operator("x - x", precedence=4, associativity="left")
-def sub(a, b):
+@operator("x - x", precedence=4, associativity="left", awaited=False)
+def sub(a: int, b: int) -> int:
     return a - b
 
 
-@operator("x << x", precedence=5, associativity="left")
-def lshift(a, b):
-    return a << b
+@operator("x << x", precedence=5, associativity="left", awaited=False)
+def lshift(a: int, b: int) -> int:
+    b = wait(b)
+    assert b >= 0  # TODO: handle this
+    return a * 2 ** b
 
 
-@operator("x >> x", precedence=5, associativity="left")
-def rshift(a, b):
-    return a >> b
+@operator("x >> x", precedence=5, associativity="left", awaited=False)
+def rshift(a: int, b: int) -> int:
+    b = wait(b)
+    assert b >= 0  # TODO: handle this
+    if b == 0:
+        return a
+    else:
+        return wait(a) >> b
 
 
 # It seems they were running out of characters.
 @operator("x _ x", precedence=5, associativity="left")
-def lsh(a, b):
+def lsh(a: int, b: int) -> int:
     if b >= 0:
         return a << b
     else:
@@ -176,22 +199,22 @@ def lsh(a, b):
 
 
 @operator("x & x", precedence=8, associativity="left")
-def and_(a, b):
+def and_(a: int, b: int) -> int:
     return a & b
 
 
 @operator("x ^ x", precedence=9, associativity="left")
-def xor(a, b):
+def xor(a: int, b: int) -> int:
     return a ^ b
 
 
 @operator("x | x", precedence=10, associativity="left")
-def or_(a, b):
+def or_(a: int, b: int) -> int:
     return a | b
 
 
 @operator("x ! x", precedence=10, associativity="left")
-def or2(a, b):
+def or2(a: int, b: int) -> int:
     return a | b
 
 
