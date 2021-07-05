@@ -237,14 +237,14 @@ class LinearPolynomial(BaseDeferred):
         res = "".join(lst)
         if res[:1] == "+":
             res = res[1:]
-        return res or "(0)"
+        return "(0)" if res == "0" else res
 
     def __add__(self, rhs):
         rhs = optimize(rhs)
         if not isinstance(rhs, BaseDeferred):
             return LinearPolynomial[int](self.coeffs, self.constant_term + rhs)
         if not isinstance(rhs, LinearPolynomial):
-            return self + LinearPolynomial[int]({rhs: 1})
+            rhs = LinearPolynomial[int]({rhs: 1})
         return LinearPolynomial[int](
             list(self.coeffs.items()) + list(rhs.coeffs.items()),
             self.constant_term + rhs.constant_term
@@ -265,23 +265,26 @@ class LinearPolynomial(BaseDeferred):
         return sum(key.wait() * value for key, value in self.coeffs.items()) + self.constant_term
 
     def optimize(self):
-        new_coeffs = {}
+        new_coeffs = []
         new_constant_term = self.constant_term
+
         for key, value in self.coeffs.items():
             key = optimize(key)
-            if isinstance(key, BaseDeferred):
-                if key in new_coeffs:
-                    new_coeffs[key] += value
-                else:
-                    new_coeffs[key] = value
+            if isinstance(key, LinearPolynomial):
+                new_coeffs += list(key.coeffs.items())
+                new_constant_term += key.constant_term
+            elif isinstance(key, BaseDeferred):
+                new_coeffs.append((key, value))
             else:
-                new_constant_term += key * value
-        self.coeffs = new_coeffs
-        self.constant_term = new_constant_term
-        if self.coeffs:
+                new_constant_term += value
+
+        new_value = LinearPolynomial[int](new_coeffs, new_constant_term)
+        if new_value.coeffs:
+            self.coeffs = new_value.coeffs
+            self.constant_term = new_value.constant_term
             return self
         else:
-            return new_constant_term
+            return new_value.constant_term
 
 
 class Concatenator(BaseDeferred):

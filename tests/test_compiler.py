@@ -301,6 +301,7 @@ def test_linear_polynomial():
     expect_same(".link 1000 + y - y\ny = .", ".link 1000")
     expect_same(".link 1000 + z - z\nz = . >> 1", ".link 1000")
     expect_same(".link 1000 + a - a\na = b >> 1\nb = .", ".link 1000")
+    expect_same("b = a\nc = b + 1\n.word c + 1\na:", ".word . + 4")
 
 
 def test_unexpected_register():
