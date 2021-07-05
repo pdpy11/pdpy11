@@ -863,7 +863,7 @@ def instruction(ctx):
 
         if first_operand:
             if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
-                reports.error(
+                reports.warning(
                     "missing-whitespace",
                     (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that an operand follows.")
                 )
