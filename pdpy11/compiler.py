@@ -123,8 +123,8 @@ class Compiler:
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
         else:
-            self.symbols[name] = (var, Deferred[int](lambda: var.value.resolve(state)))
-            self._handle_new_symbol(var.name.name)
+            self.symbols[name] = (var, Deferred[int](lambda: var.value.resolve(state), var.name.name))
+            self._handle_new_symbol(name)
 
 
     def _handle_new_symbol(self, name):

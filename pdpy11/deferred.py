@@ -133,27 +133,32 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
         if self.typ is int and not isinstance(rhs, BaseDeferred):
             return LinearPolynomial[self.typ]({self: rhs})
         else:
+            # TODO: maybe it makes sense not to await LinearPolynomial when
+            # multiplying Deferred by LinearPolynomial (and the other way round)
             return Deferred[self.typ](lambda: wait(self) * wait(rhs))
 
 
 class Deferred(BaseDeferred):
-    def __init__(self, typ, fn):
+    def __init__(self, typ, fn, name=None):
         super().__init__(typ)
         self.fn = fn
         self.value = None
         self.settled = False
-        self.instance_id = Deferred.next_instance_id
+        self.name = name or f"d{Deferred.next_instance_id}"
         Deferred.next_instance_id += 1
 
     @classmethod
-    def construct(cls, typ, fn):  # pylint: disable=arguments-differ
-        tmp = cls(typ, fn)
+    def construct(cls, *args):  # pylint: disable=arguments-differ
+        tmp = cls(*args)
         with try_compute:
             return tmp.wait()
         return tmp
 
     def __repr__(self):
-        return f"d{self.instance_id}"
+        if self.settled:
+            return f"{self.name}[={self.value!r}]"
+        else:
+            return self.name
 
     def length(self):
         def fn():
@@ -184,11 +189,11 @@ class Deferred(BaseDeferred):
                 try:
                     self.value = self.fn()
                     self.settled = True
+                    return optimize(self.value)
                 except NotReadyError:
-                    pass
+                    return self
                 finally:
                     assert BaseDeferred.awaiting_stack.pop() is self
-            return self
 
 
 Deferred.next_instance_id = 1
@@ -262,6 +267,7 @@ class LinearPolynomial(BaseDeferred):
         return LinearPolynomial[int]({key: -value for key, value in self.coeffs.items()}, -self.constant_term)
 
     def _wait(self):
+        self.optimize()
         return sum(key.wait() * value for key, value in self.coeffs.items()) + self.constant_term
 
     def optimize(self):
@@ -271,20 +277,20 @@ class LinearPolynomial(BaseDeferred):
         for key, value in self.coeffs.items():
             key = optimize(key)
             if isinstance(key, LinearPolynomial):
-                new_coeffs += list(key.coeffs.items())
-                new_constant_term += key.constant_term
+                new_coeffs += [(key1, value1 * value) for key1, value1 in key.coeffs.items()]
+                new_constant_term += key.constant_term * value
             elif isinstance(key, BaseDeferred):
                 new_coeffs.append((key, value))
             else:
-                new_constant_term += value
+                new_constant_term += key * value
 
         new_value = LinearPolynomial[int](new_coeffs, new_constant_term)
-        if new_value.coeffs:
-            self.coeffs = new_value.coeffs
-            self.constant_term = new_value.constant_term
+        self.coeffs = new_value.coeffs
+        self.constant_term = new_value.constant_term
+        if self.coeffs:
             return self
         else:
-            return new_value.constant_term
+            return self.constant_term
 
 
 class Concatenator(BaseDeferred):

@@ -301,7 +301,10 @@ def test_linear_polynomial():
     expect_same(".link 1000 + y - y\ny = .", ".link 1000")
     expect_same(".link 1000 + z - z\nz = . >> 1", ".link 1000")
     expect_same(".link 1000 + a - a\na = b >> 1\nb = .", ".link 1000")
-    expect_same("b = a\nc = b + 1\n.word c + 1\na:", ".word . + 4")
+
+
+def test_symbol_propagation():
+    expect_same("d = c*2\ne = d*2 + 1\n.link e*3 + 1 - . * 14\n.word .\nc:", ".link 34\n.word .")
 
 
 def test_unexpected_register():
@@ -397,7 +400,7 @@ def test_branch():
     with util.expect_error("odd-branch"):
         compile("sob r0, . - 1")
     with util.expect_error("branch-out-of-bounds"):
-        print(compile("sob r0, . + 4"))
+        compile("sob r0, . + 4")
     with util.expect_error("branch-out-of-bounds"):
         compile("sob r0, . - 1000000")
 
