@@ -73,7 +73,7 @@ class handle_reports:
 
 class BareHandler:
     def __call__(self, priority, identifier, *reports):
-        for ctx_start, ctx_end, text in reports:
+        for ctx_start, _ctx_end, text in reports:
             text = text.replace("\n", " ")
             print(f"{ctx_start!r}: {priority.raw_text}: {text}")
 

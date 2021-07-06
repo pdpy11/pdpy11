@@ -1,4 +1,4 @@
-import inspect
+import typing
 
 from .containers import CaseInsensitiveDict
 from .deferred import wait, Deferred, BaseDeferred
@@ -104,12 +104,7 @@ def operator(signature, precedence, associativity, awaited=True):
     def decorator(fn):
         Class.fn = fn
         Class.__name__ = fn.__name__
-        annot = inspect.signature(fn).return_annotation
-        if isinstance(annot, str):
-            annot = eval(annot)
-        elif annot is inspect.Signature.empty:
-            annot = None
-        Class.return_type = annot
+        Class.return_type = typing.get_type_hints(fn).get("return")
         return Class
 
     return decorator

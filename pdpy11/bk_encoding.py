@@ -46,8 +46,14 @@ def encode(string: str, errors: str="strict"):
     assert errors == "strict"
     try:
         return bytes(ENCODING_TABLE[char] for char in string), len(string)
-    except KeyError as ex:
-        raise UnicodeEncodeError(f"Cannot encode symbol character '{ex.args[0]}' using 'bk' encoding") from None
+    except KeyError:
+        start = 0
+        while string[start] in ENCODING_TABLE:
+            start += 1
+        end = len(string)
+        while string[end - 1] in ENCODING_TABLE:
+            end -= 1
+        raise UnicodeEncodeError("bk", string, start, end, "invalid character") from None
 
 
 def decode(string: bytes, errors: str="strict"):

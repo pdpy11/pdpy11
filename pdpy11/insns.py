@@ -285,7 +285,7 @@ class ImmediateOperandStub:
     def encode(self, operand, state):
         insn = state["insn"]
 
-        if isinstance(operand, operators.immediate):
+        if isinstance(operand, operators.immediate):  # pylint: disable=isinstance-second-argument-not-valid-type
             reports.warning(
                 "excess-hash",
                 (operand.ctx_start, operand.ctx_end, f"'{insn.name.name}' instruction takes an immediate value implicitly, a hash is unnecessary")

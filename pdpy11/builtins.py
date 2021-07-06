@@ -165,8 +165,8 @@ def _metacommand_impl(fn, no_dot=False, alias=None, **kwargs):
         aliases = alias
 
     cmd = Metacommand(fn, name, **kwargs)
-    for alias in aliases + [name]:
-        builtin_commands[alias] = cmd
+    for command_name in aliases + [name]:
+        builtin_commands[command_name] = cmd
 
     # That is not to override globals with the same name, e.g. list
     return __builtins__.get(fn.__name__, None)
@@ -245,12 +245,14 @@ def dword(state, *operands: int) -> bytes:
 # pylint: disable=redefined-builtin
 @metacommand
 def ascii_(state, operand: str) -> bytes:
-    return get_as_str(state, "'.ascii' operand", state["insn"], operand).encode(state["compiler"].output_charset)
+    string = get_as_str(state, "'.ascii' operand", state["insn"], operand)
+    return string.encode(state["compiler"].output_charset)
 
 
 @metacommand
 def asciz(state, operand: str) -> bytes:
-    return get_as_str(state, "'.asciz' operand", state["insn"], operand).encode(state["compiler"].output_charset) + b"\x00"
+    string = get_as_str(state, "'.asciz' operand", state["insn"], operand)
+    return string.encode(state["compiler"].output_charset) + b"\x00"
 
 
 @metacommand
@@ -370,7 +372,7 @@ def nlist(state, _: int=None) -> bytes:
 
 
 @metacommand(literal_string_operand=True)
-def title_(state, title: str) -> bytes:
+def title_(state, title: str) -> bytes:  # pylint: disable=unused-argument
     # TODO: handle this
     reports.warning(
         "not-implemented",
@@ -380,7 +382,7 @@ def title_(state, title: str) -> bytes:
 
 
 @metacommand(literal_string_operand=True)
-def sbttl(state, text: str) -> bytes:
+def sbttl(state, text: str) -> bytes:  # pylint: disable=unused-argument
     # TODO: handle this
     reports.warning(
         "not-implemented",
@@ -390,7 +392,7 @@ def sbttl(state, text: str) -> bytes:
 
 
 @metacommand
-def ident(state, identification: str) -> bytes:
+def ident(state, identification: str) -> bytes:  # pylint: disable=unused-argument
     # TODO: handle this
     reports.warning(
         "not-implemented",

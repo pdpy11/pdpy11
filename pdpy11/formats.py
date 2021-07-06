@@ -17,7 +17,7 @@ def bin_(base, code):
 
 
 @file_format
-def raw(base, code):
+def raw(_base, code):
     return code
 
 

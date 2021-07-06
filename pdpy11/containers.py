@@ -26,7 +26,7 @@ class CaseInsensitiveDict:
 
 
     def __iter__(self):
-        for key, value in self.container.values():
+        for key, _value in self.container.values():
             yield key
 
 

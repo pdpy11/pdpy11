@@ -1,7 +1,7 @@
 import struct
 
 from .context import Context
-from .deferred import not_ready, BaseDeferred, SizedDeferred, wait
+from .deferred import not_ready, BaseDeferred, wait
 from . import reports
 
 
@@ -121,7 +121,7 @@ class Symbol(ExpressionToken):
 
         for name in candidates:
             if name in compiler.symbols:
-                symbol, value = compiler.symbols[name]
+                _symbol, value = compiler.symbols[name]
                 return value
 
         for name in candidates:

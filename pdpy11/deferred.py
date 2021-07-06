@@ -217,7 +217,7 @@ class LinearPolynomial(BaseDeferred):
             if key.typ is not int:  # pragma: no cover
                 raise TypeError(f"LinearPolynomial variable has an invalid type {key.typ.__name__}")
             if isinstance(key, LinearPolynomial):
-                raise TypeError(f"LinearPolynomial variable cannot be a linear polynomial itself")  # pragma: no cover
+                raise TypeError("LinearPolynomial variable cannot be a linear polynomial itself")  # pragma: no cover
             if not isinstance(value, int):  # pragma: no cover
                 raise TypeError(f"LinearPolynomial coefficient has an invalid type {type(value).__name__}")
         self.coeffs = {key: value for key, value in self.coeffs.items() if value != 0}
