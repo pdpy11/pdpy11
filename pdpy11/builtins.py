@@ -1,6 +1,7 @@
 import inspect
 import os
 import struct
+import typing
 
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, wait, BaseDeferred
@@ -9,6 +10,15 @@ from . import operators
 from . import reports
 from . import types
 from .types import CodeBlock
+
+
+uint = typing.NewType("uint", int)
+uint8 = typing.NewType("uint8", int)
+uint16 = typing.NewType("uint16", int)
+uint32 = typing.NewType("uint32", int)
+int8 = typing.NewType("int8", int)
+int16 = typing.NewType("int16", int)
+int32 = typing.NewType("int32", int)
 
 
 def get_as_int(state, what, token, arg_token, bitness, unsigned):
@@ -20,19 +30,22 @@ def get_as_int(state, what, token, arg_token, bitness, unsigned):
                 (arg_token.ctx_start, arg_token.ctx_end, f"An unsigned integer is expected as {what}, but {value} was passed")
             )
             raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
-        if value <= -2 ** bitness:
-            reports.error(
-                "value-out-of-bounds",
-                (arg_token.ctx_start, arg_token.ctx_end, f"The value is too small: {value} does not fit in {bitness} bits")
-            )
-            raise reports.RecoverableError("Too negative value")
-        if value >= 2 ** bitness:
-            reports.error(
-                "value-out-of-bounds",
-                (arg_token.ctx_start, arg_token.ctx_end, f"The value is too large: {value} does not fit in {bitness} bits")
-            )
-            raise reports.RecoverableError("Too large value")
-        return value % (2 ** bitness)
+        if bitness is not None:
+            if value <= -2 ** bitness:
+                reports.error(
+                    "value-out-of-bounds",
+                    (arg_token.ctx_start, arg_token.ctx_end, f"The value is too small: {value} does not fit in {bitness} bits")
+                )
+                raise reports.RecoverableError("Too negative value")
+            if value >= 2 ** bitness:
+                reports.error(
+                    "value-out-of-bounds",
+                    (arg_token.ctx_start, arg_token.ctx_end, f"The value is too large: {value} does not fit in {bitness} bits")
+                )
+                raise reports.RecoverableError("Too large value")
+            return value % (2 ** bitness)
+        else:
+            return value
     else:
         reports.error(
             "type-mismatch",
@@ -49,7 +62,7 @@ def get_as_str(state, what, token, arg_token):
     else:
         reports.error(
             "type-mismatch",
-            (token.ctx_start, token.ctx_end, f"A string was expected as {what}"),
+            (token.ctx_start, token.ctx_end, f"A string was expected for {what}"),
             (arg_token.ctx_start, arg_token.ctx_end, f"...yet the evaluated value is not a string but {type(value).__name__}")
         )
         raise reports.RecoverableError()
@@ -60,29 +73,36 @@ builtin_commands = CaseInsensitiveDict(instructions)
 
 
 class Metacommand:
-    def __init__(self, fn, name, size_fn=None, literal_string_operand=False):
+    def __init__(self, fn, name, size_fn=None, literal_string_operand=False, raw=False):
         self.fn = fn
         self.size_fn = size_fn
         self.literal_string_operand = literal_string_operand
         self.name = name
+        self.raw = raw
 
+        hints = typing.get_type_hints(fn)
         sig = inspect.signature(fn)
         assert list(sig.parameters.keys())[:1] == ["state"]
 
         self.min_operands = 0
         self.max_operands = 0
         self.takes_code_block = False
-        self.operand_types = []
-        for param in list(sig.parameters.values())[1:]:
-            annotation = param.annotation
-            assert annotation is not inspect.Parameter.empty
-            if not isinstance(annotation, str):
-                annotation = annotation.__name__
-            self.operand_types.append(annotation)
+        self.operand_info = []
 
-            if param.annotation in (CodeBlock, "CodeBlock"):
+        for param in list(sig.parameters.values())[1:]:
+            hint = hints[param.name]
+            if typing.get_origin(hint) is typing.Union:
+                hint, = [case for case in typing.get_args(hint) if case is not type(None)]
+            self.operand_info.append({
+                "type": hint.__supertype__ if hasattr(hint, "__supertype__") else hint,
+                "hint": hint,
+                "name": param.name
+            })
+
+            if hint is CodeBlock:
                 self.takes_code_block = True
                 continue
+
             if param.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
                 if param.default is inspect.Parameter.empty:
                     self.min_operands += 1
@@ -147,7 +167,32 @@ class Metacommand:
             operands.append(code_block)
 
         def fn():
-            return self.fn(state, *operands)
+            if self.raw:
+                return self.fn(state, *operands)
+            else:
+                cooked_operands = []
+
+                for i, operand in enumerate(operands):
+                    operand_info = self.operand_info[min(i, len(self.operand_info) - 1)]
+                    comment = operand_info["name"].replace("_", " ")
+
+                    if operand_info["type"] is str:
+                        cooked_operand = get_as_str(state, comment, state["insn"], operand)
+                    elif operand_info["type"] is int:
+                        type_name = operand_info["hint"].__name__
+                        unsigned = type_name.startswith("u")
+                        bitness_str = type_name.replace("u", "").replace("int", "")
+                        bitness = int(bitness_str) if bitness_str else None
+                        cooked_operand = get_as_int(state, comment, state["insn"], operand, bitness=bitness, unsigned=unsigned)
+                    elif operand_info["type"] is CodeBlock:
+                        cooked_operand = operand
+                    else:
+                        raise TypeError(f"Invalid operand type {operand_info['type']}")
+
+                    cooked_operands.append(cooked_operand)
+
+                return self.fn(state, *cooked_operands)
+
         if self.size_fn is None:
             return Deferred[bytes](fn)
         else:
@@ -181,23 +226,18 @@ def metacommand(fn=None, **kwargs):
 
 
 @metacommand(size_fn=lambda state, *operands: len(operands) or 1, alias=".db")
-def byte(state, *operands: int) -> bytes:
-    if not operands:
+def byte(state, *byte_operand: int8) -> bytes:
+    if not byte_operand:
         reports.warning(
             "implicit-operand",
             (state["insn"].ctx_start, state["insn"].ctx_end, "'.byte' without an operand is implicitly treated as '.byte 0'.\nPlease consider inserting the zero explicitly.")
         )
         return b"\x00"
-    def encode_i8(operand):
-        value = get_as_int(state, "'.byte' operand", state["insn"], operand, bitness=8, unsigned=False)
-        assert -2 ** 8 < value < 2 ** 8
-        value %= 2 ** 8
-        return struct.pack("<B", value)
-    return b"".join(encode_i8(operand) for operand in operands)
+    return b"".join(struct.pack("<B", operand) for operand in byte_operand)
 
 
 @metacommand(size_fn=lambda state, *operands: 2 * (len(operands) or 1), alias=".dw")
-def word(state, *operands: int) -> bytes:
+def word(state, *word_operand: int16) -> bytes:
     prefix = b""
     if wait(state["emit_address"]) % 2 == 1:
         prefix = b"\x00"
@@ -205,22 +245,17 @@ def word(state, *operands: int) -> bytes:
             "odd-address",
             (state["insn"].ctx_start, state["insn"].ctx_end, "This '.word' was emitted on an odd address.\nThe pointer was automatically adjusted one byte forward by inserting a null byte.\nThis may break labels and address calculation in your program;\nplease add '.even' or '.byte 0' where necessary.")
         )
-    if not operands:
+    if not word_operand:
         reports.warning(
             "implicit-operand",
             (state["insn"].ctx_start, state["insn"].ctx_end, "'.word' without an operand is implicitly treated as '.word 0'.\nPlease consider inserting the zero explicitly.")
         )
         return prefix + b"\x00\x00"
-    def encode_i16(operand):
-        value = get_as_int(state, "'.word' operand", state["insn"], operand, bitness=16, unsigned=False)
-        assert -2 ** 16 < value < 2 ** 16
-        value %= 2 ** 16
-        return struct.pack("<H", value)
-    return prefix + b"".join(encode_i16(operand) for operand in operands)
+    return prefix + b"".join(struct.pack("<H", operand) for operand in word_operand)
 
 
 @metacommand(size_fn=lambda state, *operands: 4 * (len(operands) or 1))
-def dword(state, *operands: int) -> bytes:
+def dword(state, *dword_operand: int32) -> bytes:
     prefix = b""
     if wait(state["emit_address"]) % 2 == 1:
         prefix = b"\x00"
@@ -228,39 +263,34 @@ def dword(state, *operands: int) -> bytes:
             "odd-address",
             (state["insn"].ctx_start, state["insn"].ctx_end, "This '.dword' was emitted on an odd address.\nThe pointer was automatically adjusted one byte forward by inserting a null byte.\nThis may break labels and address calculation in your program;\nplease add '.even' or '.byte 0' where necessary.")
         )
-    if not operands:
+    if not dword_operand:
         reports.warning(
             "implicit-operand",
             (state["insn"].ctx_start, state["insn"].ctx_end, "'.dword' without an operand is implicitly treated as '.dword 0'.\nPlease consider inserting the zero explicitly.")
         )
         return prefix + b"\x00\x00\x00\x00"
-    def encode_i32(operand):
-        value = get_as_int(state, "'.dword' operand", state["insn"], operand, bitness=32, unsigned=False)
-        assert -2 ** 32 < value < 2 ** 32
-        value %= 2 ** 32
+    def encode_i32(value):
         return struct.pack("<H", value >> 16) + struct.pack("<H", value & 0xffff)
-    return prefix + b"".join(encode_i32(operand) for operand in operands)
+    return prefix + b"".join(encode_i32(operand) for operand in dword_operand)
 
 
 # pylint: disable=redefined-builtin
 @metacommand
-def ascii_(state, operand: str) -> bytes:
-    string = get_as_str(state, "'.ascii' operand", state["insn"], operand)
-    return string.encode(state["compiler"].output_charset)
+def ascii_(state, ascii_text: str) -> bytes:
+    return ascii_text.encode(state["compiler"].output_charset)
 
 
 @metacommand
-def asciz(state, operand: str) -> bytes:
-    string = get_as_str(state, "'.asciz' operand", state["insn"], operand)
-    return string.encode(state["compiler"].output_charset) + b"\x00"
+def asciz(state, ascii_text: str) -> bytes:
+    return ascii_text.encode(state["compiler"].output_charset) + b"\x00"
 
 
-@metacommand
-def rad50(state, operand: str) -> bytes:
-    if isinstance(operand, types.StringConcatenation):
-        chunks = operand.chunks
+@metacommand(raw=True)
+def rad50(state, string: str) -> bytes:
+    if isinstance(string, types.StringConcatenation):
+        chunks = string.chunks
     else:
-        chunks = [operand]
+        chunks = [string]
 
     characters = []
     for chunk in chunks:
@@ -298,15 +328,13 @@ def rad50(state, operand: str) -> bytes:
 
 
 @metacommand
-def blkb(state, cnt: int) -> bytes:
-    cnt_val = get_as_int(state, "'.blkb' count", state["insn"], cnt, 16, unsigned=True)
-    return b"\x00" * cnt_val
+def blkb(state, blkb_count: uint16) -> bytes:
+    return b"\x00" * blkb_count
 
 
 @metacommand
-def blkw(state, cnt: int) -> bytes:
-    cnt_val = get_as_int(state, "'.blkw' count", state["insn"], cnt, 16, unsigned=True)
-    return b"\x00\x00" * cnt_val
+def blkw(state, blkw_count: uint16) -> bytes:
+    return b"\x00\x00" * blkw_count
 
 
 @metacommand
@@ -323,16 +351,10 @@ def odd(state) -> bytes:
 # TODO: Macro-11 seems to have .rept metacommand. That is probably the same as
 # .repeat but '.rept X [code] .endr' instead of '.repeat X { [code] }'
 @metacommand
-def repeat(state, cnt: int, body: CodeBlock) -> bytes:
+def repeat(state, repetitions_count: uint, body: CodeBlock) -> bytes:
     addr = state["emit_address"]
     result = b""
-    cnt_val = wait(cnt.resolve(state))
-    if cnt_val < 0:
-        reports.error(
-            "value-out-of-bounds",
-            (cnt.ctx_start, cnt.ctx_end, f"Repetitions count cannot be negative ({cnt_val} given)")
-        )
-    for _ in range(cnt_val):
+    for _ in range(repetitions_count):
         chunk = state["compiler"].compile_block({**state, "context": "repeat"}, body, addr)
         if isinstance(chunk, BaseDeferred):
             addr += chunk.length()
@@ -346,7 +368,7 @@ def repeat(state, cnt: int, body: CodeBlock) -> bytes:
 def error_(state, error: str=None) -> bytes:
     reports.error(
         "user-error",
-        (state["insn"].ctx_start,state["insn"].ctx_end, "Error" + (f": {error!r}" if error else ""))
+        (state["insn"].ctx_start,state["insn"].ctx_end, "Error" + (f": {error}" if error else ""))
     )
     return b""
 
@@ -412,59 +434,57 @@ def page(state) -> bytes:
 
 
 @metacommand(no_dot=True)
-def insert_file(state, filepath: str) -> bytes:
-    path = get_as_str(state, "'insert_file' path", state["insn"], filepath)
-    include_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), path))
+def insert_file(state, inserted_file_path: str) -> bytes:
+    include_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), inserted_file_path))
     try:
         with open(include_path, "rb") as f:
             return f.read()
     except FileNotFoundError:
         reports.error(
             "io-error",
-            (filepath.ctx_start, filepath.ctx_end, f"There is no file at path '{include_path}'. Double-check file paths?")
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"There is no file at path '{include_path}'. Double-check file paths?")
         )
     except IsADirectoryError:
         reports.error(
             "io-error",
-            (filepath.ctx_start, filepath.ctx_end, f"The file at path '{include_path}' is a directory.")
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"The file at path '{include_path}' is a directory.")
         )
     except IOError:
         reports.error(
             "io-error",
-            (filepath.ctx_start, filepath.ctx_end, f"Could not read file at path '{include_path}'.")
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"Could not read file at path '{include_path}'.")
         )
     return b""
 
 
-def add_emitted_file(state, filepath, insn_name, file_format, file_extension, *args):
-    if filepath is not None:
-        path = get_as_str(state, f"'{insn_name}' path", state["insn"], filepath)
-        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), path))
+def add_emitted_file(state, file_path, file_format, file_extension):
+    if file_path is not None:
+        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), file_path))
     else:
         write_path = state["filename"]
         if write_path.lower().endswith(".mac"):
             write_path = write_path[:-4]
         if file_extension is not None:
             write_path += f".{file_extension}"
-    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, file_format, write_path, *args))
+    state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, file_format, write_path))
 
 
 @metacommand(no_dot=True)
-def make_bin(state, filepath: str=None) -> bytes:
-    add_emitted_file(state, filepath, "make_bin", "bin", "bin")
+def make_bin(state, bin_file_path: str=None) -> bytes:
+    add_emitted_file(state, bin_file_path, "bin", "bin")
     return b""
 
 
 @metacommand(no_dot=True)
-def make_raw(state, filepath: str=None) -> bytes:
-    add_emitted_file(state, filepath, "make_raw", "raw", None)
+def make_raw(state, raw_file_path: str=None) -> bytes:
+    add_emitted_file(state, raw_file_path, "raw", None)
     return b""
 
 
-def add_emitted_bk_wav(state, filepath, bk_filename, insn_name, file_format):
-    if filepath is not None:
-        filepath = get_as_str(state, f"'{insn_name}' output wav path", state["insn"], filepath)
-        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), filepath))
+def add_emitted_bk_wav(state, output_wav_path, bk_filename, file_format):
+    insn_name = state["insn"].name
+    if output_wav_path is not None:
+        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), output_wav_path))
     else:
         write_path = state["filename"]
         if write_path.lower().endswith(".mac"):
@@ -483,7 +503,6 @@ def add_emitted_bk_wav(state, filepath, bk_filename, insn_name, file_format):
             )
             encoded_bk_filename = encoded_bk_filename[:16]
     else:
-        bk_filename = get_as_str(state, f"'{insn_name}' BK file name", state["insn"], bk_filename)
         encoded_bk_filename = bk_filename.encode(state["compiler"].output_charset)
         if len(encoded_bk_filename) > 16:
             reports.error(
@@ -498,18 +517,18 @@ def add_emitted_bk_wav(state, filepath, bk_filename, insn_name, file_format):
 
 
 @metacommand(no_dot=True)
-def make_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
-    add_emitted_bk_wav(state, filepath, bk_filename, "make_wav", "bk_wav")
+def make_wav(state, output_wav_path: str=None, file_name_on_tape: str=None) -> bytes:
+    add_emitted_bk_wav(state, output_wav_path, file_name_on_tape, "bk_wav")
     return b""
 
 
 @metacommand(no_dot=True)
-def make_turbo_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
-    add_emitted_bk_wav(state, filepath, bk_filename, "make_turbo_wav", "bk_turbo_wav")
+def make_turbo_wav(state, output_wav_path: str=None, file_name_on_tape: str=None) -> bytes:
+    add_emitted_bk_wav(state, output_wav_path, file_name_on_tape, "bk_turbo_wav")
     return b""
 
 
-@metacommand(size_fn=lambda state, address: 0)
+@metacommand(size_fn=lambda state, address: 0, raw=True)
 def link(state, address: int) -> bytes:
     compiler = state["compiler"]
 
@@ -528,7 +547,7 @@ def link(state, address: int) -> bytes:
             )
         return b""
 
-    address_value = get_as_int(state, "'.link' operand", state["insn"], address, bitness=16, unsigned=False)
+    address_value = get_as_int(state, "link address", state["insn"], address, bitness=16, unsigned=False)
     compiler.link_base.settle(address_value)
     compiler.link_base_set_where = state["insn"]
     return b""

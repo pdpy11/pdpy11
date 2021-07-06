@@ -800,8 +800,8 @@ def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
     )
 
     if is_metacommand:
-        if insn is not None and insn.operand_types:
-            operand_type = insn.operand_types[min(operand_idx, len(insn.operand_types) - 1)]
+        if insn is not None and insn.operand_info:
+            operand_type = insn.operand_info[min(operand_idx, len(insn.operand_info) - 1)]["type"]
         else:
             # If the metacommand doesn't take any operand but was somehow passed
             # one, we can only hope this invalid operand does not break the
@@ -812,13 +812,15 @@ def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
             # expression, except when it starts with ", ' or /, in which case we
             # parse it as a string.
             if string_quote(ctx, maybe=True, lookahead=True):
-                operand_type = "str"
+                operand_type = str
             else:
-                operand_type = "int"
+                operand_type = int
     else:
-        operand_type = "int"
+        operand_type = int
 
-    if operand_type == "str":
+    assert operand_type in (str, int)
+
+    if operand_type is str:
         return long_string(ctx, **kwargs)
     else:
         return insn_operand(ctx, **kwargs)
