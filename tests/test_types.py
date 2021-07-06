@@ -17,11 +17,14 @@ def test_repr():
             inc -(r1) ;
             dec (r2)+ ;
             mov #1, 4(sp) ;
-            .word <12>
+            .word <12> ;
+            mov #'x, r0 ;
+            mov #"ab, r0
         } ;
         x = 1 ;
         .ascii "Hello, world!" ;
-        .ascii 'x'
+        .ascii 'x' ;
+        .ascii "Hello," <12> "awesome world!"
     """
 
     assert (

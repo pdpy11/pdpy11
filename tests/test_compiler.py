@@ -129,6 +129,8 @@ def test_metacommands():
 
     expect_binary(".ascii \"Hello, world!\"", b"Hello, world!")
     expect_binary(".asciz \"Hello, world!\"", b"Hello, world!\x00")
+    expect_binary(".ascii \"Hello\"<12>\"world!\"", b"Hello\nworld!")
+    expect_binary(".ascii <12>", b"\n")
     expect_binary(".blkb 10", b"\x00" * 8)
     expect_binary(".blkw 10", b"\x00" * 16)
 

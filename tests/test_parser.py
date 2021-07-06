@@ -297,6 +297,11 @@ def test_string2():
     with util.expect_error("unterminated-string"):
         parse("s = \"a")
 
+    expect_code(f".ascii /Hello/ <1> /world/", ASCII(c(StringConcatenation)([c(QuotedString)("/", "Hello"), c(AngleBracketedChar)(ONE), c(QuotedString)("/", "world")])))
+    expect_code(f".ascii /Hello/<1>", ASCII(c(StringConcatenation)([c(QuotedString)("/", "Hello"), c(AngleBracketedChar)(ONE)])))
+    expect_code(f".ascii <1>/world/", ASCII(c(StringConcatenation)([c(AngleBracketedChar)(ONE), c(QuotedString)("/", "world")])))
+    expect_code(f".ascii <1>", ASCII(c(AngleBracketedChar)(ONE)))
+
 
 def test_insn_syntax():
     parse("insn #(1) nop")

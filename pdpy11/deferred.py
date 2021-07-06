@@ -57,10 +57,10 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
             assert BaseDeferred.awaiting_stack.pop() is self
 
     def try_compute(self):
-        raise NotImplementedError(type(self).__name__ + ".try_compute()")
+        raise NotImplementedError(type(self).__name__ + ".try_compute()")  # pragma: no cover
 
     def get_current_best_estimate(self):
-        raise NotImplementedError(type(self).__name__ + ".get_current_best_estimate()")
+        raise NotImplementedError(type(self).__name__ + ".get_current_best_estimate()")  # pragma: no cover
 
     def _wait(self):
         raise NotImplementedError()  # pragma: no cover
@@ -92,9 +92,7 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
             raise TypeError(f"Don't know how to add {self.typ.__name__}")  # pragma: no cover
 
     def __radd__(self, lhs):
-        if isinstance(lhs, LinearPolynomial):
-            return NotImplemented
-        elif self.typ is int:
+        if self.typ is int:
             poly = LinearPolynomial[self.typ]()
             poly += lhs
             poly += self
@@ -219,12 +217,12 @@ class LinearPolynomial(BaseDeferred):
             if key.typ is not int:  # pragma: no cover
                 raise TypeError(f"LinearPolynomial variable has an invalid type {key.typ.__name__}")
             if isinstance(key, LinearPolynomial):
-                raise TypeError(f"LinearPolynomial variable cannot be a linear polynomial itself")
-            if not isinstance(value, int):
+                raise TypeError(f"LinearPolynomial variable cannot be a linear polynomial itself")  # pragma: no cover
+            if not isinstance(value, int):  # pragma: no cover
                 raise TypeError(f"LinearPolynomial coefficient has an invalid type {type(value).__name__}")
         self.coeffs = {key: value for key, value in self.coeffs.items() if value != 0}
         self.constant_term = constant_term
-        if not isinstance(constant_term, int):
+        if not isinstance(constant_term, int):  # pragma: no cover
             raise TypeError(f"LinearPolynomial constant term has an invalid type {type(constant_term).__name__}")
 
     def __repr__(self):
