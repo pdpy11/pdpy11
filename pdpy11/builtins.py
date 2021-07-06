@@ -509,12 +509,9 @@ def make_turbo_wav(state, filepath: str=None, bk_filename: str=None) -> bytes:
 
 @metacommand(size_fn=lambda state, address: 0)
 def link(state, address: int) -> bytes:
-    address_value = get_as_int(state, "'.link' operand", state["insn"], address, bitness=16, unsigned=False)
     compiler = state["compiler"]
-    if not compiler.link_base.settled:
-        compiler.link_base.settle(address_value)
-        compiler.link_base_set_where = state["insn"]
-    else:
+
+    if compiler.link_base.settled:
         if compiler.link_base_set_where is None:
             reports.error(
                 "recursive-definition",
@@ -527,6 +524,11 @@ def link(state, address: int) -> bytes:
                 (state["insn"].ctx_start, state["insn"].ctx_end, "A '.link' directive was encountered, but the link base has already been set."),
                 (prev_link.ctx_start, prev_link.ctx_end, "The link address has been previously configured here.")
             )
+        return b""
+
+    address_value = get_as_int(state, "'.link' operand", state["insn"], address, bitness=16, unsigned=False)
+    compiler.link_base.settle(address_value)
+    compiler.link_base_set_where = state["insn"]
     return b""
 
 # TODO: Macro-11 has .print metacommand which we can probably ignore as Rhialto's implementation does

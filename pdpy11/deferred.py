@@ -8,15 +8,6 @@ def wait(deferred):
     return deferred
 
 
-def optimize(deferred):
-    while isinstance(deferred, BaseDeferred):
-        upd = deferred.optimize()
-        if upd is deferred:
-            break
-        deferred = upd
-    return deferred
-
-
 class TryCompute:
     depth = 0
 
@@ -64,6 +55,12 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
             return self._wait()
         finally:
             assert BaseDeferred.awaiting_stack.pop() is self
+
+    def try_compute(self):
+        raise NotImplementedError(type(self).__name__ + ".try_compute()")
+
+    def get_current_best_estimate(self):
+        raise NotImplementedError(type(self).__name__ + ".get_current_best_estimate()")
 
     def _wait(self):
         raise NotImplementedError()  # pragma: no cover
@@ -172,28 +169,31 @@ class Deferred(BaseDeferred):
 
     def _wait(self):
         if self.settled:
-            self.value = wait(self.value)
             return self.value
         else:
             self.value = self.fn()
             self.settled = True
             return self.value
 
-    def optimize(self):
-        if self.settled:
-            self.value = optimize(self.value)
-            return self.value
-        else:
+    def try_compute(self):
+        if not self.settled:
             with try_compute:
                 BaseDeferred.awaiting_stack.append(self)
                 try:
                     self.value = self.fn()
                     self.settled = True
-                    return optimize(self.value)
                 except NotReadyError:
                     return self
                 finally:
                     assert BaseDeferred.awaiting_stack.pop() is self
+        if isinstance(self.value, BaseDeferred):
+            self.value = self.value.try_compute()
+        return self.value
+
+    def get_current_best_estimate(self):
+        if not self.settled:
+            return self
+        return self.value
 
 
 Deferred.next_instance_id = 1
@@ -245,7 +245,8 @@ class LinearPolynomial(BaseDeferred):
         return "(0)" if res == "0" else res
 
     def __add__(self, rhs):
-        rhs = optimize(rhs)
+        if isinstance(rhs, BaseDeferred):
+            rhs = rhs.get_current_best_estimate()
         if not isinstance(rhs, BaseDeferred):
             return LinearPolynomial[int](self.coeffs, self.constant_term + rhs)
         if not isinstance(rhs, LinearPolynomial):
@@ -267,15 +268,16 @@ class LinearPolynomial(BaseDeferred):
         return LinearPolynomial[int]({key: -value for key, value in self.coeffs.items()}, -self.constant_term)
 
     def _wait(self):
-        self.optimize()
+        self.try_compute()
         return sum(key.wait() * value for key, value in self.coeffs.items()) + self.constant_term
 
-    def optimize(self):
+
+    def try_compute(self):
         new_coeffs = []
         new_constant_term = self.constant_term
 
         for key, value in self.coeffs.items():
-            key = optimize(key)
+            key = key.get_current_best_estimate()
             if isinstance(key, LinearPolynomial):
                 new_coeffs += [(key1, value1 * value) for key1, value1 in key.coeffs.items()]
                 new_constant_term += key.constant_term * value
@@ -287,10 +289,14 @@ class LinearPolynomial(BaseDeferred):
         new_value = LinearPolynomial[int](new_coeffs, new_constant_term)
         self.coeffs = new_value.coeffs
         self.constant_term = new_value.constant_term
+        return self.get_current_best_estimate()
+
+    def get_current_best_estimate(self):
         if self.coeffs:
             return self
         else:
             return self.constant_term
+
 
 
 class Concatenator(BaseDeferred):
@@ -304,9 +310,18 @@ class Concatenator(BaseDeferred):
     def _wait(self):
         return self.typ().join(map(wait, self.lst))
 
-    def optimize(self):
-        self.lst = list(map(optimize, self.lst))
-        return self
+    def try_compute(self):
+        self.lst = [
+            elem.get_current_best_estimate() if isinstance(elem, BaseDeferred) else elem
+            for elem in self.lst
+        ]
+        return self.get_current_best_estimate()
+
+    def get_current_best_estimate(self):
+        if all(not isinstance(elem, BaseDeferred) for elem in self.lst):
+            return self.typ().join(self)
+        else:
+            return self
 
     def length(self):
         total_len = 0
@@ -380,9 +395,13 @@ class Promise(BaseDeferred):
             raise Exception(f"Promise {self!r} is not ready")  # pragma: no cover
         return self.value
 
-    def optimize(self):
+    def try_compute(self):
+        if self.settled and isinstance(self.value, BaseDeferred):
+            self.value = self.value.get_current_best_estimate()
+        return self.get_current_best_estimate()
+
+    def get_current_best_estimate(self):
         if self.settled:
-            self.value = optimize(self.value)
             return self.value
         else:
             return self
