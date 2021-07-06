@@ -441,6 +441,10 @@ def test_duplicate_symbol():
 def test_undefined_symbol():
     with util.expect_error("undefined-symbol"):
         compile("clr @#a")
+    with util.expect_error("undefined-symbol", "undefined-symbol"):
+        compile("clr a + b")
+    with util.expect_error("undefined-symbol", "undefined-symbol", "undefined-symbol"):
+        compile("clr a + b\nclr c")
 
 
 def test_invalid_insn():

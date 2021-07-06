@@ -135,7 +135,7 @@ class Symbol(ExpressionToken):
             "undefined-symbol",
             (self.ctx_start, self.ctx_end, f"Unknown symbol '{self.name}' is referenced here")
         )
-        raise reports.RecoverableError(f"Unknown symbol '{self.name}'")
+        return None, 0
 
     def resolve(self, state):
         return self._resolve(state)[1]

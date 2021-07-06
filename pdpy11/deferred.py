@@ -322,7 +322,7 @@ class Concatenator(BaseDeferred):
 
     def get_current_best_estimate(self):
         if all(not isinstance(elem, BaseDeferred) for elem in self.lst):
-            return self.typ().join(self)
+            return self.typ().join(self.lst)
         else:
             return self
 

@@ -168,7 +168,7 @@ class Metacommand:
 
         def fn():
             if self.raw:
-                return self.fn(state, *operands)
+                cooked_operands = operands
             else:
                 cooked_operands = []
 
@@ -191,7 +191,11 @@ class Metacommand:
 
                     cooked_operands.append(cooked_operand)
 
+            try:
                 return self.fn(state, *cooked_operands)
+            except reports.RecoverableError:
+                return b""
+
 
         if self.size_fn is None:
             return Deferred[bytes](fn)

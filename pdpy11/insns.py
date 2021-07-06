@@ -383,13 +383,13 @@ class Instruction:
             replacements.append((stub, opcode_inline_value))
             operands_encoding += operand_encoding
 
-        def get_opcode():
-            indexes_of_char = {}
-            for i, char in enumerate(self.opcode_pattern):
-                if char not in indexes_of_char:
-                    indexes_of_char[char] = []
-                indexes_of_char[char].append(i)
+        indexes_of_char = {}
+        for i, char in enumerate(self.opcode_pattern):
+            if char not in indexes_of_char:
+                indexes_of_char[char] = []
+            indexes_of_char[char].append(i)
 
+        def get_opcode():
             opcode_pattern = list(self.opcode_pattern)
             for stub, opcode_inline_value in replacements:
                 value = wait(opcode_inline_value)
@@ -397,12 +397,10 @@ class Instruction:
                     opcode_pattern[indexes_of_char[stub.pattern_char][index]] = str((value >> i) & 1)
             str_opcode_pattern = "".join(opcode_pattern)
             assert str_opcode_pattern.isdigit()
+
             return struct.pack("<H", int(str_opcode_pattern, 2))
 
-        if any(isinstance(opcode_inline_value, BaseDeferred) for _, opcode_inline_value in replacements):
-            return SizedDeferred[bytes](2, get_opcode) + operands_encoding
-        else:
-            return get_opcode() + operands_encoding
+        return SizedDeferred[bytes](2, get_opcode) + operands_encoding
 
 
 
