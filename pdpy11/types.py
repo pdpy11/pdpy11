@@ -103,7 +103,7 @@ class Symbol(ExpressionToken):
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and self.name == rhs.name
 
-    def resolve(self, state):
+    def _resolve(self, state):
         if self.name.lower() in ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "sp", "pc"):
             reports.error(
                 "unexpected-register",
@@ -121,8 +121,7 @@ class Symbol(ExpressionToken):
 
         for name in candidates:
             if name in compiler.symbols:
-                _symbol, value = compiler.symbols[name]
-                return value
+                return compiler.symbols[name]
 
         for name in candidates:
             if name not in compiler.on_symbol_defined_listeners:
@@ -137,6 +136,12 @@ class Symbol(ExpressionToken):
             (self.ctx_start, self.ctx_end, f"Unknown symbol '{self.name}' is referenced here")
         )
         raise reports.RecoverableError(f"Unknown symbol '{self.name}'")
+
+    def resolve(self, state):
+        return self._resolve(state)[1]
+
+    def locate_definition(self, state):
+        return self._resolve(state)[0]
 
 
 class Label(Token):

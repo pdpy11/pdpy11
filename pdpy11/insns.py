@@ -4,7 +4,7 @@ from .architecture import instruction_opcodes
 from .builtins import get_as_int
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, BaseDeferred, wait
-from .types import Symbol, ParenthesizedExpression, Number, InstructionPointer
+from .types import Symbol, ParenthesizedExpression, Number, InstructionPointer, Label
 from . import operators
 from . import reports
 
@@ -247,11 +247,19 @@ class OffsetOperandStub:
             offset = wait(operand.resolve(state) - state["rel_address"])
             error = False
             if self.unsigned and offset > 0:
-                reports.error(
-                    "branch-out-of-bounds",
-                    (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump backwards"),
-                    (operand.ctx_start, operand.ctx_end, f"...but this offset is positive (exactly {offset})")
-                )
+                if isinstance(operand, Symbol) and isinstance(operand.locate_definition(state), Label):
+                    definition = operand.locate_definition(state)
+                    reports.error(
+                        "branch-out-of-bounds",
+                        (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump backwards"),
+                        (definition.ctx_start, definition.ctx_end, f"...but the destination is located further")
+                    )
+                else:
+                    reports.error(
+                        "branch-out-of-bounds",
+                        (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump backwards"),
+                        (operand.ctx_start, operand.ctx_end, f"...but the offset to the destination is positive (exactly {offset})")
+                    )
                 error = True
             else:
                 bitness = len(self.bit_indexes)
