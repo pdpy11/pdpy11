@@ -259,7 +259,12 @@ class LinearPolynomial(BaseDeferred):
 
     def __mul__(self, rhs):
         if isinstance(rhs, BaseDeferred):
-            return NotImplemented
+            rhs = rhs.get_current_best_estimate()
+        if isinstance(rhs, BaseDeferred):
+            if self.coeffs:
+                return Deferred[int](lambda: wait(self) * wait(rhs))
+            else:
+                return rhs * self.constant_term
         return LinearPolynomial[int]({key: value * rhs for key, value in self.coeffs.items()}, self.constant_term * rhs)
 
     def __neg__(self):

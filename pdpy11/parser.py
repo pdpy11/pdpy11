@@ -258,7 +258,7 @@ def number(ctx):
     return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num, 8) * sign)
 
 
-radix50_chars = Parser.regex("[" + re.escape(radix50.TABLE.replace(" ", "")) + "]+")
+radix50_chars = Parser.regex("[" + re.escape(radix50.TABLE.replace(" ", "")) + "]+", skip_whitespace_before=False)
 
 @Parser
 def radix50_literal(ctx):
@@ -281,6 +281,8 @@ def radix50_literal(ctx):
             (ctx_start, ctx, f"This radix-50 literal contains more than 3 characters ({len(string)}, in particular).")
         )
         string = string[:3]
+
+    string = string.upper()
 
     return types.Number(ctx_start, ctx, f"^R{string}", radix50.pack_to_int(string))
 

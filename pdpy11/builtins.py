@@ -187,7 +187,7 @@ class Metacommand:
                     elif operand_info["type"] is CodeBlock:
                         cooked_operand = operand
                     else:
-                        raise TypeError(f"Invalid operand type {operand_info['type']}")
+                        raise TypeError(f"Invalid operand type {operand_info['type']}")  # pragma: no cover
 
                     cooked_operands.append(cooked_operand)
 
@@ -277,12 +277,26 @@ def dword(state, *dword_operand: int32) -> bytes:
 # pylint: disable=redefined-builtin
 @metacommand
 def ascii_(state, ascii_text: str) -> bytes:
-    return ascii_text.encode(state["compiler"].output_charset)
+    try:
+        return ascii_text.encode(state["compiler"].output_charset)
+    except UnicodeEncodeError as ex:
+        reports.error(
+            "invalid-character",
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"Cannot encode this string using the selected output charset:\n{ex}\nYou can change the charset using --charset CLI argument or '.charset' directive.")
+        )
+        return b""
 
 
 @metacommand
 def asciz(state, ascii_text: str) -> bytes:
-    return ascii_text.encode(state["compiler"].output_charset) + b"\x00"
+    try:
+        return ascii_text.encode(state["compiler"].output_charset) + b"\x00"
+    except UnicodeEncodeError as ex:
+        reports.error(
+            "invalid-character",
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"Cannot encode this string using the selected output charset:\n{ex}\nYou can change the charset using --charset CLI argument or '.charset' directive.")
+        )
+        return b""
 
 
 @metacommand(raw=True)

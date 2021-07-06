@@ -10,8 +10,8 @@ from .resources import resources
 from . import util
 
 
-def compile(source):
-    comp = Compiler()
+def compile(source, **kwargs):
+    comp = Compiler(**kwargs)
     comp.add_files([parse("test.mac", source)])
     base, binary = comp.link()
     return base, binary
@@ -38,12 +38,12 @@ def compare_with_old(source):
     assert compile(source) == compile_old(source)
 
 
-def expect_same(source1, source2):
-    assert compile(source1) == compile(source2)
+def expect_same(source1, source2, **kwargs):
+    assert compile(source1, **kwargs) == compile(source2, **kwargs)
 
 
-def expect_binary(source, binary):
-    assert compile(source)[1] == binary
+def expect_binary(source, binary, **kwargs):
+    assert compile(source, **kwargs)[1] == binary
 
 
 
@@ -303,6 +303,9 @@ def test_linear_polynomial():
     expect_same(".link 1000 + y - y\ny = .", ".link 1000")
     expect_same(".link 1000 + z - z\nz = . >> 1", ".link 1000")
     expect_same(".link 1000 + a - a\na = b >> 1\nb = .", ".link 1000")
+    expect_same(".dword (. + 2) * .", ".dword (1000 + 2) * 1000")
+    expect_same(".word (a - .) * .\na = .", ".word 2000")
+    expect_same(".word (a - .) * .\na:", ".word 2000")
 
 
 def test_symbol_propagation():
@@ -363,6 +366,12 @@ def test_addressing():
 
     with util.expect_warning("legacy-deferred"):
         expect_same("clr @r0", "clr (r0)")
+
+    # old pdpy would raise an error here because 57 is not a register
+    expect_same("clr -(57)", "clr -57")
+
+    expect_same("clr (-57)", "clr -57")
+    expect_same("clr <-57>", "clr -57")
 
 
 def test_branch():
@@ -497,6 +506,8 @@ def test_radix50():
     with util.expect_error("invalid-string"):
         expect_same(".word ^RABCDEF", ".word ^RABC")
     with util.expect_error("invalid-string"):
+        expect_same(".word ^R nop", ".word 0\nnop")
+    with util.expect_error("invalid-string"):
         expect_same(".word ^R", ".word 0")
 
 
@@ -599,3 +610,28 @@ def test_link():
     # if a2 == 1000 { a3 = 1000 }
     # if a1 == 1000 { a2 = 1000 }
     # a1 = 1000
+
+
+def test_encoding():
+    with util.expect_error("invalid-character"):
+        expect_same("clr r0\n.ascii /Hello α world/\nclr r1", "clr r0\nclr r1")
+    with util.expect_error("invalid-character"):
+        expect_same("clr r0\n.asciz /Hello α world/\nclr r1", "clr r0\nclr r1")
+
+    compile("make_wav '16 char long str.wav'", output_charset="utf-8")
+    compile("make_wav '16-карлонгстринг.wav'", output_charset="bk")
+    with util.expect_error("too-long-string"):
+        compile("make_wav '16-карлонгстринг.wav'", output_charset="utf-8")
+    with util.expect_error("too-long-string"):
+        compile("make_wav '17charslongstring.wav'", output_charset="utf-8")
+
+    compile("make_wav '16 char long str.wav'", output_charset="utf-8")
+    compile("make_wav 'abcdefghijklmnα.wav'", output_charset="utf-8")
+    with util.expect_error("too-long-string"):
+        compile("make_wav 'abcdefghijklmnoα.wav'", output_charset="utf-8")
+
+    with util.expect_error("invalid-character"):
+        expect_same("clr @#'α\nclr r1", "clr @#0\nclr r1")
+    expect_binary(".word 'α", b"\xce\xb1", output_charset="utf-8")
+    with util.expect_error("too-long-string"):
+        expect_binary(".word '字", "字".encode()[:2], output_charset="utf-8")

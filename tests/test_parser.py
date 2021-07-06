@@ -230,6 +230,11 @@ def test_unexpected_reserved_name():
         parse("clr r0:")
 
     with util.expect_warning("suspicious-name"):
+        parse("insn mov, 1")
+    with util.expect_warning("suspicious-name"):
+        parse("nop mov, 1")
+
+    with util.expect_warning("suspicious-name"):
         parse("mov clr, r1")
 
     with util.expect_warning("missing-newline"):
@@ -278,6 +283,8 @@ def test_string2():
         parse("s = '\\f")
     with util.expect_error("unterminated-string"):
         parse("s = '")
+    with util.expect_error("unterminated-string"):
+        parse(".ascii '")
 
     with util.expect_warning("excess-quote"):
         expect_code("insn \"a\"", INSN(c(CharLiteral)("\"a", "a")))
@@ -303,6 +310,15 @@ def test_string2():
     expect_code(f".ascii <1>", ASCII(c(AngleBracketedChar)(ONE)))
 
 
+@pytest.mark.parametrize("name", [".unknownmetacommand", "unknown_metacommand"])
+def test_unknown_metacommand(name):
+    for char in "'\"/":
+        expect_code(f"{name} {char}Hello{char}", c(Instruction)(c(Symbol)(name), [c(QuotedString)(char, "Hello")]))
+        expect_code(f"{name} {char}Hello{char} <1> {char}world{char}", c(Instruction)(c(Symbol)(name), [c(StringConcatenation)([c(QuotedString)(char, "Hello"), c(AngleBracketedChar)(ONE), c(QuotedString)(char, "world")])]))
+    expect_code(f"{name} 1 + 2", c(Instruction)(c(Symbol)(name), [c(add)(ONE, TWO)]))
+    expect_code(f"{name} a + b", c(Instruction)(c(Symbol)(name), [c(add)(A, B)]))
+
+
 def test_insn_syntax():
     parse("insn #(1) nop")
     with util.expect_error("invalid-insn"):
@@ -315,3 +331,13 @@ def test_insn_syntax():
         parse("insn .word 1")
     with util.expect_error("missing-newline", "invalid-insn"):
         parse("insn%")
+
+
+def test_newlines():
+    assert parse("insn\n1") == parse("insn 1")
+    assert parse("insn\n@#1") == parse("insn @#1")
+    assert parse("insn\n'x") == parse("insn 'x")
+    assert parse("insn\n\"ab") == parse("insn \"ab")
+    assert parse("insn\n^rabc") == parse("insn ^rabc")
+    assert parse("insn\n(1)") == parse("insn (1)")
+    assert parse("insn\n<1>") == parse("insn <1>")

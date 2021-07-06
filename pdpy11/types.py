@@ -255,7 +255,7 @@ class CharLiteral(ExpressionToken):
     def init(self, representation, string):
         self.representation = representation
         self.string = string
-        self.reported_invalid_characters = False
+        self.evaluated_value = None
 
     def __repr__(self):
         return f"{self.representation}"
@@ -264,18 +264,28 @@ class CharLiteral(ExpressionToken):
         return isinstance(rhs, type(self)) and (self.representation, self.string) == (rhs.representation, rhs.string)
 
     def resolve(self, state):
-        bytes_value = self.string.encode(state["compiler"].output_charset)
-        n_bytes = 1 if self.representation[0] == "'" else 2
-        if len(bytes_value) > n_bytes:
-            if not self.reported_invalid_characters:
-                self.reported_invalid_characters = True
-                reports.error(
-                    "too-long-string",
-                    (self.ctx_start, self.ctx_end, f"These characaters, encoded to {state['compiler'].output_charset}, take {len(bytes_value)} bytes, which does not fit in {n_bytes * 8} bits.\nPlease fix that. Changing the encoding via '.charset ???' directive or '--charset=???' CLI argument may help.")
-                )
-            bytes_value = bytes_value[:n_bytes]
-        bytes_value = bytes_value.ljust(2, b"\x00")
-        return struct.unpack("<H", bytes_value)[0]
+        if self.evaluated_value is not None:
+            return self.evaluated_value
+
+        try:
+            bytes_value = self.string.encode(state["compiler"].output_charset)
+        except UnicodeEncodeError as ex:
+            reports.error(
+                "invalid-character",
+                (self.ctx_start, self.ctx_end, f"Cannot encode this literal using the selected output charset:\n{ex}\nYou can change the charset using --charset CLI argument or '.charset' directive.")
+            )
+            self.evaluated_value = 0
+            return 0
+
+        if len(bytes_value) > 2:
+            reports.error(
+                "too-long-string",
+                (self.ctx_start, self.ctx_end, f"These characaters, encoded to {state['compiler'].output_charset}, take {len(bytes_value)} bytes, which does not fit in 16 bits.\nPlease fix that. Changing the encoding via '.charset ???' directive or '--charset=???' CLI argument may help.")
+            )
+
+        bytes_value = bytes_value[:2].ljust(2, b"\x00")
+        self.evaluated_value = struct.unpack("<H", bytes_value)[0]
+        return self.evaluated_value
 
 
 

@@ -211,6 +211,10 @@ class OffsetOperandStub:
         if isinstance(operand, Number) and operand.representation[-1] != ".":
             operand = Symbol(operand.ctx_start, operand.ctx_end, operand.representation)
         elif "(" not in operand.text() and ":" not in operand.text():
+            # TODO: the condition of this if being '"(" not in operand.text()'
+            # may not work for multiline expressions, e.g.
+            #   clr @#1 +  ; comment here (abacaba)
+            #   b
             fixup_active = True
             def fixup_label(token):
                 nonlocal fixup_active
@@ -234,6 +238,8 @@ class OffsetOperandStub:
                         return Symbol(token.ctx_start, token.ctx_end, token.representation)
                 elif isinstance(token, (Symbol, InstructionPointer)):
                     fixup_active = False
+                else:
+                    assert False  # TODO: really?
                 return token
             fixup_label(operand)
 

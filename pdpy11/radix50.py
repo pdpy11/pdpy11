@@ -13,10 +13,3 @@ def pack_to_int(string):
     string = string.ljust(3, " ")
     a, b, c = string
     return encode_char(a) * 1600 + encode_char(b) * 40 + encode_char(c)
-
-
-def encode_string(string):
-    result = b""
-    for i in range(0, len(string), 3):
-        result += struct.pack("<H", pack_to_int(string[i:i + 3]))
-    return result
