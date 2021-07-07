@@ -12,16 +12,14 @@ from . import util
 
 def compile(source, **kwargs):
     comp = Compiler(**kwargs)
-    comp.add_files([parse("test.mac", source)])
-    base, binary = comp.link()
+    base, binary = comp.compile_and_link_files([parse("test.mac", source)])
     return base, binary
 
 
 def compile_and_emit(file_path, source):
     comp = Compiler()
-    comp.add_files([parse(file_path, source)])
-    comp.link()
-    return comp.emit_files()
+    base, binary = comp.compile_and_link_files([parse(file_path, source)])
+    return comp.emit_files(base, binary)
 
 
 def compile_old(source):

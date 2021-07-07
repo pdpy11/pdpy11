@@ -74,13 +74,11 @@ def main_cli():
                 parsed_files.append(parser.parse(path, source))
 
             comp = Compiler(output_charset=args.charset)
-            comp.add_files(parsed_files)
-
-            base, code = comp.link()
+            base, code = comp.compile_and_link_files(parsed_files)
 
 
         with reports.handle_reports(report_handler):
-            was_emitted = comp.emit_files()
+            was_emitted = comp.emit_files(base, code)
 
 
         if args.outfile is None and not was_emitted:

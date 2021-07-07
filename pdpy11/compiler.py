@@ -14,9 +14,6 @@ class Compiler:
         self.on_symbol_defined_listeners = CaseInsensitiveDict()
         self.link_base: Promise = Promise[int]("LA")
         self.link_base_set_where = None
-        self.cur_emit_location = self.link_base
-        self.generated_code = b""
-        self.files = []
         self.emitted_files = []
         self.output_charset = output_charset
         self.next_local_symbol_prefix = 1
@@ -176,31 +173,27 @@ class Compiler:
             return None
 
 
-    def add_files(self, files_ast):
-        self.files += files_ast
+    def compile_and_link_files(self, files_ast):
+        addr = self.link_base
+        generated_code = b""
 
         for file_ast in files_ast:
-            data = self.compile_file(file_ast, self.cur_emit_location)
-            self.generated_code += data
+            data = self.compile_file(file_ast, addr)
+            generated_code += data
             if isinstance(data, BaseDeferred):
-                self.cur_emit_location += data.length()
+                addr += data.length()
             else:
-                self.cur_emit_location += len(data)
+                addr += len(data)
 
-
-    def link(self):
         if not self.link_base.settled:
             self.link_base.settle(0o1000)
 
-        return wait(self.link_base), wait(self.generated_code)
+        return wait(self.link_base), wait(generated_code)
 
 
-    def emit_files(self):
+    def emit_files(self, base, code):
         if not self.emitted_files:
             return False
-
-        base = wait(self.link_base)
-        code = wait(self.generated_code)
 
         for ctx_start, ctx_end, file_format, filepath, *arguments in self.emitted_files:
             result = file_formats[file_format](base, code, *arguments)
