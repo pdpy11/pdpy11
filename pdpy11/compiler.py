@@ -1,3 +1,4 @@
+import collections
 import sys
 
 from .builtins import builtin_commands
@@ -17,9 +18,11 @@ class Compiler:
         self.output_charset = output_charset
         self.next_local_symbol_prefix = 1
         self.next_internal_symbol_prefix = 1
+        self.times_file_compiled = collections.defaultdict(int)
 
 
     def compile_file(self, file, start, link_base):
+        self.times_file_compiled[file.filename] += 1
         state = {
             "filename": file.filename,
             "context": "file",
@@ -197,25 +200,12 @@ class Compiler:
 
 
     def compile_include(self, file, addr):
-        idx = self.next_internal_symbol_prefix
-        self.next_internal_symbol_prefix += 1
-
         link_base = {
-            "promise": Promise[int](f"LA{idx}"),
+            "promise": Promise[int](f"LA{self.next_internal_symbol_prefix}"),
             "set_where": None
         }
 
-        state = {
-            "filename": file.filename,
-            "context": "include",
-            "internal_symbol_prefix": f".internal{idx}.",
-            "compiler": self,
-            "link_base": link_base,
-            "internal_symbols_list": [],
-            "extern_all": False
-        }
-
-        code = self.compile_block(state, file.body, link_base["promise"])
+        code = self.compile_file(file, link_base["promise"], link_base)
 
         if not link_base["promise"].settled:
             link_base["promise"].settle(addr)

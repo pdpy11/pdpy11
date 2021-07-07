@@ -669,6 +669,13 @@ def end(state):
     state["compiler"].stop_iteration()
 
 
+@metacommand(size=0)
+def once(state):
+    if state["compiler"].times_file_compiled[state["filename"]] > 1:
+        state["compiler"].stop_iteration()
+    return b""
+
+
 # TODO: Macro-11 has .print metacommand which we can probably ignore as Rhialto's implementation does
 
 # TODO: implement .radix. Macro-11 supports only radix 8, 10, 16 and 2 but we
