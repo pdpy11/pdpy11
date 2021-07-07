@@ -524,6 +524,13 @@ def make_bin(state, bin_file_path: str=None) -> bytes:
 
 
 @metacommand(size=0, no_dot=True)
+def make_bk0010_rom(state, bin_file_path: str=None) -> bytes:
+    # For compatibility with pdp11asm
+    add_emitted_file(state, bin_file_path, "bin", "bin")
+    return b""
+
+
+@metacommand(size=0, no_dot=True)
 def make_raw(state, raw_file_path: str=None) -> bytes:
     add_emitted_file(state, raw_file_path, "raw", None)
     return b""

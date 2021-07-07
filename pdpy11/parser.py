@@ -910,7 +910,7 @@ def instruction(ctx):
             # TODO: assume the second interpretation (and raise a warning) in
             # Macro-11 compatibility mode
 
-            if (radix50_literal | (number + ~colon) | single_quoted_literal | double_quoted_literal | prefix_operator | opening_parenthesis | opening_angle_bracket)(ctx, maybe=True, lookahead=True):
+            if (radix50_literal | (number + ~colon) | single_quoted_literal | double_quoted_literal | prefix_operator | opening_parenthesis | opening_angle_bracket | (symbol_literal + comma))(ctx, maybe=True, lookahead=True):
                 # All of these are invalid at the beginning of instruction, so
                 # they are probably a continuation of the current instruction.
                 # TODO: emit a warning?
