@@ -664,6 +664,11 @@ def extern(state, *symbol_name: int):
     return b""
 
 
+@metacommand(size=0)
+def end(state):
+    state["compiler"].stop_iteration()
+
+
 # TODO: Macro-11 has .print metacommand which we can probably ignore as Rhialto's implementation does
 
 # TODO: implement .radix. Macro-11 supports only radix 8, 10, 16 and 2 but we

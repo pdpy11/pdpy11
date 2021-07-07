@@ -40,56 +40,51 @@ class Compiler:
         local_symbol_prefix = f".local{self.next_local_symbol_prefix}."
         self.next_local_symbol_prefix += 1
 
-        for insn in block.insns:
-            if isinstance(insn, Instruction) and insn.name.name.lower() in (".end", "end"):
-                if insn.name.name.lower() == "end":
-                    reports.warning(
-                        "meta-typo",
-                        (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is not a metacommand by itself, but '.{insn.name.name}' is.\nPlease be explicit and add a dot."),
-                    )
-                break
+        try:
+            for insn in block.insns:
+                state = {**state, "insn": insn, "emit_address": addr, "local_symbol_prefix": local_symbol_prefix}
+                if isinstance(insn, Instruction):
+                    chunk = self.compile_insn(insn, state)
+                    if chunk is not None:
+                        data += chunk
+                        if isinstance(chunk, BaseDeferred):
+                            addr += chunk.length()
+                        else:
+                            addr += len(chunk)
 
-            state = {**state, "insn": insn, "emit_address": addr, "local_symbol_prefix": local_symbol_prefix}
-            if isinstance(insn, Instruction):
-                chunk = self.compile_insn(insn, state)
-                if chunk is not None:
-                    data += chunk
-                    if isinstance(chunk, BaseDeferred):
-                        addr += chunk.length()
-                    else:
-                        addr += len(chunk)
+                elif isinstance(insn, Label):
+                    if state["context"] == "repeat":
+                        if not hasattr(insn, "label_error_emitted"):
+                            reports.error(
+                                "unexpected-symbol-definition",
+                                (insn.ctx_start, insn.ctx_end, "Labels cannot be defined inside '.repeat' loop")
+                            )
+                            insn.label_error_emitted = True
+                        _ = 1  # for code coverage
+                        continue
 
-            elif isinstance(insn, Label):
-                if state["context"] == "repeat":
-                    if not hasattr(insn, "label_error_emitted"):
-                        reports.error(
-                            "unexpected-symbol-definition",
-                            (insn.ctx_start, insn.ctx_end, "Labels cannot be defined inside '.repeat' loop")
-                        )
-                        insn.label_error_emitted = True
-                    _ = 1  # for code coverage
-                    continue
+                    self.compile_label(insn, addr, state)
+                    if not insn.local:
+                        local_symbol_prefix = f".local{self.next_local_symbol_prefix}."
+                        self.next_local_symbol_prefix += 1
 
-                self.compile_label(insn, addr, state)
-                if not insn.local:
-                    local_symbol_prefix = f".local{self.next_local_symbol_prefix}."
-                    self.next_local_symbol_prefix += 1
+                elif isinstance(insn, Assignment):
+                    if state["context"] == "repeat":
+                        if not hasattr(insn, "assignment_error_emitted"):
+                            reports.error(
+                                "unexpected-symbol-definition",
+                                (insn.ctx_start, insn.ctx_end, "Variables cannot be defined inside '.repeat' loop")
+                            )
+                            insn.assignment_error_emitted = True
+                        _ = 1  # for code coverage
+                        continue
 
-            elif isinstance(insn, Assignment):
-                if state["context"] == "repeat":
-                    if not hasattr(insn, "assignment_error_emitted"):
-                        reports.error(
-                            "unexpected-symbol-definition",
-                            (insn.ctx_start, insn.ctx_end, "Variables cannot be defined inside '.repeat' loop")
-                        )
-                        insn.assignment_error_emitted = True
-                    _ = 1  # for code coverage
-                    continue
+                    self.compile_assignment(insn, state)
 
-                self.compile_assignment(insn, state)
-
-            else:
-                assert False  # pragma: no cover
+                else:
+                    assert False  # pragma: no cover
+        except CompilerStopIteration:
+            pass
 
         return data
 
@@ -269,3 +264,11 @@ class Compiler:
                 print(f"File {filepath} was written", file=sys.stderr)
 
         return True
+
+
+    def stop_iteration(self):
+        raise CompilerStopIteration()
+
+
+class CompilerStopIteration(Exception):
+    pass
