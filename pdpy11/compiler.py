@@ -141,8 +141,8 @@ class Compiler:
             previous_extern = self.extern_symbols_mapping[name][0]
             reports.error(
                 "duplicate-symbol",
-                (symbol.ctx_start, symbol.ctx_end, f"Duplicate external symbol '{name}'."),
-                (previous_extern.ctx_start, previous_extern.ctx_end, f"A symbol with the same name was previously declared external here.")
+                (location.ctx_start, location.ctx_end, f"Duplicate external symbol '{name}'."),
+                (previous_extern.ctx_start, previous_extern.ctx_end, "A symbol with the same name was previously declared external here.")
             )
         else:
             self.extern_symbols_mapping[name] = location, state["internal_symbol_prefix"] + name

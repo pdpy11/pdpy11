@@ -1,6 +1,3 @@
-import struct
-
-
 TABLE = " ABCDEFGHIJKLMNOPQRSTUVWXYZ$.%0123456789"
 
 

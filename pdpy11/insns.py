@@ -3,7 +3,7 @@ import struct
 from .architecture import instruction_opcodes
 from .builtins import get_as_int
 from .containers import CaseInsensitiveDict
-from .deferred import Deferred, SizedDeferred, BaseDeferred, wait
+from .deferred import Deferred, SizedDeferred, wait
 from .types import Symbol, ParenthesizedExpression, Number, InstructionPointer, Label
 from . import operators
 from . import reports
@@ -252,7 +252,7 @@ class OffsetOperandStub:
                     reports.error(
                         "branch-out-of-bounds",
                         (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' can only jump backwards"),
-                        (definition.ctx_start, definition.ctx_end, f"...but the destination is located further")
+                        (definition.ctx_start, definition.ctx_end, "...but the destination is located further")
                     )
                 else:
                     reports.error(
