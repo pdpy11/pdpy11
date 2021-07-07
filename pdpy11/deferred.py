@@ -284,15 +284,8 @@ class LinearPolynomial(BaseDeferred):
         return LinearPolynomial[int]({key: value * rhs for key, value in self.coeffs.items()}, self.constant_term * rhs)
 
     def __rmul__(self, lhs):
-        if isinstance(lhs, BaseDeferred):
-            lhs = lhs.get_current_best_estimate()
-        if isinstance(lhs, BaseDeferred):
-            if self.coeffs:
-                return Deferred[int](lambda: wait(lhs) * wait(self))
-            else:
-                return lhs * self.constant_term
+        assert isinstance(lhs, self.typ)
         return LinearPolynomial[int]({key: value * lhs for key, value in self.coeffs.items()}, self.constant_term * lhs)
-
 
 
     def __neg__(self):
