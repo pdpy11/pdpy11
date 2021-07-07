@@ -2,6 +2,7 @@ import typing
 
 from .containers import CaseInsensitiveDict
 from .deferred import wait, Deferred, BaseDeferred
+from . import reports
 from .types import ExpressionToken
 
 
@@ -9,6 +10,7 @@ class InfixOperator(ExpressionToken):
     fn: ...
     char: str
     awaited: bool
+    token: bool
     return_type: type
 
     # pylint: disable=arguments-differ
@@ -19,12 +21,18 @@ class InfixOperator(ExpressionToken):
     def resolve(self, state):
         lhs = self.lhs.resolve(state)
         rhs = self.rhs.resolve(state)
+
+        # This is a nasty hack: self.fn(lhs, rhs) is the same as
+        # type(self).fn(self, lhs, rhs), which is what we need when self.token
+        # is True
+        invoke = self.fn if self.token else type(self).fn
+
         if not isinstance(lhs, BaseDeferred) and not isinstance(rhs, BaseDeferred):
-            return type(self).fn(lhs, rhs)
+            return invoke(lhs, rhs)
         if self.awaited:
-            return Deferred[self.return_type](lambda: type(self).fn(wait(lhs), wait(rhs)))
+            return Deferred[self.return_type](lambda: invoke(wait(lhs), wait(rhs)))
         else:
-            return Deferred[self.return_type](lambda: type(self).fn(lhs, rhs))
+            return Deferred[self.return_type](lambda: invoke(lhs, rhs))
 
     def __eq__(self, other):
         return isinstance(other, type(self)) and (self.lhs, self.rhs) == (other.lhs, other.rhs)
@@ -32,11 +40,11 @@ class InfixOperator(ExpressionToken):
     def __repr__(self):
         return f"{self.lhs!r} {self.char} {self.rhs!r}"
 
-
 class UnaryOperator(ExpressionToken):
     fn: ...
     char: str
     awaited: bool
+    token: bool
     return_type: type
 
     # pylint: disable=arguments-differ
@@ -45,12 +53,15 @@ class UnaryOperator(ExpressionToken):
 
     def resolve(self, state):
         operand = self.operand.resolve(state)
+
+        invoke = self.fn if self.token else type(self).fn
+
         if not isinstance(operand, BaseDeferred):
-            return type(self).fn(operand)
+            return invoke(operand)
         if self.awaited:
-            return Deferred[self.return_type](lambda: type(self).fn(wait(operand)))
+            return Deferred[self.return_type](lambda: invoke(wait(operand)))
         else:
-            return Deferred[self.return_type](lambda: type(self).fn(operand))
+            return Deferred[self.return_type](lambda: invoke(operand))
 
     def __eq__(self, rhs):
         return isinstance(rhs, type(self)) and self.operand == rhs.operand
@@ -73,7 +84,7 @@ operators = {
 }
 
 
-def operator(signature, precedence, associativity, awaited=True):
+def operator(signature, precedence, associativity, awaited=True, token=False):
     assert associativity in ("left", "right")
 
     if signature[0] == signature[-1] == "x":
@@ -99,6 +110,7 @@ def operator(signature, precedence, associativity, awaited=True):
     Class.associativity = associativity
     Class.char = char
     Class.awaited = awaited
+    Class.token = token
     operators[kind][char] = Class
 
     def decorator(fn):
@@ -147,14 +159,28 @@ def mul(a: int, b: int) -> int:
     return a * b
 
 
-@operator("x / x", precedence=3, associativity="left")
-def div(a: int, b: int) -> int:
-    return a // b
+@operator("x / x", precedence=3, associativity="left", token=True)
+def div(token, a: int, b: int) -> int:
+    try:
+        return a // b
+    except ZeroDivisionError:
+        reports.error(
+            "arithmetic-error",
+            (token.ctx_start, token.ctx_end, "Division by zero")
+        )
+        return 0
 
 
-@operator("x % x", precedence=3, associativity="left")
-def mod(a: int, b: int) -> int:
-    return a % b
+@operator("x % x", precedence=3, associativity="left", token=True)
+def mod(token, a: int, b: int) -> int:
+    try:
+        return a % b
+    except ZeroDivisionError:
+        reports.error(
+            "arithmetic-error",
+            (token.ctx_start, token.ctx_end, "Division by zero")
+        )
+        return 0
 
 
 @operator("x + x", precedence=4, associativity="left", awaited=False)
