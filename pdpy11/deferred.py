@@ -145,6 +145,12 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
             # multiplying Deferred by LinearPolynomial (and the other way round)
             return Deferred[self.typ](lambda: wait(self) * wait(rhs))
 
+    def __rmul__(self, lhs):
+        if self.typ is int:
+            return LinearPolynomial[self.typ]({self: lhs})
+        else:
+            raise TypeError(f"Don't know how to multiply {self.typ.__name__}")
+
 
 class Deferred(BaseDeferred):
     def __init__(self, typ, fn, name=None):
@@ -276,6 +282,18 @@ class LinearPolynomial(BaseDeferred):
             else:
                 return rhs * self.constant_term
         return LinearPolynomial[int]({key: value * rhs for key, value in self.coeffs.items()}, self.constant_term * rhs)
+
+    def __rmul__(self, lhs):
+        if isinstance(lhs, BaseDeferred):
+            lhs = lhs.get_current_best_estimate()
+        if isinstance(lhs, BaseDeferred):
+            if self.coeffs:
+                return Deferred[int](lambda: wait(lhs) * wait(self))
+            else:
+                return lhs * self.constant_term
+        return LinearPolynomial[int]({key: value * lhs for key, value in self.coeffs.items()}, self.constant_term * lhs)
+
+
 
     def __neg__(self):
         return LinearPolynomial[int]({key: -value for key, value in self.coeffs.items()}, -self.constant_term)
