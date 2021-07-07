@@ -73,9 +73,9 @@ builtin_commands = CaseInsensitiveDict(instructions)
 
 
 class Metacommand:
-    def __init__(self, fn, name, size_fn=None, literal_string_operand=False, raw=False):
+    def __init__(self, fn, name, size=None, literal_string_operand=False, raw=False):
         self.fn = fn
-        self.size_fn = size_fn
+        self.size = size
         self.literal_string_operand = literal_string_operand
         self.name = name
         self.raw = raw
@@ -197,10 +197,11 @@ class Metacommand:
                 return b""
 
 
-        if self.size_fn is None:
+        size = self.size(state, *operands) if callable(self.size) else self.size
+        if size is None:
             return Deferred[bytes](fn)
         else:
-            return SizedDeferred[bytes](self.size_fn(state, *operands), fn)
+            return SizedDeferred[bytes](size, fn)
 
 
 def _metacommand_impl(fn, no_dot=False, alias=None, **kwargs):
@@ -229,7 +230,7 @@ def metacommand(fn=None, **kwargs):
         return _metacommand_impl(fn, **kwargs)
 
 
-@metacommand(size_fn=lambda state, *operands: len(operands) or 1, alias=".db")
+@metacommand(size=lambda state, *operands: len(operands) or 1, alias=".db")
 def byte(state, *byte_operand: int8) -> bytes:
     if not byte_operand:
         reports.warning(
@@ -240,7 +241,7 @@ def byte(state, *byte_operand: int8) -> bytes:
     return b"".join(struct.pack("<B", operand) for operand in byte_operand)
 
 
-@metacommand(size_fn=lambda state, *operands: 2 * (len(operands) or 1), alias=".dw")
+@metacommand(size=lambda state, *operands: 2 * (len(operands) or 1), alias=".dw")
 def word(state, *word_operand: int16) -> bytes:
     prefix = b""
     if wait(state["emit_address"]) % 2 == 1:
@@ -258,7 +259,7 @@ def word(state, *word_operand: int16) -> bytes:
     return prefix + b"".join(struct.pack("<H", operand) for operand in word_operand)
 
 
-@metacommand(size_fn=lambda state, *operands: 4 * (len(operands) or 1))
+@metacommand(size=lambda state, *operands: 4 * (len(operands) or 1))
 def dword(state, *dword_operand: int32) -> bytes:
     prefix = b""
     if wait(state["emit_address"]) % 2 == 1:
@@ -382,7 +383,7 @@ def repeat(state, repetitions_count: uint, body: CodeBlock) -> bytes:
     return result
 
 
-@metacommand(literal_string_operand=True)
+@metacommand(size=0, literal_string_operand=True)
 def error_(state, error: str=None) -> bytes:
     reports.error(
         "user-error",
@@ -391,7 +392,7 @@ def error_(state, error: str=None) -> bytes:
     return b""
 
 
-@metacommand
+@metacommand(size=0)
 def list_(state, _: int=None) -> bytes:
     # TODO: Does it make sense to implement this stuff?
     reports.warning(
@@ -401,7 +402,7 @@ def list_(state, _: int=None) -> bytes:
     return b""
 
 
-@metacommand
+@metacommand(size=0)
 def nlist(state, _: int=None) -> bytes:
     # TODO: Does it make sense to implement this stuff?
     reports.warning(
@@ -411,7 +412,7 @@ def nlist(state, _: int=None) -> bytes:
     return b""
 
 
-@metacommand(literal_string_operand=True)
+@metacommand(size=0, literal_string_operand=True)
 def title_(state, title: str) -> bytes:  # pylint: disable=unused-argument
     # TODO: handle this
     reports.warning(
@@ -421,7 +422,7 @@ def title_(state, title: str) -> bytes:  # pylint: disable=unused-argument
     return b""
 
 
-@metacommand(literal_string_operand=True)
+@metacommand(size=0, literal_string_operand=True)
 def sbttl(state, text: str) -> bytes:  # pylint: disable=unused-argument
     # TODO: handle this
     reports.warning(
@@ -431,7 +432,7 @@ def sbttl(state, text: str) -> bytes:  # pylint: disable=unused-argument
     return b""
 
 
-@metacommand
+@metacommand(size=0)
 def ident(state, identification: str) -> bytes:  # pylint: disable=unused-argument
     # TODO: handle this
     reports.warning(
@@ -441,7 +442,7 @@ def ident(state, identification: str) -> bytes:  # pylint: disable=unused-argume
     return b""
 
 
-@metacommand
+@metacommand(size=0)
 def page(state) -> bytes:
     # TODO: handle this
     reports.warning(
@@ -487,13 +488,13 @@ def add_emitted_file(state, file_path, file_format, file_extension):
     state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, file_format, write_path))
 
 
-@metacommand(no_dot=True)
+@metacommand(size=0, no_dot=True)
 def make_bin(state, bin_file_path: str=None) -> bytes:
     add_emitted_file(state, bin_file_path, "bin", "bin")
     return b""
 
 
-@metacommand(no_dot=True)
+@metacommand(size=0, no_dot=True)
 def make_raw(state, raw_file_path: str=None) -> bytes:
     add_emitted_file(state, raw_file_path, "raw", None)
     return b""
@@ -534,19 +535,19 @@ def add_emitted_bk_wav(state, output_wav_path, bk_filename, file_format):
     state["compiler"].emitted_files.append((state["insn"].ctx_start, state["insn"].ctx_end, file_format, write_path, encoded_bk_filename))
 
 
-@metacommand(no_dot=True)
+@metacommand(size=0, no_dot=True)
 def make_wav(state, output_wav_path: str=None, file_name_on_tape: str=None) -> bytes:
     add_emitted_bk_wav(state, output_wav_path, file_name_on_tape, "bk_wav")
     return b""
 
 
-@metacommand(no_dot=True)
+@metacommand(size=0, no_dot=True)
 def make_turbo_wav(state, output_wav_path: str=None, file_name_on_tape: str=None) -> bytes:
     add_emitted_bk_wav(state, output_wav_path, file_name_on_tape, "bk_turbo_wav")
     return b""
 
 
-@metacommand(size_fn=lambda state, address: 0, raw=True)
+@metacommand(size=0, raw=True)
 def link(state, address: int) -> bytes:
     compiler = state["compiler"]
 
