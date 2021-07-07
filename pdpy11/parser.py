@@ -1000,6 +1000,10 @@ def code(ctx, break_on_closing_bracket=False):
         ))
         insns.append(insn)
 
+        if not break_on_closing_bracket and isinstance(insn, types.Instruction) and insn.name.name.lower() in ("end", ".end"):
+            # Because some people add junk after .end
+            break
+
     return types.CodeBlock(ctx_start, ctx, insns)
 
 
