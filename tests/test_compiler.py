@@ -1,4 +1,5 @@
 import pytest
+import re
 import warnings
 
 from pdpy11 import bk_encoding
@@ -277,6 +278,11 @@ def test_math():
     expect_same(".word 123 _ 6", ".word 12300")
     expect_same(".word 1337 _ -6", ".word 13")
 
+    with util.expect_error("arithmetic-error"):
+        expect_same(".word 5 / 0", ".word 0")
+    with util.expect_error("arithmetic-error"):
+        expect_same(".word 5 % 0", ".word 0")
+
 
 def test_variables():
     expect_same("a = 5\n.word a", ".word 5")
@@ -304,6 +310,8 @@ def test_linear_polynomial():
     expect_same(".dword (. + 2) * .", ".dword (1000 + 2) * 1000")
     expect_same(".word (a - .) * .\na = .", ".word 2000")
     expect_same(".word (a - .) * .\na:", ".word 2000")
+    expect_same(".word 2 * .", ".word 2000")
+    expect_same(".word 2 * (3 * . + 4)", ".word 6010")
 
 
 def test_symbol_propagation():
@@ -410,6 +418,8 @@ def test_branch():
         compile("sob r0, . - 1")
     with util.expect_error("branch-out-of-bounds"):
         compile("sob r0, . + 4")
+    with util.expect_error("branch-out-of-bounds"):
+        compile("sob r0, a\nnop\na:")
     with util.expect_error("branch-out-of-bounds"):
         compile("sob r0, . - 1000000")
 
@@ -637,3 +647,67 @@ def test_encoding():
     expect_binary(".word 'α", b"\xce\xb1", output_charset="utf-8")
     with util.expect_error("too-long-string"):
         expect_binary(".word '字", "字".encode()[:2], output_charset="utf-8")
+
+
+def test_include(fs):
+    fs.create_file("unreadable_file", st_mode=0)
+    with util.expect_error("io-error"):
+        compile(".include /unreadable_file/")
+
+    fs.create_dir("test_dir")
+    with util.expect_error("io-error"):
+        compile(".include /test_dir/")
+
+    with util.expect_error("io-error"):
+        compile(".include /non_existant_file/")
+
+    fs.create_file("included.mac", contents=".word .\n.ascii /Hello, world!/")
+    expect_binary(".ascii /start /\n.include /included.mac/\n.ascii /end/", b"start \x06\x02Hello, world!end")
+
+    # .link in included file should not affect root file
+    fs.create_file("included_link.mac", contents=".link 2000\n.word .\n.ascii /Hello, world!/")
+    # TODO: does not work yet
+    # with util.expect_warning("include-link"):
+    #     expect_binary(".ascii /start /\n.include /included_link.mac/\n.ascii /end/\n.word .", b"start \x00\x04Hello, world!end\x18\x02")
+    expect_binary(".ascii /start /\n.include /included_link.mac/\n.ascii /end/\n.word .\n.link 3000", b"start \x00\x04Hello, world!end\x18\x06")
+
+
+
+@pytest.mark.parametrize("declaration", ["a = 1", "a:"])
+@pytest.mark.parametrize(
+    "included_code,main_code",
+    [
+        (".extern a {}", "<> .word a"),
+        ("{} .extern a", "<> .word a"),
+        (".extern all {}", "<> .word a"),
+        ("{} .extern all", "<> .word a"),
+        (".extern a {}", ".word a <>"),
+        ("{} .extern a", ".word a <>"),
+        (".extern all {}", ".word a <>"),
+        ("{} .extern all", ".word a <>"),
+
+        (".word a", ".extern a {} <>"),
+        (".word a", ".extern a <> {}"),
+        (".word a", "{} .extern a <>"),
+        (".word a", "{} <> .extern a"),
+        (".word a", "<> {} .extern a"),
+        (".word a", "<> .extern a {}"),
+
+        (".word a", ".extern all {} <>"),
+        (".word a", ".extern all <> {}"),
+        (".word a", "{} .extern all <>"),
+        (".word a", "{} <> .extern all"),
+        (".word a", "<> {} .extern all"),
+        (".word a", "<> .extern all {}"),
+    ]
+)
+def test_extern1(fs, declaration, included_code, main_code):
+    included_code = included_code.replace("{}", f"\n{declaration}\n")
+    main_code = main_code.replace("{}", f"\n{declaration}\n")
+
+    fs.create_file("included_code.mac", contents=included_code)
+
+    expect_same(
+        main_code.replace("<>", "\n.include /included_code.mac/\n"),
+        re.sub(r"\.extern \S+", "", main_code.replace("<>", f"\n{included_code}\n"))
+    )
