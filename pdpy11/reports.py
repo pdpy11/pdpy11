@@ -16,7 +16,14 @@ critical = Report("\x1b[91mError\x1b[0m", "Error")
 warning = Report("\x1b[33mWarning\x1b[0m", "Warning")
 
 
-ReportInfo = namedtuple("ReportInfo", "line_no,start_col_no,end_col_no,text,closing_line_no,max_column")
+class ReportInfo:
+    def __init__(self, line_no, start_col_no, end_col_no, text, closing_line_no, max_column):
+        self.line_no = line_no
+        self.start_col_no = start_col_no
+        self.end_col_no = end_col_no
+        self.text = text
+        self.closing_line_no = closing_line_no
+        self.max_column = max_column
 
 
 def colorize(text):
