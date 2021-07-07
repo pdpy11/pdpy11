@@ -6,19 +6,31 @@ from . import reports
 from .types import ExpressionToken
 
 
+def wrap_unpure(expr, invoke):
+    def fn(*args):
+        expr.value = invoke(*args)
+        return expr.value
+    return fn
+
+
 class InfixOperator(ExpressionToken):
     fn: ...
     char: str
     awaited: bool
     token: bool
+    pure: bool
     return_type: type
 
     # pylint: disable=arguments-differ
     def init(self, lhs: ExpressionToken, rhs: ExpressionToken):
         self.lhs: ExpressionToken = lhs
         self.rhs: ExpressionToken = rhs
+        self.value = None
 
     def resolve(self, state):
+        if self.value is not None:
+            return self.value
+
         lhs = self.lhs.resolve(state)
         rhs = self.rhs.resolve(state)
 
@@ -26,6 +38,8 @@ class InfixOperator(ExpressionToken):
         # type(self).fn(self, lhs, rhs), which is what we need when self.token
         # is True
         invoke = self.fn if self.token else type(self).fn
+        if not self.pure:
+            invoke = wrap_unpure(self, invoke)
 
         if not isinstance(lhs, BaseDeferred) and not isinstance(rhs, BaseDeferred):
             return invoke(lhs, rhs)
@@ -50,11 +64,17 @@ class UnaryOperator(ExpressionToken):
     # pylint: disable=arguments-differ
     def init(self, operand: ExpressionToken):
         self.operand: ExpressionToken = operand
+        self.value = None
 
     def resolve(self, state):
+        if self.value is not None:
+            return self.value
+
         operand = self.operand.resolve(state)
 
         invoke = self.fn if self.token else type(self).fn
+        if not self.pure:
+            invoke = wrap_unpure(self, invoke)
 
         if not isinstance(operand, BaseDeferred):
             return invoke(operand)
@@ -84,7 +104,7 @@ operators = {
 }
 
 
-def operator(signature, precedence, associativity, awaited=True, token=False):
+def operator(signature, precedence, associativity, awaited=True, pure=True, token=False):
     assert associativity in ("left", "right")
 
     if signature[0] == signature[-1] == "x":
@@ -110,6 +130,7 @@ def operator(signature, precedence, associativity, awaited=True, token=False):
     Class.associativity = associativity
     Class.char = char
     Class.awaited = awaited
+    Class.pure = pure
     Class.token = token
     operators[kind][char] = Class
 
@@ -159,7 +180,7 @@ def mul(a: int, b: int) -> int:
     return a * b
 
 
-@operator("x / x", precedence=3, associativity="left", token=True)
+@operator("x / x", precedence=3, associativity="left", pure=False, token=True)
 def div(token, a: int, b: int) -> int:
     try:
         return a // b
@@ -171,7 +192,7 @@ def div(token, a: int, b: int) -> int:
         return 0
 
 
-@operator("x % x", precedence=3, associativity="left", token=True)
+@operator("x % x", precedence=3, associativity="left", pure=False, token=True)
 def mod(token, a: int, b: int) -> int:
     try:
         return a % b
