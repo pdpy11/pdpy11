@@ -11,21 +11,25 @@ from . import reports
 class Compiler:
     def __init__(self, output_charset="bk"):
         self.symbols = CaseInsensitiveDict()
+        self.extern_symbols_mapping = CaseInsensitiveDict()
         self.on_symbol_defined_listeners = CaseInsensitiveDict()
-        self.link_base: Promise = Promise[int]("LA")
-        self.link_base_set_where = None
         self.emitted_files = []
         self.output_charset = output_charset
         self.next_local_symbol_prefix = 1
+        self.next_internal_symbol_prefix = 1
 
 
-    def compile_file(self, file, start):
+    def compile_file(self, file, start, link_base):
         state = {
             "filename": file.filename,
             "context": "file",
-            "internal_symbol_prefix": ".internal." + file.filename + ".\x00.",
-            "compiler": self
+            "internal_symbol_prefix": f".internal{self.next_internal_symbol_prefix}.",
+            "compiler": self,
+            "link_base": link_base,
+            "internal_symbols_list": [],
+            "extern_all": None
         }
+        self.next_internal_symbol_prefix += 1
         return self.compile_block(state, file.body, start)
 
 
@@ -96,17 +100,22 @@ class Compiler:
         else:
             name = state["internal_symbol_prefix"] + label.name
 
-        if name not in self.symbols:
-            self.symbols[name] = (label, addr)
-            self._handle_new_symbol(name)
+        if name in self.symbols:
+            prev_sym, _ = self.symbols[name]
+            reports.error(
+                "duplicate-symbol",
+                (label.ctx_start, label.ctx_end, f"Duplicate {'local label' if label.local else 'symbol'} '{label.name}:'"),
+                (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
+            )
             return
 
-        prev_sym, _ = self.symbols[name]
-        reports.error(
-            "duplicate-symbol",
-            (label.ctx_start, label.ctx_end, f"Duplicate {'local label' if label.local else 'symbol'} '{label.name}:'"),
-            (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
-        )
+        self.symbols[name] = (label, addr)
+        self._handle_new_symbol(name)
+
+        if not label.local:
+            state["internal_symbols_list"].append(label.name)
+            if state["extern_all"]:
+                self.declare_external_symbol(state["extern_all"], label.name, state)
 
 
     def compile_assignment(self, var, state):
@@ -119,8 +128,26 @@ class Compiler:
                 (var.ctx_start, var.ctx_end, f"Duplicate variable '{var.name.name}'"),
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
+            return
+
+        state["internal_symbols_list"].append(var.name.name)
+        self.symbols[name] = (var, Deferred[int](lambda: var.value.resolve(state), var.name.name))
+        self._handle_new_symbol(name)
+
+        if state["extern_all"]:
+            self.declare_external_symbol(state["extern_all"], var.name.name, state)
+
+
+    def declare_external_symbol(self, location, name, state):
+        if name in self.extern_symbols_mapping:
+            previous_extern = self.extern_symbols_mapping[name][0]
+            reports.error(
+                "duplicate-symbol",
+                (symbol.ctx_start, symbol.ctx_end, f"Duplicate external symbol '{name}'."),
+                (previous_extern.ctx_start, previous_extern.ctx_end, f"A symbol with the same name was previously declared external here.")
+            )
         else:
-            self.symbols[name] = (var, Deferred[int](lambda: var.value.resolve(state), var.name.name))
+            self.extern_symbols_mapping[name] = location, state["internal_symbol_prefix"] + name
             self._handle_new_symbol(name)
 
 
@@ -174,22 +201,54 @@ class Compiler:
             return None
 
 
+    def compile_include(self, file, addr):
+        idx = self.next_internal_symbol_prefix
+        self.next_internal_symbol_prefix += 1
+
+        link_base = {
+            "promise": Promise[int](f"LA{idx}"),
+            "set_where": None
+        }
+
+        state = {
+            "filename": file.filename,
+            "context": "include",
+            "internal_symbol_prefix": f".internal{idx}.",
+            "compiler": self,
+            "link_base": link_base,
+            "internal_symbols_list": [],
+            "extern_all": False
+        }
+
+        code = self.compile_block(state, file.body, link_base["promise"])
+
+        if not link_base["promise"].settled:
+            link_base["promise"].settle(addr)
+
+        return code
+
+
     def compile_and_link_files(self, files_ast):
-        addr = self.link_base
+        link_base = {
+            "promise": Promise[int]("LA"),
+            "set_where": None
+        }
+
+        addr = link_base["promise"]
         generated_code = b""
 
         for file_ast in files_ast:
-            data = self.compile_file(file_ast, addr)
+            data = self.compile_file(file_ast, addr, link_base)
             generated_code += data
             if isinstance(data, BaseDeferred):
                 addr += data.length()
             else:
                 addr += len(data)
 
-        if not self.link_base.settled:
-            self.link_base.settle(0o1000)
+        if not link_base["promise"].settled:
+            link_base["promise"].settle(0o1000)
 
-        return wait(self.link_base), wait(generated_code)
+        return wait(link_base["promise"]), wait(generated_code)
 
 
     def emit_files(self, base, code):

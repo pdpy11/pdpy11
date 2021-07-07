@@ -115,15 +115,20 @@ class Symbol(ExpressionToken):
 
         candidates = (
             state["local_symbol_prefix"] + self.name,
-            state["internal_symbol_prefix"] + self.name,
-            self.name
+            state["internal_symbol_prefix"] + self.name
         )
 
         for name in candidates:
             if name in compiler.symbols:
                 return compiler.symbols[name]
 
-        for name in candidates:
+        extern_mapping = compiler.extern_symbols_mapping.get(self.name)
+        if extern_mapping:
+            extern = compiler.symbols.get(extern_mapping[1])
+            if extern:
+                return extern
+
+        for name in candidates + (() if extern_mapping else (self.name,)):
             if name not in compiler.on_symbol_defined_listeners:
                 compiler.on_symbol_defined_listeners[name] = {}
             for elem in Awaiting.awaiting_stack[::-1]:

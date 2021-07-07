@@ -551,14 +551,14 @@ def make_turbo_wav(state, output_wav_path: str=None, file_name_on_tape: str=None
 def link(state, address: int) -> bytes:
     compiler = state["compiler"]
 
-    if compiler.link_base.settled:
-        if compiler.link_base_set_where is None:
+    if state["link_base"]["promise"].settled:
+        if state["link_base"]["set_where"] is None:
             reports.error(
                 "recursive-definition",
                 (state["insn"].ctx_start, state["insn"].ctx_end, f"The argument of '.link' directive is mathematically equal to {address.resolve(state)!r},\nwhere LA denotes link base. In other words, the link base depends on itself,\nand thus cannot be determined.")
             )
         else:
-            prev_link = compiler.link_base_set_where
+            prev_link = state["link_base"]["set_where"]
             reports.error(
                 "address-conflict",
                 (state["insn"].ctx_start, state["insn"].ctx_end, "A '.link' directive was encountered, but the link base has already been set."),
@@ -567,9 +567,73 @@ def link(state, address: int) -> bytes:
         return b""
 
     address_value = get_as_int(state, "link address", state["insn"], address, bitness=16, unsigned=False)
-    compiler.link_base.settle(address_value)
-    compiler.link_base_set_where = state["insn"]
+    state["link_base"]["promise"].settle(address_value)
+    state["link_base"]["set_where"] = state["insn"]
     return b""
+
+
+@metacommand(size=0)
+def include(state, included_file_path: str):
+    include_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), included_file_path))
+
+    try:
+        with open(include_path, "r") as f:
+            code = f.read()
+    except FileNotFoundError:
+        reports.error(
+            "io-error",
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"There is no file at path '{include_path}'. Double-check file paths?")
+        )
+        return b""
+    except IsADirectoryError:
+        reports.error(
+            "io-error",
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"The file at path '{include_path}' is a directory.")
+        )
+        return b""
+    except IOError:
+        reports.error(
+            "io-error",
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"Could not read file at path '{include_path}'.")
+        )
+        return b""
+    except UnicodeDecodeError as ex:
+        reports.error(
+            "io-error",
+            (state["insn"].ctx_start, state["insn"].ctx_end, f"Source file '{include_path}' is not in UTF-8:\n{ex}")
+        )
+        return b""
+
+    from . import parser
+    file_ast = parser.parse(include_path, code)
+
+    code = state["compiler"].compile_include(file_ast, state["emit_address"])
+
+    return code
+
+
+@metacommand(size=0, raw=True)
+def extern(state, *symbol_name: int):
+    compiler = state["compiler"]
+
+
+    for symbol in symbol_name:
+        if not isinstance(symbol, types.Symbol):
+            reports.error(
+                "meta-type-mismatch",
+                (symbol.ctx_start, symbol.ctx_end, "A symbol name is expected as an argument to '.extern' directive")
+            )
+            continue
+
+        if symbol.name.lower() == "all":
+            for name in state["internal_symbols_list"]:
+                compiler.declare_external_symbol(symbol, name, state)
+            state["extern_all"] = True
+        else:
+            compiler.declare_external_symbol(symbol, symbol.name, state)
+
+    return b""
+
 
 # TODO: Macro-11 has .print metacommand which we can probably ignore as Rhialto's implementation does
 
