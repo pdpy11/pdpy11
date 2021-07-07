@@ -72,6 +72,35 @@ from .insns import instructions  # pylint: disable=wrong-import-position
 builtin_commands = CaseInsensitiveDict(instructions)
 
 
+if hasattr(typing, "get_origin"):  # pragma: no cover
+    typing_get_origin = typing.get_origin
+    typing_get_args = typing.get_args
+elif hasattr(typing, "_GenericAlias"):
+    def typing_get_origin(tp):
+        if isinstance(tp, typing._GenericAlias):
+            return tp.__origin__
+        else:
+            return None
+    def typing_get_args(tp):
+        if isinstance(tp, typing._GenericAlias):
+            return tp.__args__
+        else:
+            return ()
+elif hasattr(typing, "Union"):
+    def typing_get_origin(tp):
+        if str(type(tp)) == "typing.Union":
+            return tp.__origin__
+        else:
+            return None
+    def typing_get_args(tp):
+        if str(type(tp)) == "typing.Union":
+            return tp.__args__
+        else:
+            return ()
+else:
+    raise NotImplementedError("Unsupported version of Python")
+
+
 class Metacommand:
     def __init__(self, fn, name, size=None, literal_string_operand=False, raw=False):
         self.fn = fn
@@ -91,8 +120,8 @@ class Metacommand:
 
         for param in list(sig.parameters.values())[1:]:
             hint = hints[param.name]
-            if typing.get_origin(hint) is typing.Union:
-                hint, = [case for case in typing.get_args(hint) if case is not type(None)]
+            if typing_get_origin(hint) is typing.Union:
+                hint, = [case for case in typing_get_args(hint) if case is not type(None)]
             self.operand_info.append({
                 "type": hint.__supertype__ if hasattr(hint, "__supertype__") else hint,
                 "hint": hint,
