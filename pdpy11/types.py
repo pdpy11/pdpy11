@@ -1,7 +1,7 @@
 import struct
 
 from .context import Context
-from .deferred import not_ready, BaseDeferred, wait
+from .deferred import not_ready, Awaiting, wait
 from . import reports
 
 
@@ -126,7 +126,7 @@ class Symbol(ExpressionToken):
         for name in candidates:
             if name not in compiler.on_symbol_defined_listeners:
                 compiler.on_symbol_defined_listeners[name] = {}
-            for elem in BaseDeferred.awaiting_stack[::-1]:
+            for elem in Awaiting.awaiting_stack[::-1]:
                 compiler.on_symbol_defined_listeners[name][elem] = True  # Ordered set. Kinda.
 
         not_ready()

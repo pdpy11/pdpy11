@@ -22,6 +22,23 @@ class TryCompute:
 try_compute = TryCompute()
 
 
+class Awaiting:
+    awaiting_stack = []
+
+    def __init__(self, deferred):
+        self.deferred = deferred
+
+    def __enter__(self):
+        assert not self.deferred.is_awaiting
+        self.deferred.is_awaiting = True
+        Awaiting.awaiting_stack.append(self.deferred)
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        assert Awaiting.awaiting_stack.pop() is self.deferred
+        self.deferred.is_awaiting = False
+
+
 def not_ready():
     if try_compute.depth > 0:
         raise NotReadyError()
@@ -35,8 +52,6 @@ class BaseDeferredMetaclass(type):
 
 
 class BaseDeferred(metaclass=BaseDeferredMetaclass):
-    awaiting_stack = []
-
     def __new__(cls, *args, **kwargs):  # pylint: disable=unused-argument
         if not args or not isinstance(args[0], type):
             raise TypeError(f"{cls.__name__} must be passed a type in brackets")  # pragma: no cover
@@ -44,17 +59,15 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
 
     def __init__(self, typ: type):
         self.typ: type = typ
+        self.is_awaiting = False
 
     @classmethod
     def construct(cls, *args, **kwargs):
         return cls(*args, **kwargs)
 
     def wait(self):
-        BaseDeferred.awaiting_stack.append(self)
-        try:
+        with Awaiting(self):
             return self._wait()
-        finally:
-            assert BaseDeferred.awaiting_stack.pop() is self
 
     def try_compute(self):
         raise NotImplementedError(type(self).__name__ + ".try_compute()")  # pragma: no cover
@@ -175,15 +188,12 @@ class Deferred(BaseDeferred):
 
     def try_compute(self):
         if not self.settled:
-            with try_compute:
-                BaseDeferred.awaiting_stack.append(self)
+            with try_compute, Awaiting(self):
                 try:
                     self.value = self.fn()
                     self.settled = True
                 except NotReadyError:
                     return self
-                finally:
-                    assert BaseDeferred.awaiting_stack.pop() is self
         if isinstance(self.value, BaseDeferred):
             self.value = self.value.try_compute()
         return self.value

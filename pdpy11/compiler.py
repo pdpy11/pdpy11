@@ -126,7 +126,8 @@ class Compiler:
 
     def _handle_new_symbol(self, name):
         for deferred in self.on_symbol_defined_listeners.get(name, []):
-            deferred.try_compute()
+            if not deferred.is_awaiting:
+                deferred.try_compute()
 
 
     def compile_insn(self, insn, state):
