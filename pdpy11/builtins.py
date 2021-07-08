@@ -1,10 +1,10 @@
 import inspect
-import os
 import struct
 import typing
 
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, wait, BaseDeferred
+from . import devices
 from . import radix50
 from . import operators
 from . import reports
@@ -483,7 +483,7 @@ def page(state) -> bytes:
 
 @metacommand(no_dot=True)
 def insert_file(state, inserted_file_path: str) -> bytes:
-    include_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), inserted_file_path))
+    include_path = devices.resolve_relative_path(inserted_file_path, state["filename"])
     try:
         with open(include_path, "rb") as f:
             return f.read()
@@ -507,7 +507,7 @@ def insert_file(state, inserted_file_path: str) -> bytes:
 
 def add_emitted_file(state, file_path, file_format, file_extension):
     if file_path is not None:
-        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), file_path))
+        write_path = devices.resolve_relative_path(file_path, state["filename"])
     else:
         write_path = state["filename"]
         if write_path.lower().endswith(".mac"):
@@ -539,7 +539,7 @@ def make_raw(state, raw_file_path: str=None) -> bytes:
 def add_emitted_bk_wav(state, output_wav_path, bk_filename, file_format):
     insn_name = state["insn"].name
     if output_wav_path is not None:
-        write_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), output_wav_path))
+        write_path = devices.resolve_relative_path(output_wav_path, state["filename"])
     else:
         write_path = state["filename"]
         if write_path.lower().endswith(".mac"):
@@ -610,7 +610,7 @@ def link(state, address: int) -> bytes:
 
 @metacommand(size=0)
 def include(state, included_file_path: str):
-    include_path = os.path.abspath(os.path.join(os.path.dirname(state["filename"]), included_file_path))
+    include_path = devices.resolve_relative_path(included_file_path, state["filename"])
 
     try:
         with open(include_path, "r") as f:

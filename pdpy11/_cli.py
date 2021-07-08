@@ -9,6 +9,7 @@ import traceback
 from . import bk_encoding  # pylint: disable=unused-import
 
 from .compiler import Compiler
+from .devices import open_device
 from .formats import file_formats
 from . import parser
 from . import reports
@@ -105,13 +106,13 @@ def main_cli():
                 sys.stdout.buffer.write(file_formats[output_format](base, code))
             else:
                 try:
-                    with open(output_file, "wb") as f:
+                    with open_device(output_file, "wb") as f:
                         f.write(file_formats[output_format](base, code))
                 except IOError as ex:
-                    print(f"Could not write to output file '{output_file}':\n{ex}", file=sys.stderr)
+                    print(f"Could not write to '{output_file}':\n{ex}", file=sys.stderr)
                     sys.exit(1)
                 else:
-                    print(f"File {output_file} was saved in format '{output_format}'", file=sys.stderr)
+                    print(f"File '{output_file}' was written in format '{output_format}'", file=sys.stderr)
     except reports.UnrecoverableError:
         sys.exit(1)
     except Exception as ex:  # pylint: disable=broad-except

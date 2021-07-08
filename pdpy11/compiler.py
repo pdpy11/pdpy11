@@ -4,6 +4,7 @@ import sys
 from .builtins import builtin_commands
 from .containers import CaseInsensitiveDict
 from .deferred import Promise, wait, BaseDeferred, Deferred
+from .devices import open_device
 from .formats import file_formats
 from .types import Instruction, Label, Assignment
 from . import reports
@@ -243,15 +244,15 @@ class Compiler:
         for ctx_start, ctx_end, file_format, filepath, *arguments in self.emitted_files:
             result = file_formats[file_format](base, code, *arguments)
             try:
-                with open(filepath, "wb") as f:
+                with open_device(filepath, "wb") as f:
                     f.write(result)
             except IOError as ex:
                 reports.error(
                     "io-error",
-                    (ctx_start, ctx_end, f"Could not write file at path '{filepath}'. The error is:\n{ex!r}")
+                    (ctx_start, ctx_end, f"Could not write to '{filepath}':\n{ex}")
                 )
             else:
-                print(f"File {filepath} was written", file=sys.stderr)
+                print(f"File '{filepath}' was written in format '{file_format}'", file=sys.stderr)
 
         return True
 
