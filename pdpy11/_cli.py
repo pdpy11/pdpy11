@@ -23,6 +23,7 @@ argparser.add_argument("infiles", metavar="infile", type=str, nargs="+", help="a
 argparser.add_argument("-o", metavar="outfile", dest="outfile", type=str, help="name of output file")
 
 argparser.add_argument("--implicit-bin", action="store_true", help="if no output file is configured in both source and CLI arguments, assume an implicit make_bin directive")
+argparser.add_argument("--lst", action="store_true", help="generate a listing file")
 
 argparser.add_argument("--charset", metavar="encoding", type=str, default="bk", help="output string encoding for .ascii and other directives (default: bk)")
 argparser.add_argument("--report-format", choices=["graphical", "bare"], default="graphical", help="format in which error messages and warnings are printed")
@@ -79,7 +80,7 @@ def main_cli():
 
 
         with reports.handle_reports(report_handler):
-            was_emitted = comp.emit_files(base, code)
+            was_emitted, emitted_file = comp.emit_files(base, code)
 
 
         if args.outfile is None and not was_emitted:
@@ -102,6 +103,11 @@ def main_cli():
             else:
                 output_format = "raw"
 
+            emitted_file = {
+                "format": output_format,
+                "path": output_file
+            }
+
             if output_file in ("-", "-." + output_ext):
                 sys.stdout.buffer.write(file_formats[output_format](base, code))
             else:
@@ -113,6 +119,27 @@ def main_cli():
                     sys.exit(1)
                 else:
                     print(f"File '{output_file}' was written in format '{output_format}'", file=sys.stderr)
+
+
+        if args.lst is not None:
+            if emitted_file is None:
+                print(f"No listing file was generated because no output file was specified", file=sys.stderr)
+            else:
+                lst_file = emitted_file["path"]
+                if lst_file.endswith("." + emitted_file["format"]):
+                    lst_file = lst_file.rpartition(".")[0]
+                lst_file += ".lst"
+                if lst_file == "-.lst":
+                    lst_file = "listing.lst"
+
+                try:
+                    with open_device(lst_file, "w") as f:
+                        f.write(comp.generate_listing())
+                except IOError as ex:
+                    print(f"Could not write to '{lst_file}':\n{ex}", file=sys.stderr)
+                    sys.exit(1)
+                else:
+                    print(f"File '{lst_file}' was written in format 'lst'", file=sys.stderr)
     except reports.UnrecoverableError:
         sys.exit(1)
     except Exception as ex:  # pylint: disable=broad-except

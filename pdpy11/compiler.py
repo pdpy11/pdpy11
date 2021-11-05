@@ -20,6 +20,7 @@ class Compiler:
         self.next_local_symbol_prefix = 1
         self.next_internal_symbol_prefix = 1
         self.times_file_compiled = collections.defaultdict(int)
+        self.internal_prefix_to_state = {}
 
 
     def compile_file(self, file, start, link_base):
@@ -33,6 +34,7 @@ class Compiler:
             "internal_symbols_list": [],
             "extern_all": None
         }
+        self.internal_prefix_to_state[self.next_internal_symbol_prefix] = state
         self.next_internal_symbol_prefix += 1
         return self.compile_block(state, file.body, start)
 
@@ -239,7 +241,7 @@ class Compiler:
 
     def emit_files(self, base, code):
         if not self.emitted_files:
-            return False
+            return False, None
 
         for ctx_start, ctx_end, file_format, filepath, *arguments in self.emitted_files:
             result = file_formats[file_format](base, code, *arguments)
@@ -254,7 +256,41 @@ class Compiler:
             else:
                 print(f"File '{filepath}' was written in format '{file_format}'", file=sys.stderr)
 
-        return True
+        return True, {
+            "format": self.emitted_files[0][2],
+            "path": self.emitted_files[0][3]
+        }
+
+
+    def generate_listing(self):
+        labels_by_file = collections.defaultdict(list)
+
+        for name, (_, addr) in self.symbols.items():
+            if name.startswith(".internal"):
+                label_name = name[9:].partition(".")[2]
+
+                internal_prefix = int(name[9:].partition(".")[0])
+                state = self.internal_prefix_to_state[internal_prefix]
+                filename = state["filename"]
+
+                value = wait(addr)
+
+                labels_by_file[filename].append((label_name, value))
+
+
+        result = ""
+
+        for filename, labels in labels_by_file.items():
+            result += filename + "\n"
+
+            labels.sort(key=lambda item: (item[1], item[0]))
+            for name, value in labels:
+                if isinstance(value, int):
+                    result += oct(value)[2:].rjust(6, "0") + " " + name + "\n"
+
+            result += "\n"
+
+        return result
 
 
     def stop_iteration(self):
