@@ -1,0 +1,319 @@
+; Mount MKDOS logical drive (LD file) as a virtual drive (A,B,..X,Y,Z)
+; Compile this source with PDPy11: https://github.com/imachug/PDPy11
+; (c) Manwe/SandS 2020-2021
+; version 0.6
+
+BEGIN:	MOV #MKDOS,R1
+		MOV @#120014,R0			; pointer to disk catalog in memory
+		CMP 402(R0),#51414		; MKDOS format marker
+		BNE 1
+			CMP @#120004,#100000+315.	; check version 3.15
+			BLO 1
+
+		CMP @#167776,#176200	; check HDD controller version SMK-64
+		BHIS GetParameters
+			MOV #ERROR,R1
+1:			JMP QUIT
+
+GetParameters:
+		MOV @#124,R1			; pointer to parameters string
+		MOV @#122,R0			; parameters string's lenght
+		BEQ Wrong
+
+Parameter1:
+1:			CMPB (R1),#" "		; seek for parameter 1
+			BNE 2
+			INC R1				; next character
+		SOB R0,1
+		BR Wrong				; no parameter 1 found
+
+2:		MOVB @#120012,R5		; current HDD volume number
+		CMPB 1(R1),#":"			; is there HDD volume name?
+		BNE 3
+			CLR R5
+			BISB (R1)+,R5		; get HDD volume letter
+			SUB #"A",R5			; HDD volume number
+			INC R1				; skip ":" character
+			SUB #2,R0
+			BLE Wrong			; less than 3 characters in parameters
+
+3:		MOVB R5,TEMP+4			; save HDD volume number
+		MOV @#306,R2			; MKDOS: pointer to EMT 36 data
+		MOV R2,R3				; save for later
+		ADD #6,R2				; pointer to file name
+
+4:			CMPB (R1),#" "		; compare with Space character
+			BEQ 5
+			MOVB (R1)+,(R2)+	; copy logical disk name to EMT 36 data
+		SOB R0,4
+		BR Wrong				; no parameter 2 found
+
+5:		ADD #22.,R3				; last address of the file name
+6:			CMP R2,R3
+			BGE Parameter2
+			MOVB #" ",(R2)+		; fill the rest of file name with spaces
+		BR 6
+
+Parameter2:
+1:			CMPB (R1),#" "		; seek for parameter 2
+			BNE 2
+			INC R1				; next character
+		SOB R0,1
+		BR Wrong				; no parameter 2 found
+
+2:		MOVB (R1)+,R3
+		CMPB (R1)+,#":"			; is there floppy volume name?
+		BNE Wrong
+
+		BIC #177400,R3
+		SUB #"A",R3
+		BMI Wrong
+
+3:		MOVB R3,TEMP+5			; save virtual floppy number
+
+
+Parameter3:
+		SUB #2,R0
+		BLE Search
+
+1:			CMPB (R1),#" "		; seek for parameter 3
+			BNE 2
+			INC R1				; next character
+		SOB R0,1
+		BR Wrong				; no parameter 2 found
+
+2:		MOV #P3,R2
+		MOV #4,R3				; compare 4 characters
+3:			MOVB (R1)+,R4
+			BIC #177440,R4		; make all characters capital
+			CMPB R4,(R2)+
+			BNE Search
+			DEC R0
+			BLE Search
+		SOB R3,3
+		MOV #240,B				; put NOP for boot
+		BR Search
+
+P3:		.ASCII "BOOT"
+
+Wrong:	MOV #Usage,R1
+		CLR R2
+		EMT 20
+
+		MOV #FREE,R1			; address to input text
+		PUSH R1
+		MOV #5065,R2			; 65 - maximum string lenght
+		EMT 10					; input parameters
+		MOV R1,R0
+		POP R1					; pointer to the string
+		SUB R1,R0				; string size
+		BEQ 1
+		JMP Parameter1
+1:		RET
+
+
+Search:	CALL @120016			; MKDOS: init disk driver (returns pointer to
+		MOV R3,CATAL			; HDD parameters block in R3)
+		MOVB TEMP+4,34(R3)		; set HDD volume
+		CALL @120024			; MKDOS: read catalog of files from the desired HDD volume
+		BCC 1
+			MOV #CATERR,R1		; error
+			BR QUIT
+
+1:		MOV @#306,R2			; MKDOS: pointer to EMT 36 data
+		ADD #6,R2				; pointer to file name
+		CMPB (R2),#" "			; empty file name?
+		BNE 2
+			CLR TEMP			; starting block of the physical disk
+			MOV 466(R3),TEMP+2	; size (in blocks) of the physical disk
+			BR FindMemory		; skip searching in catalog
+
+2:		CALL @120026			; MKDOS: search file in the catalog, returns pointer in R3
+		BCC 3
+			MOV #NOTFND,R1		; error message
+			BR QUIT
+
+3:		MOV 20(R3),TEMP			; starting block of the logical disk
+		MOV 22(R3),TEMP+2		; size (in blocks) of the logical disk
+
+
+FindMemory:
+		MOV #175770,R4			; end of user memory
+		SUB #ENDDRV-DRIVER,R4	; substract driver size
+		MOV #170000,R1			; user memory address
+
+1:		TST (R1)				; free memory?
+		BEQ FindSlot
+			CMP 2(R1),#175776	; is LDmount driver installed already?
+			BEQ 2
+				ADD (R1),R1		; skip this memory block
+				CMP R1,R4		; end of user memory?
+				BLE 1			; check next memory block
+					MOV #NOMEM,R1
+					BR QUIT
+
+2:		MOV R1,R4				; pointer to user memory
+		MOV #DRIVER,R2
+3:			CMP (R2)+,(R4)+		; compare driver in memory
+			BEQ 4
+				MOV #EXISTS,R1
+				BR QUIT
+4:			CMP R2,#SLOT1
+		BLO 3
+		MOV #12,R0				; copy slot's data from driver
+5:			MOV (R4)+,(R2)+
+		SOB R0,5
+
+
+FindSlot:
+		MOV #4,R4
+		MOV #TEMP+5,R3			; pointer to the virtual floppy number
+		MOV #SLOT1+5,R2
+		MOV R4,R0				; check 4 slots
+1:			CMPB (R2),(R3)		; is a slot already asigned to this floppy?
+			BEQ Install
+			ADD #6,R2			; next slot
+		SOB R0,1
+		MOV #SLOT1+5,R2
+2:			CMPB (R2),#377		; search for empty slot
+			BEQ Install
+			ADD #6,R2			; next slot
+		SOB R4,2
+			MOV #FULL,R1		; no empty slots!
+			BR QUIT
+
+Install:
+		DEC R2					; pointer to SLOTn+4
+		CMPB (R3),-(R3)			; the same virtual floppy and physical drive?
+		BNE 2
+			MOV #177777,R4
+			MOV R4,(R2)			; mark slot as empty
+			MOV R2,R3			; decline copying from TEMP
+			TST (R3)+			; add 2, pointer to the next slot
+			CMP -(R2),-(R2)		; sub 4, pointer to the beginning of the current slot
+1:			CMP R2,#SLOT4		; is it the last slot?
+			BGE 3
+			.Repeat 3
+			{
+				MOV	(R3),(R2)+	; copy data from higher slot
+				MOV R4,(R3)+	; clear higher slot
+			}
+			BR 1
+
+2:		MOV (R3),(R2)			; copy HDD volume and virtual floppy numbers
+		MOV -(R3),-(R2)			; copy Size of the logical disk
+		MOV -(R3),-(R2)			; copy Start block of the logical disk
+
+3:		MOV R1,R4				; pointer to user memory
+		MOV #DRIVER,R2
+4:		MOV (R2)+,(R1)+			; copy driver to user memory
+		CMP R2,#ENDDRV
+		BLE 4
+
+		ADD #6,R4				; begin of driver in user memory
+		MOV R4,@#175776			; init LDmount driver
+
+
+		MOV #GOOD,R1
+QUIT:	MOV #200,R2
+		EMT 20
+B:		RET						; NOP for boot, RET for exit
+		JMP BOOT
+
+
+; these text strings will be overwritten by HDD parameters at address 2000
+Usage:	.BYTE 14 ; clear screen ASCII code
+		.ASCII "Logical Disk mounter (c)Manwe 2020" .BYTE 12,12
+		.ASCII ">LDMOUNT [X:]DISK A: [BOOT]" .BYTE 12
+		.ASCII "      X: - HDD volume (optional)" .BYTE 12
+		.ASCII "    DISK - Logical Disk file name" .BYTE 12
+		.ASCII "      A: - virtual floppy name" .BYTE 12
+		.ASCII "    BOOT - boot after mount (optional)" .BYTE 12,12
+		.ASCII "Type parameters:" .BYTE 12
+		.ASCIZ ">LDMOUNT "
+MKDOS:	.ASCIZ "Works on MKDOS only"
+ERROR:	.ASCIZ "SMK controller required"
+NOMEM:	.ASCIZ "Not enough space in high memory"
+CATERR:	.ASCIZ "Can't read disk catalog"
+NOTFND:	.ASCIZ "File not found"
+EXISTS:	.ASCIZ "Another floppy emulator is loaded already"
+FULL:	.ASCIZ "All slots are used. Press slot's number to release it:"
+GOOD:	.ASCII "Done!" .BYTE 12,0
+		.EVEN
+
+DRIVER:	.WORD ENDDRV-DRIVER		; size
+		.WORD 175776			; vector
+		.WORD 0					; end of vectors list
+		NOP						; first instruction of driver
+		BR EMU					; 160004 - access by block nimber
+		NOP						; 160006 - access by CHS
+DRVEX:	ADD #6,(SP)				; 160012 - format
+		RET
+
+EMU:	PUSH R4
+		PUSH R5
+		MOV PC,R5
+S:		ADD #SLOT1-S+5,R5		; pointer to SLOT1+5
+		MOV #4,R4				; number of slots
+1:			CMPB 34(R3),(R5)	; emulated drive number
+			BEQ 2
+			ADD #6,R5			; next slot
+		SOB R4,1
+		POP R5
+		POP R4
+		BR DRVEX				; exit from driver
+
+2:		MOVB (R5),VIRT			; save virtual floppy number
+		MOVB -(R5),34(R3)		; change HDD volume number (2..124)
+		CMP R0,-(R5)			; logicl disk size (in blocks)
+		BLO 3					; if out of range
+			MOVB #5,57(R3)		; error code
+			POP R5
+			POP R4
+			BR 4
+3:		ADD -(R5),R0			; starting block of the logical disk
+		POP R5
+		POP R4
+		ADD #6,(SP)
+		CALL @(SP)+				; call standard driver
+
+4:		MOVB VIRT,34(R3)		; restore virtual floppy number
+		RET
+
+; Start block (word), Size (word), Volume (byte), Floppy (byte)
+SLOT1:	.WORD 177777, 177777 .BYTE 377, 377
+SLOT2:	.WORD 177777, 177777 .BYTE 377, 377
+SLOT3:	.WORD 177777, 177777 .BYTE 377, 377
+SLOT4:	.WORD 177777, 177777 .BYTE 377, 377
+VIRT:	.WORD 0	; current virtual floppy number
+ENDDRV:	HALT
+
+
+BOOT:	CLR R0					; block 0
+		MOV #256.,R1			; size in words
+		MOV #1000,R2			; where to load
+		MOV (PC)+,R3			; pointer to catalog
+CATAL:	.WORD 126000
+		MOVB TEMP+5,34(R3)		; virtual floppy number
+		CALL @100054			; load 1 sector
+
+		CMP @#1000,(PC)+		; compare with NOP
+		NOP
+		BNE 3
+		CMPB @#177717,#200		; BK 0010 or BK 0011?
+		BEQ 1
+ 			CALL @#150170		; init BK 0011
+ 			BR 2
+1:		;EMT 14					; init BK 0010
+		CALL @#100140			; init BK 0010
+2:		MOV #2000,R3			; default HDD parameters area
+		CALL @#160010			; init disk driver
+		MOVB TEMP+5,34(R3)		; virtual floppy number
+		JMP @#1000				; boot from virtual floppy drive
+3:		RET
+
+; Start block (word), Size (word), Volume (byte), Floppy (byte)
+TEMP:	.WORD 177777, 177777 .BYTE 377, 377
+
+FREE:
+	.END

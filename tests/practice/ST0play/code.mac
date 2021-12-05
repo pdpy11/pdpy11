@@ -1,0 +1,1480 @@
+; Tracker music player (c) Manwe/SandS 2018
+; 3 channels, 25 KHz mixing rate on BK-0011m
+; compile this code with PDPy11 by Ivanq
+; github.com/imachug/PDPy11
+
+
+		SYSREG=177716	; system register (keyboard, memory pages)
+		COVOX=177714
+		HDDBLK=1000		; block of parameters for HDD driver
+
+		OCTOUT=120056	; MKDOS print oct number from R0
+		DECOUT=120060	; MKDOS print decimal number from R0
+
+		TOTALSAMPLES=63.
+		TOTALPATTERNS=127.
+
+		; memory pages mapped to address 100000
+		page1=14000
+		page2=15000
+		page3=15400
+		page4=16000		; dos
+		page6=17400		; screen 2
+		page7=16400		; system
+
+
+BEGIN:  MOV #100,@#177660	; block keyboard interrupt
+		MOV SP,STACK+2		; save stack pointer
+		MOV @#4,STOP+2		; save STOP vector
+		MOV #STOP,@#4		; set new STOP vector
+		MOV #1000,SP		; set stack
+
+		MOV #1330,@#177664	; set full screen mode
+
+		MOV #page4,@#SYSREG	; memory page with MKDOS
+
+		MOV @#120004,R0		; check MKDOS version
+		SUB #100473,R0		; 100000+315.
+		BPL 2
+			MOV #VERS,R1	; error
+			JMP ERR	
+
+2:		CMP @#167776,#176200	; check HDD controller version SMK-64
+		BHIS 3
+			MOV #ALTPRO,R1	; error
+			JMP ERR
+
+3:		CALL CLEAR			; set screen page, clear and show it
+
+		CALL PLAYING		; prepare "playing" text
+
+		CALL LOAD			; load and check module, init and print its parameters
+		CALL CHECKOFFSETS	; is there extra data block with samples offsets?
+		CALL CALC3			; calculate table for divide volumes by 3
+		CALL FILES			; collect information about files from catalog
+
+		MOV #HDDBLK,R3		; address of HDD parameters block
+		CALL @#160010		; init HDD driver, returns block fo parameters address in R3
+		MOVB DRIVE,34(R3)	; switch to current drive
+
+		CALL PLAYTIME		; calculate and print playing time
+		CALL CALC1			; calculate frequency * tempo table for each note
+		CALL DOMAP			; fill samples map, calculate sample addresses
+
+		MOV #QUIT,@#4		; set new STOP vector since there is no MKDOS anymore
+		MOV #340,@#6
+		MOV #page7,@#SYSREG	; overwrite sytem memory page with converted pattern data
+
+; form pattern data on extended memory, over the system page
+
+		CALL FORM			; build patterns
+
+		CALL NOCLICK
+
+		CALL PLIST			; convert pattern numbers to pattern addresses
+
+; load files by block number
+
+		MOV #HDDBLK,R3		; address of HDD parameters block
+		MOV #MAP,R4			; pointer to the sample parameters table
+		MOV #ONDISK,R5		; pointer to the file locations table
+		MOV DRPAGE,@#SYSREG	; set high memory page for the 1st drum sample
+		CALL LOADWAVS
+		CALL LOADRUMS
+
+		MOV #76000,@#SYSREG	; second screen and DOS page
+		CALL SHOWPLAYING	; show "Playing" text
+;		MOV DRPAGE,@#SYSREG	; set high memory page for the 1st drum sample
+
+PLAY:	MOV #ANTICLICK,R0		; set channel pointers to proper samples
+		MOV (R0)+,R4
+		MOV (R0)+,R1
+		MOV (R0)+,R2
+		MOV (R0)+,R3
+		MOV #COVOX,R5			; Covox port
+		MOV TEMPO,TEMP1+2
+		MOV #page7,@#SYSREG		; memory page 4 with pattern data
+
+; play pattern
+
+NEXT:	MOV #100000,R0			; pointer to the order list
+		MOV (R0)+,SP			; set beginning of the pattern
+		BNE 1
+		JMP QUIT				; no more patterns in order list
+1:		MOV R0,NEXT+2
+		BR TEMP1
+
+ROW:	MOV #100100,SP			; pointer to the current row
+		MOV #page7,@#SYSREG		; memory page with pattern data
+TEMP1:	MOV #2700,R0
+		MOV (SP)+,PC			; jump to the mixing subroutine or next pattern
+
+
+; mixing subroutines
+; lable	code	ch1	ch2	drums
+; MIX00	00000	-	-	-		pause
+; MIX01	00001	lo	-	-		channel 1 only on low octave
+; MIX02	00010	-	lo	-		channel 2 only on low octave
+; MIX03	00011	lo	lo	-		channels 1 and 2 on low octave
+; MIX04	00100	-	-	o		drums only
+; MIX05	00101	lo	-	o		channel 1 on low octave and drums
+; MIX06	00110	-	lo	o
+; MIX07	00111	lo	lo	o
+; MIX09	01001	hi	-	-
+; MIX11	01011	hi	lo	-		channel 1 on high octave and channel 2 on low octave
+; MIX13	01101	hi	-	o
+; MIX15	01111	hi	lo	o
+; MIX18	10010	-	hi	-
+; MIX19	10011	lo	hi	-
+; MIX22	10110	-	hi	o
+; MIX23	10111	lo	hi	o
+; MIX27	11011	hi	hi	-
+; MIX31	11111	hi	hi	o
+; 		code is stored in CHANLS
+
+; 00000	nothing to play
+MIX00:	MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP00:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3),R4
+		ADD #0,SP
+		MOVB R4,(R5)
+		SBC R1
+		ADD #0,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP00
+		JMP ROW
+
+; 00001	play ch1 low
+MIX01:	MOV (SP)+,R1
+		MOV (SP)+,NOT011+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP01:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3),R4
+NOT011:	ADD #100000,SP
+		MOVB R4,(R5)
+		ADC R1
+		ADD #0,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP01
+		JMP ROW
+
+; 00010	play ch2 low
+MIX02:	MOV (SP)+,R2
+		MOV (SP)+,NOT022+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP02:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3),R4
+		ADD #0,SP
+		MOVB R4,(R5)
+		SBC R1
+NOT022:	ADD #100000,#100000
+		ADC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP02
+		JMP ROW
+
+; 00011	play ch1 and ch2 low
+MIX03:	MOV (SP)+,R1
+		MOV (SP)+,NOT031+2
+		MOV (SP)+,R2
+		MOV (SP)+,NOT032+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP03:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3),R4
+NOT031:	ADD #100000,SP
+		MOVB R4,(R5)
+		ADC R1
+NOT032:	ADD #100000,#100000
+		ADC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP03
+		JMP ROW
+
+; 00100	play drums only
+MIX04:	MOV (SP)+,R3
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP04:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3)+,R4
+		ADD #0,SP
+		MOVB R4,(R5)
+		SBC R1
+		ADD #0,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP04
+		JMP ROW
+
+; 00101	play drums and ch1 low
+MIX05:	MOV (SP)+,R1
+		MOV (SP)+,NOT051+2
+		MOV (SP)+,R3
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP05:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3)+,R4
+NOT051:	ADD #100000,SP
+		MOVB R4,(R5)
+		ADC R1
+		ADD #0,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP05
+		JMP ROW
+
+; 00110	play drums and ch2 low
+MIX06:	MOV (SP)+,R2
+		MOV (SP)+,NOT062+2
+		MOV (SP)+,R3
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP06:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3)+,R4
+		ADD #0,SP
+		MOVB R4,(R5)
+		SBC R1
+NOT062:	ADD #100000,#100000
+		ADC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP06
+		JMP ROW
+
+; 00111	play all channels on low octave
+MIX07:	MOV (SP)+,R1
+		MOV (SP)+,NOT071+2
+		MOV (SP)+,R2
+		MOV (SP)+,NOT072+2
+		MOV (SP)+,R3
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP07:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2),R4
+		ADD (R3)+,R4
+NOT071:	ADD #100000,SP
+		MOVB R4,(R5)
+		ADC R1
+NOT072:	ADD #100000,#100000
+		ADC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP07
+		JMP ROW
+
+; 01001	play ch1 high only
+MIX09:	MOV (SP)+,R1
+		MOV (SP)+,NOT091+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP09:	MOVB R4,(R5)
+		MOV (R1)+,R4
+		ADD (R2),R4
+		ADD (R3),R4
+NOT091:	ADD #100000,SP
+		MOVB R4,(R5)
+		SBC R1
+		ADD #0,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP09
+		JMP ROW
+
+; 01011	play ch1 high and ch2 low
+MIX11:	MOV (SP)+,R1
+		MOV (SP)+,NOT111+2
+		MOV (SP)+,R2
+		MOV (SP)+,NOT112+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP11:	MOVB R4,(R5)
+		MOV (R1)+,R4
+		ADD (R2),R4
+		ADD (R3),R4
+NOT111:	ADD #100000,SP
+		MOVB R4,(R5)
+		SBC R1
+NOT112:	ADD #100000,#100000
+		ADC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP11
+		JMP ROW
+
+; 01101	play drums and ch1 high
+MIX13:	MOV (SP)+,R1
+		MOV (SP)+,NOT131+2
+		MOV (SP)+,R3
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP13:	MOVB R4,(R5)
+		MOV (R1)+,R4
+		ADD (R2),R4
+		ADD (R3)+,R4
+NOT131:	ADD #100000,SP
+		MOVB R4,(R5)
+		SBC R1
+		ADD #0,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP13
+		JMP ROW
+
+; 01111	play ch1 high and ch2 low with drums
+MIX15:	MOV (SP)+,R1			; get ch1 address
+		MOV (SP)+,NOT151+2		; get ch1 frequency
+		MOV (SP)+,R2			; get ch2 address
+		MOV (SP)+,NOT152+2		; get ch2 frequency
+		MOV (SP)+,R3			; get drum address
+		MOV (SP)+,@#SYSREG		; get drum memory page
+		MOV SP,ROW+2
+LOOP15:	MOVB R4,(R5)	; sound output every 160 CPU cycles
+		MOV (R1)+,R4	; channel 1
+		ADD (R2),R4		; channel 2
+		ADD (R3)+,R4	; channel 3 (drums)
+NOT151:	ADD #100000,SP
+		MOVB R4,(R5)	; sound output every 160 CPU cycles
+		SBC R1
+NOT152:	ADD #100000,#100000
+		ADC R2
+		SWAB R4
+		NOP				; dummy command to slow down before the next sound output
+		SOB R0,LOOP15
+		JMP ROW
+
+; 10010	play ch2 high only
+MIX18:	MOV (SP)+,R2
+		MOV (SP)+,NOT182+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP18:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2)+,R4
+		ADD (R3),R4
+		ADD #0,SP
+		MOVB R4,(R5)
+		ADC R1
+NOT182:	ADD #100000,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP18
+		JMP ROW
+
+; 10011	play ch1 low and ch2 high
+MIX19:	MOV (SP)+,R1
+		MOV (SP)+,NOT191+2
+		MOV (SP)+,R2
+		MOV (SP)+,NOT192+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP19:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2)+,R4
+		ADD (R3),R4
+NOT191:	ADD #100000,SP
+		MOVB R4,(R5)
+		ADC R1
+NOT192:	ADD #100000,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP19
+		JMP ROW
+
+; 10110	play drums and ch2 high
+MIX22:	MOV (SP)+,R2
+		MOV (SP)+,NOT222+2
+		MOV (SP)+,R3
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP22:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2)+,R4
+		ADD (R3)+,R4
+		ADD #0,SP
+		MOVB R4,(R5)
+		ADC R1
+NOT222:	ADD #100000,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP22
+		JMP ROW
+
+; 10111	play all, ch1 low
+MIX23:	MOV (SP)+,R1
+		MOV (SP)+,NOT231+2
+		MOV (SP)+,R2
+		MOV (SP)+,NOT232+2
+		MOV (SP)+,R3
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP23:	MOVB R4,(R5)
+		MOV (R1),R4
+		ADD (R2)+,R4
+		ADD (R3)+,R4
+NOT231:	ADD #100000,SP
+		MOVB R4,(R5)
+		ADC R1
+NOT232:	ADD #100000,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP23
+		JMP ROW
+
+; 11011	play ch1 and 2 high
+MIX27:	MOV (SP)+,R1
+		MOV (SP)+,NOT271+2
+		MOV (SP)+,R2
+		MOV (SP)+,NOT272+2
+		MOV (SP)+,@#SYSREG
+		MOV SP,ROW+2
+LOOP27:	MOVB R4,(R5)
+		MOV (R1)+,R4
+		ADD (R2)+,R4
+		ADD (R3),R4
+NOT271:	ADD #100000,SP
+		MOVB R4,(R5)
+		SBC R1
+NOT272:	ADD #100000,#100000
+		SBC R2
+		SWAB R4
+		NOP
+		SOB R0,LOOP27
+		JMP ROW
+
+; 11111	play all channels
+MIX31:	MOV (SP)+,R1			; get ch1 address
+		MOV (SP)+,NOT311+2		; get ch1 frequency
+		MOV (SP)+,R2			; get ch2 address
+		MOV (SP)+,NOT312+2		; get ch2 frequency
+		MOV (SP)+,R3			; get drum address
+		MOV (SP)+,@#SYSREG		; get drum memory page
+		MOV SP,ROW+2
+LOOP31:	MOVB R4,(R5)	; sound output every 160 CPU cycles
+		MOV (R1)+,R4	; channel 1
+		ADD (R2)+,R4	; channel 2
+		ADD (R3)+,R4	; channel 3 (drums)
+NOT311:	ADD #100000,SP
+		MOVB R4,(R5)	; sound output every 160 CPU cycles
+		SBC R1
+NOT312:	ADD #100000,#100000
+		SBC R2
+		SWAB R4
+		NOP				; dummy command to slow down before the next sound output
+		SOB R0,LOOP31
+		JMP ROW
+
+
+
+;       the main program ends here
+
+
+
+
+QUIT:	MOV #1000,SP
+		MOV #40000,R0	; clear screen and high memeory
+		MOV R0,R1
+1:		CLR (R1)+
+		SOB R0,1
+		JMP @#160000	; restart computer
+
+ERR:	MOV #16000,@#SYSREG	; memory page 4 for MkDos and AnDos
+		MOV #1330,@#177664	; set default screen mode
+		MOV #40000,@#177662	; show screen 1, timer off
+		MOV #200,R2
+		EMT 20				; type error message
+
+; on STOP pressed
+
+STOP:	MOV #100000,@#4		; restore STOP vector
+STACK:  MOV #776,SP			; restore saved stack
+		CLR @#177660		; unblock keyboard interrupt
+;1:		BIT #100,@#SYSREG	; if a key is pressed
+;		BNE 1
+		HALT
+
+; divide volumes by 3 subroutine. R0 size. R1 address
+
+DIV3:	MOV ADDR,R1		; sample address
+		MOV SIZE,R0		; size in bytes
+		MOV #177400,R2	; clear byte mask
+T0:		MOVB (R1),R4
+		BIC R2,R4
+T1:		MOVB TABL3(R4),(R1)+	; table address
+		SOB R0,T0
+		RET
+
+; check for WAV format
+
+CHECK:	TSTB 57(R3)			; no loading errors?
+		BNE ERROR
+		MOV ADDR,R1			; sample address
+		MOV R1,R2
+		CMP (R2)+,#44522	; RIFF
+		BNE ERROR
+		CMP (R2)+,#43106
+		BNE ERROR
+		ADD #4,R2
+		CMP (R2)+,#40527	; WAVE
+		BNE ERROR
+		CMP (R2)+,#42526
+		BNE ERROR
+		; shift sample data to the place of WAV header
+		MOV R1,R2			; sample address
+		ADD 20(R1),R2
+		ADD #34,R2			; skip WAV header, usually 54 bytes
+		MOV SIZE,R0			; sample size in bytes
+		SUB 20(R1),R0		; header size, usually 16 or 18
+		SUB #33,R0			; substract WAV header
+		ASR R0				; size in words
+1:		MOV (R2)+,(R1)+
+		SOB R0,1
+		MOVB -(R2),R0		; take the last byte
+2:		MOVB R0,(R1)+
+		CMP R1,R2			; fill to the end of file
+		BLO 2
+		RET
+
+; clear screen
+
+CLEAR:	MOV #76000,@#SYSREG		; second screen and DOS page
+		MOV #40000,R0
+1:		CLRB 37777(R0)			; clear screen
+		SOB R0,1	
+		MOV #140000,@#177662	; show screen 2, timer off
+		RET
+
+; draw Sad Mac icon (c) Manwe/SandS 2018
+; R3 stays unmodified
+
+ERROR:	CALL CLEAR
+		MOV #ICON,R1	; image address
+		MOV	#56034,R2	; screen address
+
+1:		TST (R2)+		; add 2 to screen address
+		MOV #3,R5		; pencil
+2:		MOV (R1)+,R4	; word to draw
+		BEQ 5			; end of image
+		MOV #16.,R0		; how many bits to process
+3:		ROR R4			; get bit by bit
+		BCC	4			; if black pixel
+		BIS R5,(R2)		; draw white pixel
+4:		ADD #100,R2		; next screen line
+		SOB R0,3
+		INC PC			; repeat code twice
+		BR 2
+		SUB #4000,R2	; return screen address back to the top
+		ASL R5			; move pencil
+		ASL R5
+		BEQ 1			; need to reset pencil
+		BR 2
+
+5:		CLR @#177660	; unblock keyboard interrupt
+6:		BIT #100,@#SYSREG	; if a key is pressed
+		BNE 6
+		JMP @#160000
+
+; convert to double bytes
+
+CONV16:	MOV ADDR,R1		; sample address
+		MOV SIZE,R0		; size in bytes
+		ADD R0,R1		; OLD END ADDRESS
+		MOV R1,R2
+		ADD R0,R2		; NEW END ADDRESS
+1:      MOVB -(R1),-(R2)
+		MOVB (R1),-(R2)
+		SOB R0,1
+		RET
+
+; load samples
+; R3 points to HDD parameters block
+; R4 points to MAP
+; R5 pointer to the file locations table
+
+LOADWAVS:
+		MOV NSMPLS,R0		; number of usual samples
+		BEQ 3
+1:		MOV R0,-(SP)
+		MOV (R5)+,R0		; block number
+		MOV (R5)+,R1		; file size in bytes
+		MOV R1,SIZE
+		ASR R1
+		MOV (R4)+,R2		; address to load
+		TST (R4)+			; skip
+		MOV R2,ADDR
+		MOV R5,-(SP)
+		MOV R4,-(SP)
+		CALL @#160004		; load file by block number
+		CALL CHECK			; check for errors
+		CALL DIV3
+		CALL CONV16			; convert sample to double bytes
+		MOV (SP)+,R4
+		MOV (SP)+,R5
+		MOV (SP)+,R0
+		SOB R0,1
+		MOV -4(R4),R0
+		ADD -2(R4),R0		; end of the last usual sample
+		BMI 3				; if more than 100000
+			MOV -(R0),R1	; last sample data
+2:			MOV R1,(R0)+
+			TST R0
+			BPL 2			; clone data up to 100000
+3:		RET
+
+; load drums
+; R4 points to MAP
+; R3 points to HDD parameters block
+
+LOADRUMS:
+		MOV #DRPAGE,R0
+		MOV NDRUMS,R1		; number of drums to load
+		BEQ 4
+
+1:		MOV R1,-(SP)
+		MOV R0,-(SP)
+		MOV (R5)+,R0		; block number
+		MOV (R5)+,R1		; file size in bytes
+		MOV R1,SIZE
+		ASR R1				; file size in words
+		MOV (R4)+,R2		; address to load
+		TST (R4)+			; skip
+		MOV R2,ADDR
+		MOV R5,-(SP)
+		MOV R4,-(SP)
+		CALL @#160004		; load file by block number
+		CALL CHECK
+		CALL DIV3			; returns last address+2 in R1
+
+		CALL FIXDRUM
+
+		MOV (SP)+,R4
+		MOV (SP)+,R5
+		MOV (SP)+,R0
+		; drum is loaded to high memory
+
+		MOV (R0)+,R1		; get current page's code
+		BIC #4000,R1		; clear "record" bit
+		ASL R1
+		ASL R1
+		ASL R1
+		ASL R1				; page's code to map it to 40000 address
+		MOV (R0),R2			; and map the next page to 100000 address
+		BIC #170000,R2		; clear code of a page on 40000
+		BIS R2,R1
+		MOV R1,@#SYSREG
+
+		MOV ADDR,R2			; address to load a drum
+		SUB #100000,R2
+		ASR R2				; overlaping area in words
+		BEQ 3				; if nothing to copy
+		MOV #40000,R1
+2:		MOV (R1)+,37776(R1)	; copy overlapping samples from previous drum page
+		SOB R2,2
+
+3:		MOV (SP)+,R1
+		SOB R1,1
+4:		RET
+
+; the drum sample should content the same bytes at TEMPO*2*N offsets
+
+FIXDRUM:
+		MOVB -(R1),-(R1)	; fix last drum value
+		MOV #140000,R0		; clean the rest of memory
+		SUB ADDR,R0
+		SUB SIZE,R0
+		BEQ 3
+		ASR R0
+		MOV (R1)+,R4
+1:		MOV R4,(R1)+
+		SOB R0,1
+
+		MOV TEMPO,R0		; fix tempo-related drum data
+		ASL R0
+		MOV ADDR,R1
+2:		MOVB (R1),1(R1)		; dublicate value
+		ADD R0,R1
+		CMP R1,#140000
+		BLO 2
+3:		RET
+
+; show "playing" text
+
+SHOWPLAYING:
+		MOV #12,R0			; cursot's Y coordinate
+		MOV #40601,R2
+1:		ADD #1200,R2		; string height in bytes
+		SOB R0,1
+		MOV #TXTBUF,R1
+		MOV #9.,R3
+2:		MOV #4,R0
+3:		MOVB (R1)+,(R2)+	; copy text as bitmap
+		SOB R0,3
+		ADD #60.,R2
+		SOB R3,2
+		RET
+TXTBUF: .BLKB 36.
+
+
+ONDISK:	.BLKW TOTALSAMPLES*2	; block, size (number of files * 2)
+
+MAP:    .BLKW TOTALSAMPLES*2	; addres, size (number of files * 2)
+
+ADDR:	.WORD 14000		; address of loaded sample
+SIZE:	.WORD 100		; size of loaded sample
+
+CATAL:	.WORD 126000	; disk catalog adress
+DRIVE:	.WORD 0			; current disk drive id
+
+NSMPLS:	.WORD 0			; count of usual samples loaded
+NDRUMS:	.WORD 0			; count of drums samples loaded
+
+; pages for drums
+DRPAGE:	.WORD page1, page2, page3, page4
+
+TEMPO:	.WORD 2700
+
+ANTICLICK:	.WORD 226		; 3 channels mixed at the first row
+CHFIRST:	.WORD 0, 0, 0	; number of first sample on channels
+
+TABL3:	.BLKW 400	; table of bytes devided by 3
+
+ICON:	.WORD 177776, 17777, 177777, 157777, 7, 156774, 177773, 156773
+		.WORD 177773, 157773, 177273, 157773, 177573, 157773, 137273, 157773
+		.WORD 157773, 157773, 153773, 157773, 150073, 157773, 157773, 157773
+		.WORD 157773, 157773, 137273, 157673, 177573, 157673, 177273, 157673
+		.WORD 177773, 157673, 177773, 157673, 7, 157774, 177777, 157777
+		.WORD 177776, 17777, 0
+
+FREE:	; everything after this will be overwritten by samples
+
+
+
+
+
+NAMES:	.WORD	0	; address of sample names
+ORDERL:	.WORD	0	; address of order list
+MUSIC:	.WORD	0	; address of patterns
+VOLUME: .WORD	100.; sound volume
+BPM:	.WORD	125.; beats per minute
+
+; frequency table
+
+FREQ:	.WORD		0., 7357.,14300.,20854.,27040.,32879.
+		.WORD	38390.,43592.,48502.,53136.,57510.,61639.
+
+		.WORD	65535.,61858.,58586.,55109.,52016.,49097.
+		.WORD	46341.,43740.,41285.,38968.,36781.,34716.
+
+		.WORD	32768.,30929.,29193.,27554.,26008.,24548.
+		.WORD	23170.,21870.,20643.,19484.,18390.,17358.
+
+		.WORD	16384.,0
+
+OFFSET: .BLKW 40.		; frequency * tempo for each note
+
+; table of links to different mixing procedures
+
+MIXER:	.WORD	MIX00,MIX01,MIX02,MIX03,MIX04,MIX05,MIX06,MIX07
+		.WORD	MIX00,MIX09,MIX02,MIX11,MIX04,MIX13,MIX06,MIX15
+		.WORD	MIX00,MIX01,MIX18,MIX19,MIX04,MIX05,MIX22,MIX23
+		.WORD	MIX00,MIX09,MIX18,MIX27,MIX04,MIX13,MIX22,MIX31
+
+TEMP:	.WORD 0
+
+CHANLS: .WORD 0		; bits 1,2,3 - channels on or off. bits 4,5 - high or low octave
+OCTAVE: .WORD 0		; 1 = high octave, 0 = low
+
+CHSTOP: .WORD 0, 0, 0				; stop or play a channel
+CHSMPL:	.WORD 0, 0, 0				; last sample (number-1)*4 for each channel
+CHADDR: .WORD FREE, FREE, 100000	; sample address
+CHBITS:	.WORD 1, 2, 4 				; bits to identify channels
+
+LASTDRUMPAGE: .WORD page1			; drum page
+
+ORDERS:	.WORD 0		; number of orders
+
+PATADR:	.BLKW TOTALPATTERNS	; high memory address of each converted pattern
+
+; copy filename from R4 pointer to EMT 36 data block
+
+COPNAM:	MOV @#306,R1 	; addrress of MKDOS EMT 36 data
+		ADD #6,R1		; pointer to name in EMT 36 data
+		MOV #20,R2
+2:		DEC R2 			; copy name of file
+		MOVB (R4)+,(R1)+
+		BNE 2
+3:		CLRB (R1)+
+		SOB R2,3
+		RET
+
+; calculate frequency * tempo table subroutine
+
+CALC1:	MOV #12.,R0		; calculation for high octave
+	 	CLR R1			; index in tables = (notenumber-1)*2
+1:		CLR R2
+		MOV #100000,R3
+		MOV FREQ(R1),R4
+		MOV TEMPO,R5
+2:		ADD #2,R2
+		ADD	R4,R3
+		SBC R2
+		SOB R5,2
+		MOV R2,OFFSET(R1)
+		ADD #2,R1
+		SOB R0,1
+3:		CLR R2			; calculation for low octave
+		CLR R3
+		MOV FREQ(R1),R4
+		BEQ 5			; no more notes
+		MOV TEMPO,R5
+4:		ADD R4,R3
+		ADC R2
+		SOB R5,4
+		MOV R2,OFFSET(R1)
+		ADD #2,R1
+		BR 3
+5:		RET
+
+; calculate table for divide volumes by 3
+
+CALC3:	MOV VOLUME,R3
+		SWAB R3
+		MOV #TABL3,R1	; set table address
+		CLR R2
+		MOV #400,R0		; build table 400 bytes
+1:			ADD R3,#0	; 52525 means div by 3, 63000 is loud
+			ADC R2
+			MOVB R2,(R1)+
+		SOB R0,1
+		RET
+
+; form pattern subroutine
+; output: R4 - pointer to the "song end" marker
+
+FORM:	CLR PATADR
+		MOV MUSIC,R4		; pointer to pattern data
+		MOV ORDERS,R5
+		INC R5
+		ASL R5
+		ADD #100000,R5		; address of converted patterns
+
+NXTPAT:	INC PATADR			; [0] element of array is number of current pattern
+		MOV PATADR,R0
+		ASL R0
+		MOV R5,PATADR(R0)	; save high memory address of current pattern
+
+		CLR CURRENTROW		; rows counter
+NXTROW:	CLR CHANLS			; all channels off by default
+;		CHANLS: bits 0,1,2 - channels on or off. bits 3,4 - high or low octave
+
+		TSTB (R4)			; -1 = end of pattern
+		BGE 1
+			MOV #NEXT,(R5)+ ; address of next subroutine
+			ADD #5,R4
+			TSTB (R4)		; last pattern?
+			BGE NXTPAT
+			RET
+
+1:		MOV R5,-(SP)
+		TST (R5)+			; pointer to row data (output)
+
+CH1:	MOV #1,CURRENTCHANNEL
+		CLR R3				; R3 = 0 means channel 1
+		CALL PROCESSNOTE
+
+CH2:	INC CURRENTCHANNEL
+		MOV #2,R3			; R3 = 2 means channel 2
+		CALL PROCESSNOTE
+
+CH3:	INC CURRENTCHANNEL
+		MOVB (R4)+,R0			; get drum number
+		BNE 1
+			MOV CHADDR+4,R1		; use previous sample address on this channel
+			TST CHSTOP+4		; was the previous note stopped?
+			BEQ 4				; if drum was stopped
+			BNE 3				; if drum is still playing
+1:		TST CHFIRST+4			; the first note on this channel?
+		BNE 2
+			MOV R0,CHFIRST+4	; store first sample number for this channel
+2:		; new note on drum channel
+		CALL SEARCHOFFSET		; output: R2 = sample offset
+		DEC R0					; sample number-1
+		MOV R0,R3
+		SUB NSMPLS,R3			; order in drums list
+		ASL R3
+		MOV DRPAGE(R3),LASTDRUMPAGE	; store drum memory page
+		ASL R0
+		ASL R0
+		MOV MAP(R0),R1			; get sample address
+		ADD R2,R1				; apply sample offset
+		; test for sample end
+3:		MOV R1,R3				; sample address
+		ADD TEMPO,R3			; add row duration for the drum
+		ADD TEMPO,R3
+		CMP R3,#140000			; compare with address of the next sample
+		BLOS 5					; if not sample end
+4:			CLR CHSTOP+4		; note off because of sample end
+			BR 6
+5:		MOV R3,CHADDR+4			; store sample address for the next row
+		MOV #177777,CHSTOP+4	; play this channel
+		BIS #4,CHANLS			; set a bit to play drum channel
+		MOV R1,(R5)+			; store sample address for this row
+6:		MOV LASTDRUMPAGE,(R5)+	; store drum memory page
+
+ALL:	MOV (SP)+,R1		; restore pointer to output record
+		MOV CHANLS,R0
+		ASL R0
+		MOV MIXER(R0),(R1)	; address of subroutine
+		INC CURRENTROW		; row counter
+		BR NXTROW
+
+; process note
+; input:  R3 - channel number - 1 * 2
+;		  R4 - pointer to ST0 pattern data
+;		  R5 - pointer to converted pattern data
+; output: next R4,R5
+
+PROCESSNOTE:
+		MOVB (R4)+,R0			; get sample number
+		BNE 1
+			MOV CHSMPL(R3),R0	; use previous sample (number-1)*4 on this channel
+			MOV CHADDR(R3),R1	; use previous sample address on this channel
+			TST CHSTOP(R3)		; was the previous note stopped?
+			BNE 3
+				INC R4			; skip the note number
+				RET
+1:		TST CHFIRST(R3)			; the first note on this channel?
+		BNE 2
+			MOV R0,CHFIRST(R3)	; store first sample number for this channel
+2:		CALL SEARCHOFFSET		; output: R2 = sample offset
+		DEC R0
+		ASL R0
+		ASL R0
+		MOV MAP(R0),R1			; get sample address
+		ADD R2,R1				; apply sample offset
+3:		MOVB (R4)+,R2			; get note number
+		BEQ 4
+		DEC R2
+		ASL R2
+		MOV R1,-(SP)			; save sample address
+		ADD OFFSET(R2),R1		; add row duration for this note
+		CMP R1,MAP+4(R0)		; compare with address of the next sample
+		BLOS 5					; if not sample end
+			MOV (SP)+,R1
+4:			CLR CHSTOP(R3)		; note off
+			RET
+5:		MOV R1,CHADDR(R3)		; store sample address for the next row
+		MOV R0,CHSMPL(R3)		; store sample (number-1)*4 for the next row
+		MOV (SP)+,R1			; restore sample address
+		MOV #177777,CHSTOP(R3)	; play this channel
+		BIS CHBITS(R3),CHANLS	; set a bit to play this channel
+		CMP R2,#26				; octave?
+		BGT 6
+			MOV CHBITS(R3),R3	; get channel identifier
+			ASL R3
+			ASL R3
+			ASL R3
+			BIS R3,CHANLS		; set high octave for channel 1
+6:		MOV R1,(R5)+			; store sample address for this row
+		MOV FREQ(R2),(R5)+		; store sample frequency
+		RET
+
+; search for sample offset for current note
+; output: R2 - sample offset value for current note
+
+SEARCHOFFSET:
+		CLR R2				; no sample offset
+		MOV OFFSETSDATA,R1	; pointer to samples offsets data block
+		BEQ 4
+1:			MOV R1,-(SP)
+			CMPB PATADR,(R1)+	; current pattern
+			BNE 3
+			CMPB CURRENTROW,(R1)+
+			BNE 3
+			CMPB CURRENTCHANNEL,(R1)+
+			BNE 3
+				MOVB (R1),R2	; get sample offset value
+				SWAB R2
+				CLRB R2
+				CMP CURRENTCHANNEL,#3
+				BEQ 2
+					ASL R2		; double offset for doubled samples
+2:				TST (SP)+
+				RET				; offset found
+3:			MOV (SP)+,R1
+			ADD #4,R1
+			TST (R1)
+			BNE 1
+4:		RET
+
+; form playlist subroutine
+
+PLIST:	MOV ORDERL,R1	; pointer to order list
+		MOV #100000,R2
+1:		MOVB (R1)+,R0
+		ASL R0
+		MOV PATADR(R0),(R2)+
+		TSTB (R1)
+		BNE 1
+		CLR (R2)		; end of order list
+		RET
+
+; divide R1/R2, returns result in R0
+
+DIVIDE:	CLR R3
+		SEC
+		ROL R1
+1:		ROL R3
+		CMP R3,R2
+		BLO 2
+		SUB R2,R3
+2:		ROL R0
+		ASL R1
+		BNE 1
+		COM R0
+		RET
+
+; load module, check its format and print title, author, etc.
+
+LOAD:	MOV #INPUT,R1		; prompt to input file name
+		MOV #200,R2
+		EMT 20
+		MOV @#306,R1		; addrress of MKDOS EMT 36 data block
+		MOV #3,(R1)		  	; 3 means read, 2 means write
+		MOV #MODULE,2(R1)	; set addres to load file
+		ADD #6,R1			; pointer to file name
+		MOV R1,R2
+		MOV #7,R0
+6:		CLR	(R2)+			; fill file name by zeros
+		SOB R0,6
+		MOV #5016,R2
+		CLR @#177660		; unblock keyboard interrupt
+		EMT 10				; input file name
+		MOV #100,@#177660	; block keyboard interrupt
+		CLRB -(R1)	
+		MOV @#306,R1
+		EMT 36				; load music file
+		TSTB 1(R1)			; no loading errors?
+		BEQ 0
+			MOV #LOAERR,R1	; loading error
+			JMP ERR
+
+0:		CMP MODULE,#"SS"	; check for "SST0" string
+		BNE 1
+		CMP MODULE+2,#"T0"
+		BEQ 2
+1:			MOV #FORMAT,R1	; error
+			JMP ERR
+2:		MOV #TITL1,R1		; print title
+		MOV #MODULE+5,R3
+		MOV #5,R0
+3:			MOV #100,R2
+			EMT 20
+			MOV R1,-(SP)
+			MOV R3,R1
+			MOV #100,R2
+			EMT 20
+			MOV R1,R3
+			MOV (SP)+,R1
+		SOB R0,3
+
+		MOV R3,NAMES
+
+		MOV #2,R0			; skip samples and drums names
+4:		TSTB (R3)+
+		BNE 4
+		TSTB (R3)
+		BNE 4
+		INC R3
+		SOB R0,4
+
+		INC R3
+		BIC #1,R3			; align address to words
+
+		MOV (R3)+,VOLUME	; sound volume
+		MOV (R3)+,BPM		; BPM
+
+		MOV #VOLTXT,R1
+		MOV #100,R2
+		EMT 20
+		MOV VOLUME,R0
+		CALL @DECOUT		; print Volume
+
+		MOV #BPMTXT,R1
+		MOV #100,R2
+		EMT 20
+		MOV BPM,R0
+		CALL @DECOUT		; print BPM
+
+		MOV R3,ORDERL		; address of order list
+7:		TSTB (R3)+			; skip order list
+		BNE 7
+
+		MOV R3,ORDERS
+		SUB ORDERL,ORDERS
+		DEC ORDERS			; number of orders
+
+		ADD #5,R3			; skip -1 row
+		MOV R3,MUSIC		; address of pattern data
+
+		; calculate mixing loop duration from BPM
+		MOV #46875.,R1		; mixing rate * 3,75.
+		MOV BPM,R2			
+		CALL DIVIDE			; R0=R1/R2	
+		ASL R0
+		ASL R0
+		MOV R0,TEMPO
+
+		RET
+
+; search for samples offsetss extra data
+
+CHECKOFFSETS:
+		MOV #MODULE,R4
+		MOV #177777,R2
+1:		CMP (R4)+,R2	; find a pattern end marker
+		BNE 1
+		CMP 4(R4),R2	; check for the song end marker
+		BNE 1
+2:		CMPB (R4)+,R2	; seek for the marker's end
+		BEQ 2
+		BIC #1,R4
+		MOV #10,R0
+		MOV #TXTOFF,R1
+3:			CMPB (R1)+,(R4)+
+			BNE 4		; exit if no offsets data block
+		SOB R0,3
+		MOV R4,OFFSETSDATA	; store pointer to offsets data block
+4:		RET
+
+; calculate and print playing time
+
+PLAYTIME:
+		MOV MUSIC,R1		; address of patterns
+		MOV #PATADR+2,R0	; temporary storage: number of rows in each pattern
+		MOV #5,R5
+1:		CLR R2
+2:		TST (R1)
+		BMI 3				; end of pattern?
+		INC R2				; number of rows
+		ADD R5,R1
+		BR 2
+3:		ADD R5,R1			; skip pattern end marker
+		MOV R2,(R0)+
+		TST (R1)
+		BGE 1				; not end of song?
+
+		SUB #PATADR+2,R0
+		ASR R0				; number of patterns
+		MOV #PATTXT,R1
+		MOV #100,R2
+		EMT 20
+		CALL @DECOUT		; print number of patterns
+
+		MOV ORDERS,R0		; number of orders
+		MOV #ORDTXT,R1
+		MOV #100,R2
+		EMT 20
+		CALL @DECOUT		; print number of orders
+
+		MOV #TIMTXT,R1
+		MOV #100,R2			; print time:
+		EMT 20
+		CLR R1
+		MOV ORDERL,R0
+4:		MOVB (R0)+,R2
+		BEQ 5				; end of pattern list?
+		ASL R2
+		ADD PATADR(R2),R1	; number of rows in this pattern	
+		BR 4
+
+5:		MOV R1,PATADR		; temporrary store number of rows here
+		MOV BPM,R2
+		CALL DIVIDE			; R0 = R1/R2 = rows/bpm
+		ASR R0
+		ASR R0				; minutes
+		MOV R0,TEMP
+		BEQ 52				; 0 minutes?
+
+		CALL @DECOUT		; print minutes
+		MOV #TXTMIN,R1
+		MOV #10,R2
+		CMP TEMP,#1
+		BNE 51
+		DEC R2				; minutes -> minute
+51:		EMT 20
+
+52:		CLR R1
+		MOV TEMP,R0			; minutes
+		BEQ 61
+		MOV BPM,R2
+6:		ADD R2,R1
+		SOB R0,6
+		ASL R1
+		ASL R1
+61:		MOV PATADR,R0
+		SUB R1,R0			; the rest number of rows
+		CLR R1
+		MOV #15.,R2
+7:		ADD R0,R1
+		SOB R2,7
+		MOV BPM,R2
+		CALL DIVIDE			; R0=R1/R2
+		MOV R0,TEMP
+		BEQ 72				; 0 seconds?
+
+		CALL @DECOUT		; print seconds
+		MOV #TXTSEC,R1
+		MOV #10,R2
+		CMP TEMP,#1
+		BNE 71
+		DEC R2				; seconds -> second
+71:		EMT 20
+
+72:		MOV #LOADIN,R1
+		MOV #100,R2			; print Loading...
+		EMT 20
+
+		EMT 26				; get cursor position, Y in R2
+		MOV R2,SHOWPLAYING+2
+		RET
+
+; search for the first playing note on selested channel
+; input:  R1 - offset of the channel
+; output: R1 - number of sample or -1
+
+SEARCHANNEL:
+		ADD MUSIC,R1		; pointer to patten data
+		MOV #5,R5
+		SUB R5,R1
+1:			ADD R5,R1
+			TSTB (R1)
+		BEQ 1
+		BPL 2				; note found
+			ADD R5,R1		; skip end of pattern marker
+			TSTB (R1)		; end of song?
+		BGE 1
+2:		MOVB (R1),R1
+		RET
+
+; collect information about files
+
+FILES:	CLR NSMPLS			; number of usual samples in this tune
+		CLR NDRUMS			; number of drum samples in this tune
+		MOVB @#120012,DRIVE	; current drive
+		CLR R0
+		CALL @120016(R0)	; MKDOS init disk driver (returns block of parameters address in R3)
+		CALL @120024(R0)	; MKDOS read catalog of files from disk
+		BCC 2
+			MOV #CATERR,R1	; error
+			JMP ERR
+2:		MOV R3,CATAL		; catalog address
+		MOV #ONDISK,R5		; array of block numbers and sizes in bytes for each file
+		MOV NAMES,R4
+
+3:		TST NDRUMS
+		BNE 5				; load a drum
+4:			INC NSMPLS		; number of usual samples
+			TSTB (R4)		; end of usual samples list?
+			BNE 6
+				INC R4		; skip zero byte and then load drums
+				DEC NSMPLS
+5:		TSTB (R4)			; end of drums list?
+		BEQ 0				; loading completed
+		INC NDRUMS			; number of drums
+6:
+		CALL COPNAM			; copy file name from R4 to EMT 36 data block
+
+		MOV CATAL,R3
+		MOV R4,-(SP)
+		MOV R5,-(SP)
+		CLR R0
+		CALL @120026(R0)	; MKDOS search file in catalog
+		MOV (SP)+,R5
+		MOV (SP)+,R4
+		BCC 7
+			MOV #16000,@#SYSREG	; memory page 4 for MkDos and AnDos
+			MOV #1330,@#177664	; set default screen mode
+			MOV #40000,@#177662	; show screen 1, timer off
+			MOV #14,R0		; clear screen
+			EMT 16
+			MOV @#306,R1	; MKDOS EMT36 parameters block
+			ADD #6,R1		; address of file name
+			MOV #20,R2
+			EMT 20			; print file name
+			MOV #NOTFND,R1	; error message
+			MOV #200,R2
+			EMT 20			; type error message
+			JMP STOP
+7:		MOV 20(R3),(R5)+	; file's start block on disk
+		MOV 26(R3),(R5)+	; file's size in bytes
+		BR 3
+
+0:		RET
+
+
+; fill samples map, calculate sample addresses
+
+DOMAP:	CLR (R5)+			; end of file list
+
+		MOV #FREE,R3		; low memory address to load the usual samples
+		MOV #ONDISK,R4		; pointer to the first file
+		MOV #MAP,R5			; pointer to table of loaded files
+
+		MOV NSMPLS,R0		; number of usual samples
+		BEQ 2
+1:		MOV R3,(R5)+		; sample address
+		TST (R4)+
+		MOV (R4)+,(R5)		; sample size
+		ASL (R5)			; double size
+		ADD (R5)+,R3		; address of the next sample
+		CMP R3,#140000
+		BHIS 6				; if out of memory
+		SOB R0,1
+
+2:		MOV NDRUMS,R0
+		BEQ 5
+		CMP R3,#100000		; in high memory already?
+		BHIS 3
+			MOV #100000,R3	; set drum address to high memory
+3:		MOV #140000,R2
+		SUB R3,R2			; room for drum sample
+
+		MOV R3,CHADDR+4		; initial drum address
+4:		MOV R3,(R5)+		; drum address
+		TST (R4)+
+		MOV (R4)+,(R5)		; sample size
+		CMP (R5)+,R2
+		BGT 6				; if out of memory
+		SOB R0,4
+5:		RET
+
+6:		MOV #OUTMEM,R1		; error: out of memory
+		JMP ERR
+
+
+; preload 3 samples and calculate anticlick
+
+NOCLICK:
+		MOV #HDDBLK,R3
+		CLR ANTICLICK
+		MOV #CHFIRST,R0
+		CALL PRELOAD
+		MOV #CHFIRST+2,R0
+		CALL PRELOAD
+		MOV #CHFIRST+4,R0
+		CALL PRELOAD
+		MOV ANTICLICK,@#COVOX
+		RET
+PRELOAD:
+		MOV (R0),R1			; get sample number
+		BMI 1				; if no any sample on this channel
+		DEC R1
+		ASL R1
+		ASL R1
+		MOV MAP(R1),(R0)	; store sample address
+		MOV ONDISK(R1),R0	; block number
+		MOV #200,R1			; file size in words
+		MOV #37400,R2		; address to load
+		CALL @#160004		; load file by block number
+		MOV #37400,R1		; sample address
+		ADD @#37420,R1
+		ADD #34,R1			; skip WAV header, usually 54 bytes
+		MOV (R1),R0			; sample data
+		BIC #177400,R0
+		MOVB TABL3(R0),R0	; divide by 3
+		ADD R0,ANTICLICK
+1:		RET
+
+; prepare "playing" text
+
+PLAYING:
+		MOV #PLATXT,R1
+		MOV #100,R2
+		EMT 20
+		MOV #9.,R3
+		MOV #42001,R1		; screen addres of the text
+		MOV #TXTBUF,R2
+1:		MOV #4,R0
+2:		MOVB (R1)+,(R2)+	; copy text as bitmap
+		SOB R0,2
+		ADD #60.,R1
+		SOB R3,1
+		RET
+
+
+VERS:	.BYTE 14 .ASCIZ " MKDOS 3.15 or higher needed"
+ALTPRO:	.BYTE 14 .ASCIZ " SMK-64 HDD controller needed"
+INPUT:	.BYTE 14 .ASCII " Strogino Sound Tracker 25KHz Covox player v0.3"
+		.BYTE 12 .ASCIZ " Input music file name: "
+CATERR:	.BYTE 14 .ASCIZ " can't read disk catalog"
+NOTFND:	.ASCIZ " file not found"
+LOAERR:	.BYTE 14 .ASCIZ " loading error"
+OUTMEM:	.BYTE 14 .ASCIZ " not enough memory"
+FORMAT:	.BYTE 14 .ASCIZ " not Strogino Sound Tracker 25KHz format"
+TITL1:	.BYTE 12
+		.BYTE 12 .ASCIZ "    title: "
+TITL2:	.BYTE 12 .ASCIZ "   author: "
+TITL3:	.BYTE 12 .ASCIZ "    group: "
+TITL4:	.BYTE 12 .ASCIZ "     year: "
+TITL5:	.BYTE 12 .ASCIZ "  comment: "
+VOLTXT:	.BYTE 12
+		.BYTE 12 .ASCIZ "   volume:"
+BPMTXT:	.BYTE 12 .ASCIZ "      BPM:"
+PATTXT:	.BYTE 12 .ASCIZ " patterns:"
+ORDTXT:	.BYTE 12 .ASCIZ "   orders:"
+TIMTXT:	.BYTE 12 .ASCIZ "     time:"
+TXTMIN:	.ASCIZ " munites"
+TXTSEC:	.ASCIZ " seconds"
+LOADIN:	.BYTE 12
+		.BYTE 12 .ASCII " Loading..."
+		.BYTE 12
+		.BYTE 0
+PLATXT:	.BYTE 14 .ASCII " Playing"
+		.BYTE 12
+		.BYTE 0
+TXTOFF:	.ASCIZ "OFFSETS"
+		.EVEN
+
+OFFSETSDATA:	.WORD 0	; pointer to offsets data block
+CURRENTROW:		.WORD 0	; current row's number
+CURRENTCHANNEL:	.WORD 1	; current channel's number
+
+MODULE:
+
+
+ 	.END
+
+; end of file
+

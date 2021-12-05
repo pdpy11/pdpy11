@@ -1,0 +1,181 @@
+; "Boing Ball" 512-byte intro for BK-0011M
+; (c) Manwe/SandS 2020 manwe.pdp-11.ru
+
+; Compile this code with PDPy11 by Ivanq
+; github.com/imachug/PDPy11
+
+
+		SCROLL	= 177664
+		XSCALE	= ARC1+12
+
+
+INIT:	MOV #152112,@#30		; set EMT Monitor-11
+		EMT 0					; init, set 256 pixels in row
+		MOV #400,R0				; show 0 screen, write to 1 screen
+		EMT 56					; set screens
+		MOV #100,@#177660		; block keyboard interruption
+		MOV #140000,@#4			; set STOP key vector to system restart
+
+		MOV #-66.,R5			; distance between circles
+		MOV #4,R3				; draw 4 circles
+1:			MOV #ARC2,R0		; pointer to circle parameters
+			SUB R5,(R0)			; add 64 to X
+			EMT 77				; draw circle
+			MOV (R0),R0			; X
+			MOV ARC2+2,R1		; Y
+			EMT 66				; set point
+			CALL @#PROGRESS
+			MOV #1,R0
+			EMT 100				; paint
+		SOB R3,1
+
+
+CIR:	MOV #40000,R4
+		MOV #CIRDAT,R1
+		MOV #8.,R3					; draw 8 semi-circles
+C1:			MOVB (R1)+,XSCALE+1		; X scale
+			BEQ C3
+			MOVB (R1)+,R2			; repeat
+2:				MOV #ARC1,R0		; pointer to circle parameters
+				EMT 77				; draw arc
+				SUB #4000,XSCALE	; X scale
+			SOB R2,2
+			CALL @#PROGRESS
+			BR C1
+C3:			XOR R4,ARC1+6		; mirror ARC1
+			XOR R4,ARC1+10		; mirror ARC2
+			TST R5
+			BMI 4
+				ADD R5,@#ARC1	; next X
+4:			NEG R5
+		SOB R3,C1
+
+
+		MOV #LINES,R4
+MASK:	MOV #10100,R0			; size
+1:			MOVB 57400(R0),R1	; get ball pixels
+			XOR R3,R1			; apply lines
+			DEC (R4)
+			BNE 2
+				COM R3			; inverse line colour
+				TST (R4)+		; get next line size
+2:			MOV R1,R2			; dublicate
+			COM R2				; inverse
+			BIS #52525,R1		; paint magenta
+			BIS #52525,R2		; paint magenta
+			MOVB 67600(R0),R5	; get mask value
+			COM R5
+			BIC R5,R1			; apply mask
+			BIC R5,R2
+			MOVB R1,57400(R0)	; save final picture
+			MOVB R2,67602(R0)	; save inversed final picture
+		SOB R0,1
+
+		CALL @#PROGRESS
+
+
+		MOV #40000,R0
+CLS:	CLRB 77777(R0)
+		SOB R0,CLS
+
+
+TIMER:	MOV #VSYNC+2,@#100		; timer subroutine
+		MOV #102000,@#177662	; set CGA palette and start timer
+
+
+		MOV #127376,R2			; ball screen address
+
+LOOP:	MOV #13.,R3				; screen width in double words
+DRAW8:		MOV #SPRITES,R0		; pointer to sprite address table
+			MOV #8.,R4			; sprites per word
+L2:				ADD #1,L2+10
+				MOVB @#SINTBL+20.,R5	; get sine value
+				BNE 1
+					NEG L2+2
+					BMI L2
+					CALL @#SOUND
+					BR L2
+1:				MOV (R0),R1			; get sprite address
+L1:				ADD #2,R0
+				ADD #1324,R5		; default scroll value
+
+				WAIT				; v-sync
+				WAIT				; skip 1 frame
+
+				MOV R5,@#SCROLL
+				MOV #65.,R5				; sprite height
+3:					CLR (R2)+
+					MOV (R1)+,(R2)+		; draw ball
+					MOV (R1)+,(R2)+
+					MOV (R1)+,(R2)+
+					MOV (R1)+,(R2)+
+					MOV (R1)+,(R2)+
+					MOV (R1)+,(R2)+
+					MOV (R1)+,(R2)+
+					MOV (R1)+,(R2)+
+					CLR (R2)
+					ADD #60,R1			; next row
+					ADD #56,R2
+				SOB R5,3
+DIR2:			SUB #10100,R2			; same screen address
+			SOB R4,L2
+DIR1:	ADD #4,R2			; next screen address
+		SOB R3,DRAW8		; to the screen border
+
+		CALL @#SOUND
+		SUB DIR1+2,R2
+		NEG DIR1+2			; change screen direction
+		NEG L1+2			; change sprite direction
+DIR3:	ADD #16,DRAW8+2
+		NEG DIR3+2
+		BR LOOP
+
+
+
+SOUND:	MOV #400,R5			; sound data address
+SND:	MOV #10000,@#177716		; speaker port
+		MOVB 1400(R5),SND+2
+		SOB R5,SND
+		RET
+
+
+PROGRESS:
+		MOV #17400,@#177716		; set memory pages
+		COM @#120014			; progrss bar
+VSYNC:	ADD #2,PROGRESS+10
+		RET
+
+
+LINES:	.WORD 100,700, 1300,1600, 1600,1300, 600,100
+
+SPRITES: ; addresses
+		.WORD 57400,57420,57440,57460,67600,67620,67640,67660
+
+CIRDAT:
+		.BYTE 300,2,151,14.,0	; ready
+		.BYTE 260,8.,0			; ready
+
+		.BYTE 300,4,121,11.,0	; ready
+		.BYTE 270,6,44,4,0		; ready
+
+		.BYTE 300,6,61,7,0		; ready
+		.BYTE 300,5,70,7,0		; ready
+
+		.BYTE 270,7,34,4,0		; ready
+		.BYTE 300,3,131,11.,0	; ready
+		.EVEN
+
+		; X, Y, radius, ARC1, ARC2, X scale, Y scale
+ARC1:	.WORD 24.,156.,32.,20000,60000,140000,0
+ARC2:	.WORD -42.,222.,32.,0,77777,140000,0
+
+
+SINTBL:	.BYTE 1.,8.,15.,22.,29.,35.,42.,49.
+		.BYTE 55.,61.,67.,73.,78.,83.,88.
+		.BYTE 93.,97.,101.,105.,108.,111.
+		.BYTE 114.,116.,118.,119.,120.,121.
+		.BYTE 0
+
+TXT:	.ASCIZ "SANDS2020"
+
+ 	.END

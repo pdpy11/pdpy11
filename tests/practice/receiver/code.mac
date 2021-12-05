@@ -1,0 +1,194 @@
+ 
+; Turbo magnetic tape loader and launcher for BK0010 and BK0011M
+; Compile this source with PDPy11: https://github.com/pdpy11
+; Manwe/SandS 2019-2021
+
+	LowAddress = 400
+
+; mono 8 bit WAV 40000 Hz sample rate
+; pilotone = 111000
+; piloton end = 111111111111000000000000
+; bit0 = 100
+; bit1 = 11100
+
+Begin:	MTPS #340
+		CMPB @#177717,#200	; is it BK-0010 or BK-0011?
+		BEQ 1				; skip if BK-0010
+			MOV SpeedH+2,SpeedH	; replace BRanch with NOP
+			MOV SpeedL+2,SpeedL
+
+1:		MOV #LOW,R4
+		MOV #LOWADDRESS,R5	; where to copy
+2:		MOV (R4)+,(R5)+
+		BNE 2
+
+Print:	MOV #TXT1,R1		; welcome message
+		CLR R2
+		EMT 20
+
+		MOV #LoadH,LOAD
+		CLR R2
+		MOV #256.,R3		; 256 periods
+		MOV #177716,R4		; audio input address
+		MOV #40,R5			; audio input bit
+
+Read:	BIT R5,(R4)			; first period high level
+		BNE Read
+4:		BIT R5,(R4)			; first period low level
+		BEQ 4
+
+5:			INC R2			; mesure high level
+			BIT R5,(R4)
+			BNE 5
+6:			INC R2			; mesure low level
+			BIT R5,(R4)
+			BEQ 6
+		SOB R3,5
+
+Marker:	CLRB R2				; calculate average period
+		SWAB R2
+		MOV #8.,R3			; bits in byte
+		CMP R2,R3			; not pilotone?
+		BMI Read
+
+1:		MOV R2,R0
+2:			DEC R0			; measure high level
+			BMI 4			; goto if long high period detected
+			BIT R5,(R4)
+		BNE 2
+		MOV R2,R0
+3:			DEC R0			; measure low level
+			BMI 5			; goto if long low period detected
+			BIT R5,(R4)
+		BEQ 3
+		BR 1				; wait for marker (long period)
+
+4:		BIT R5,(R4)			; wait for low level
+		BNE 4
+		BR 6
+
+5:		BIT R5,(R4)			; wait for high level
+		BEQ 5
+		MOV #LoadL,LOAD		; long low period detected
+
+6:		MOV #77777,R1		; address to load
+		MOV #20.,R0			; size of file header
+		CALL @LOAD			; read address, size, name
+
+		MOV @#77774,R0		; get size
+		SWAB R0
+		ADD #2,R0			; load also checksum
+		CALL @LOAD			; load data
+
+Check:	INC R1				; pointer to checksum
+		SWAB (R1)+			; pointer to begin of the file
+		MOV #100000,R5
+1:			CLR R2			; calculate checksum
+			BISB -(R5),R2
+			ADD R2,R0
+			ADC R0
+		CMP R5,R1
+		BNE 1
+		CMP R0,-(R1)		; compare checksum
+		BEQ 2
+			MOV #100734,R1	; error message
+			MOV #6,R2
+			EMT 20
+			BR Print
+
+2:		MOV #100000,R1
+		MOV #320,R2			; save system variables
+		CLR (R2)+			; no errors
+		SWAB -(R1)
+		MOV (R1),(R2)+		; save address
+		SWAB -(R1)
+		MOV (R1),(R2)+		; save size
+		MOV (R1),R0
+		MOV #20,R3			; copy file name
+3:			MOVB -(R1),(R2)+
+		SOB R3,3
+		JMP @#LowAddress
+
+TXT1:	.BYTE 12
+		.ASCIZ "Receiving from tape..."
+		.EVEN
+
+
+LOAD:	.WORD LoadH
+
+
+; read from tape subroutine for high level
+
+LoadH: 		MOV R3,R2		; read 8 bits
+1:				BIT R5,(R4)	; wait for high level
+				BEQ 1
+SpeedH:			BR 2		; for BK-0010
+				NOP			; for BK-0011
+				NOP
+				NOP
+2:				BIT R5,(R4)	; is it low level already?
+				BEQ 4
+				BIT R5,(R4)
+				BEQ 4
+				BIT R5,(R4)
+				BEQ 4
+3:				BIT R5,(R4)	; wait for high level end
+				BNE 3
+					SEC		; 1
+				BR 5
+4:					CLC		; 0
+5:				RORB (R1)	; load bit C
+			SOB R2,LoadH+2
+			DEC R1			; next byte
+		SOB R0,LoadH
+		RET
+
+
+; read from tape subroutine for low level (inversed signal)
+
+LoadL:		MOV R3,R2		; read 8 bits
+1:				BIT R5,(R4)	; wait for low level
+				BNE 1
+SpeedL:			BR 2		; for BK-0010
+				NOP			; for BK-0011
+				NOP
+				NOP
+2:				BIT R5,(R4)	; is it high level already?
+				BNE 4
+				BIT R5,(R4)
+				BNE 4
+				BIT R5,(R4)
+				BNE 4
+3:				BIT R5,(R4)	; wait for low level end
+				BEQ 3
+					SEC		; 1
+				BR 5
+4:					CLC		; 0
+5:				RORB (R1)	; load bit C
+			SOB R2,LoadL+2
+			DEC R1			; next byte
+		SOB R0,LoadL
+		RET
+
+
+; copy following to the low system memory	
+; R0 - size
+; R1 - 777754
+; R5 - low addres of the loaded data
+
+LOW:	MOV R0,R3
+		ASR R3
+		MOV R5,R2
+1:			MOVB (R5),R4	; mirror file
+			MOVB -(R1),(R5)+
+			MOVB R4,(R1)
+		SOB R3,1
+
+		MOV @#322,R3		; destination address
+2:			MOVB (R2)+,(R3)+
+		SOB R0,2			; copy file to the place
+
+		MOV @#322,PC		; autostart
+
+		HALT				; end marker
+	.END

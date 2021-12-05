@@ -1,0 +1,33 @@
+; 10palette - auto switch to BK 0010 palette when running games
+; Compile this source with PDPy11: https://github.com/imachug/PDPy11
+; (c) Manwe/SandS 2021
+
+		CMPB @#177717,#200		; is it BK-0010 or BK-0011?
+		BEQ QUIT				; go if BK-0010
+		MOV #177662,R2			; palette register
+
+		MOV @#120014,R0			; pointer to disk catalog in memory
+		CMP 402(R0),#51414		; MKDOS format marker
+		BEQ MKDOS
+
+ANDOS:	CMP @#120446,#"ND"		; part of "ANDOS" text
+		BNE QUIT
+		CMP @#120170,#100466	; check version 3.1 or higher
+		BLO QUIT
+			MOV #120244,R1		; pointer to ANDOS user's variables
+			BR FIND
+
+MKDOS:	MOV #120100,R1			; pointer to user cells array
+FIND:	MOV #3,R0
+1:			TST (R1)+			; check for free address
+			BEQ 2				; free cell found
+			CMP (R1),R2			; is it palette register?
+			BEQ 3
+			TST (R1)+			; skip value
+		SOB R0,1
+		RET						; no free cells
+
+2:		MOV R2,(R1)				; write palette register
+3:		MOV #40000,-(R1)		; set palette 0 and stop VSync timer
+QUIT:	RET
+.END

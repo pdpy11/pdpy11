@@ -1,0 +1,147 @@
+; for BK-0011M Soviet computer
+; (c) Manwe/SandS 2021
+; compile this code with PDPy11 by Ivanq
+; github.com/imachug/PDPy11
+
+		PAL		= 177662	; colour palette port address
+		SCROLL	= 177664
+		blue	= 52525
+		green	= 125252
+		red		= 177777
+		RUN		= 2000		; place code there
+
+		P1 = 7 * 400
+		P2 = 6 * 400
+		P3 = 10 * 400
+		P4 = 0 * 400
+		P5 = 4 * 400
+		P6 = 4 * 400
+
+		MTPS #340			; disable interruptions
+		MOV #40000,@#PAL	; set 0th palette and stop VSync timer
+		MOV SP,STACK+2
+		MOV SP,SP2+2
+		MOV @#4,STOP+2
+		MOV @#60,KEY+2
+		MOV @#100,V100+2
+		MOV @#102,V102+2
+		MOV @#274,AR2+2
+
+
+		MOV #1330,@#SCROLL	; scroll position
+
+		; build screen pattern
+		MOV #40000,R4
+		MOV #191.,R0		; picture height
+1:			CLR (R4)+		; left screen column
+			MOV #10.,R3
+2:				MOV #52525,(R4)+	; draw screen pattern
+				MOV #125252,(R4)+
+				MOV #177777,(R4)+
+			SOB R3,2
+			CLR (R4)+			; right screen column
+		SOB R0,1
+		MOV #4040,R0
+3:			CLR (R4)+
+		SOB R0,3
+
+;		MOV #RUN,R2			; copy code
+;		MOV #LOOP,R1
+;		MOV #(FREE-LOOP)/2,R0
+;4:			MOV (R1)+,(R2)+
+;		SOB R0,4
+
+		MOV #191.,R0		; picture height
+		MOV #FREE,R2
+5:			MOV #CODE,R1	; generate code
+			.Repeat (FREE-CODE)/2
+			{ MOV (R1)+,(R2)+ }
+		SOB R0,5
+		MOV #137,(R2)+		; JMP @# instruction code
+		MOV #LOOP,(R2)+		; address
+
+		MOV #EXIT,R1
+		MOV R1,@#4
+		MOV R1,@#60
+		MOV R1,@#274
+		MOV #COL,@#100
+		MOV #140,@#102
+		MTPS #0				; enable interruptions
+		CLR @#PAL			; set RGB palette and start timer
+		WAIT
+
+
+EXIT:	MOV #40000,@#PAL	; set 0th palette and stop VSync timer
+STACK:	MOV #1000,SP
+KEY:	MOV #0,@#60
+V100:	MOV #0,@#100
+V102:	MOV #0,@#102
+AR2:	MOV #0,@#274
+STOP:	MOV #0,@#4
+		RET					; return to DOS
+
+
+LOOP:	NEG #1
+		BMI MAIN2
+
+		MOV #40000+48.*100,R0		; move top lines to the right
+		MOV #76,R4
+		MOV #4,R3
+MAIN1:	MOV #2,R2
+1:			ASL (R0)+
+			.repeat 28.
+			{
+				ROL (R0)+
+			}
+			ROL (R0)+
+			ROL (R0)+
+			ADC -74(R0)
+			SUB R4,R0
+		SOB R2,1
+		ADD #100,R0
+		SOB R3,MAIN1
+		BR RAY
+
+MAIN2:	MOV #70000-48.*100-2,R0		; move bottom lines to the left
+		MOV #100000,R5
+		MOV #74,R4
+		MOV #4,R3
+1:		MOV #2,R2
+2:			CLC
+			.repeat 28.
+			{
+				ROR -(R0)
+			}
+			ROR -(R0)
+			ROR -(R0)
+			BCC 4
+				BIS R5,72(R0)
+4:			ADD R4,R0
+		SOB R2,2
+		SUB #100,R0
+		SOB R3,1
+
+RAY:	WAIT				; wait for v-sync
+
+COL:	MOV #PAL,R0
+		MOV #P1,R1			; palettes
+		MOV #P2,R2
+		MOV #P3,R3
+		MOV #P4,R4
+		MOV #P5,R5
+SP2:	MOV #2000,SP
+
+		MOV #443,DELAY+2	; ideal
+DELAY:	DEC #0
+		BNE DELAY
+
+CODE:	MOV R5,(R0)
+		MOV R1,(R0)
+		MOV R2,(R0)
+		MOV R3,(R0)
+		MOV R4,(R0)
+		MOV R5,(R0)
+		MOV #P1,R1
+		MOV #P2,R2
+FREE:
+ 	.END

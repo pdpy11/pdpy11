@@ -1,0 +1,216 @@
+; Maze 512 bytes intro (c) Manwe/SandS 2019
+; compile this code with PDPy11 by Ivanq
+; github.com/imachug/PDPy11
+
+
+	TIMER  = 177712			; timer port address
+	MEMORY = 177716			; register to switch memory pages
+	PALETT = 177662			; palette register
+	SCROLL = 177664
+	Buffer = Sprite0+20
+
+
+		MOV @#4,STOP+2			; save STOP vector
+		MOV #BK0010,@#4
+
+		MOV #42000,@#PALETT		; set 4th palette, enable stop key, VSync timer off
+		MOV #16000,@#MEMORY		; set Screen 0
+		MOV #640.,@#TIMER-4		; BK-0011 timer initial value
+		MOV #240,COLOR			; put NOP instruction instead of branch
+		BR BEGIN
+
+BK0010:	CMP (SP)+,(SP)+			; restore stack pointer after interruption
+		MOV #480.,@#TIMER-4		; BK-0010 timer initial value
+BEGIN:	MOV #1,@#TIMER			; stop and init timer	
+		MOV #20,@#TIMER			; start timer
+STOP:	MOV #100000,@#4
+
+		MOV #Sprite0+2,R0		; clear memory and screen
+CLS:	CLR (R0)+
+		TST R0
+		BPL CLS
+
+
+		; prerender maze
+
+RND1:	MOV #173451,R1		; seed 1
+RND2:	MOV #54102,R2		; seed 2
+		MOV #Buffer,R3
+		MOV #15300,R0		; amount of random values
+		CLR R5				; not empty sprite probability
+
+RND:	ROR R1				; random numbers generator
+		ROL R2
+		SWAB R2
+		XOR R2,R1
+		ADD @#TIMER-2,R1
+		MFPS -(SP)
+		TST R5
+		BMI RANGE
+FADE:		ADD #11,R5		; inc sprite probability
+			MOV R1,R4
+			BIC #100000,R4
+			CMP R4,R5		; not empty sprite probability
+			BLO CHOOSE
+				MOV #Sprite0+16,(R3)+
+				BR NEXT
+RANGE:	CMP R3,#Buffer+23600	; fade out value
+		BNE CHOOSE
+			MOV #100000,R4
+			XOR R4,FADE			; change ADD to SUB
+			ASL FADE+2
+			SUB #12,R5
+CHOOSE:	MOV R1,R4
+		ROR R4
+		BCC 1
+			MOV #Sprite1+16,(R3)+
+			BR NEXT
+1:			MOV #Sprite2+16,(R3)+
+NEXT:	MTPS (SP)+
+		SOB R0,RND
+
+
+;		Fill empty lines
+
+		MOV #600,R0
+1:		MOV #Sprite0+16,(R3)+
+		SOB R0,1
+
+
+		; put quads to the maze
+
+		MOV #Buffer,R3				; Buffer pointer
+QUADS:	CMP (R3)+,#Sprite2+16
+		BNE 1
+		CMP (R3),#Sprite1+16
+		BNE 1
+		CMP 76(R3),#Sprite1+16
+		BNE 1
+		CMP 100(R3),#Sprite2+16
+		BNE 1
+			MOV #Sprite3+16,(R3)
+			MOV #Sprite6+16,-(R3)
+			MOV #Sprite4+16,100(R3)
+			MOV #Sprite7+16,102(R3)
+1:		TST (R3)
+		BNE QUADS
+
+
+		; draw text
+
+TEXT:	SUB #542,R3				; address in buffer
+		MOV #CAFE,R1
+		MOV #10.,R0
+1:			MOV (R1)+,R4		; get offset
+			ADD R3,R4
+			MOV #Sprite2+16,(R4)
+			MOV 22(R1),R4		; get offset
+			ADD R3,R4
+			MOV #Sprite1+16,(R4)
+		SOB R0,1
+
+
+		; draw maze from Buffer
+
+		MOV #77700,R5		; screen address
+LOOP:	MOV #Buffer-100,Buf+2
+DRAW:	MOV #10*2,R2		; sprite height * 2
+		ADD #100,Buf+2		; next maze row in buffer
+LINE:	SUB #2,R2			; change offset in sprite
+		BMI DRAW
+
+Buf:	MOV #Buffer,R3
+		MOV #40,R0			; number of sprites in a row
+1:			MOV (R3)+,R1	; get start address of the sprite
+			BEQ LOOP
+			SUB R2,R1		; offset in sprite
+			MOV (R1),(R5)+	; put on the screen
+		SOB R0,1
+
+ROLL:	MOV #1330,@#SCROLL	; scroll the screen by one line
+		INCB ROLL+2
+
+		MOV #TIMER-2,R0
+		MOV #3,R1
+VSYNC:	CMP (R0),R1			; wait for frame sync
+		BGE	VSYNC
+
+		TST R5				; screen bottom?
+		BPL COLOR
+			SUB #40000,R5
+
+COLOR:	BR 1
+			DEC #1200
+			BNE 1
+				MOV #120,COLOR+4
+				MOV #42000,@#PALETT		; change palette
+				MOV #4400,R0
+				XOR R0,COLOR+20
+
+1:		BR LINE
+
+
+
+CAFE:		.WORD 200-10, 400-4, -4, 100-2, -200, 2-100, 4-400, 6-300, 10-200, 10-200 ; \
+			.WORD 300-10, 400-6, 100-4, 200-2, -2, 100, -100, 2, 4-300, 6-200 ; /
+
+Sprite1:	.WORD 0b0100000000000011
+			.WORD 0b0000000000001101
+			.WORD 0b0000000000110100
+			.WORD 0b0000000011010000
+			.WORD 0b0000001101000000
+			.WORD 0b0000110100000000
+			.WORD 0b0011010000000000
+			.WORD 0b1101000000000000
+
+Sprite3:	.WORD 0b0100000000000011
+			.WORD 0b0000000000001101
+			.WORD 0b0000000000110100
+			.WORD 0b0000000011010000
+			.WORD 0b0000001101000000
+			.WORD 0b0000110100000000
+			.WORD 0b0011010000000010
+			.WORD 0b1101000000001010
+
+Sprite4:	.WORD 0b1010010000000011
+			.WORD 0b1001000000001101
+			.WORD 0b0100000000110100
+			.WORD 0b0000000011010000
+			.WORD 0b0000001101000000
+			.WORD 0b0000110100000000
+			.WORD 0b0011010000000000
+			.WORD 0b1101000000000000
+
+Sprite2:	.WORD 0b1100000000000001
+			.WORD 0b0111000000000000
+			.WORD 0b0001110000000000
+			.WORD 0b0000011100000000
+			.WORD 0b0000000111000000
+			.WORD 0b0000000001110000
+			.WORD 0b0000000000011100
+			.WORD 0b0000000000000111
+
+Sprite6:	.WORD 0b1100000000000001
+			.WORD 0b0111000000000000
+			.WORD 0b0001110000000000
+			.WORD 0b0000011100000000
+			.WORD 0b0000000111000000
+			.WORD 0b1000000001110000
+			.WORD 0b1010000000011100
+			.WORD 0b1010100000000111
+
+Sprite7:	.WORD 0b1100000000000110
+			.WORD 0b0111000000000001
+			.WORD 0b0001110000000000
+			.WORD 0b0000011100000000
+			.WORD 0b0000000111000000
+			.WORD 0b0000000001110000
+			.WORD 0b0000000000011100
+			.WORD 0b0000000000000111
+
+Sprite0:	.WORD 0b0100000000000001
+
+ 		.END
+
+; end of file
+

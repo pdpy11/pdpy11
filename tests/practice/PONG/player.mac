@@ -1,0 +1,182 @@
+ 
+; 3 channels player for beeper
+; Compile this source with PDPy11: https://github.com/imachug/PDPy11
+; Manwe/SandS 2019
+
+
+	.extern all	; music.mac needs frequency values
+
+
+		Tempo1 = (130000.*7/6)/BPM
+		Tempo2 = (130000.*4/6)/BPM
+
+MUSIC:	CLR R1				; init channels levels
+		CLR R2
+		CLR R3
+		MOV #177714,R5		; covox port
+		MOV @#60,MusicExit+14	; save keyboard interruption
+		MOV #MusicExit,@#60
+		MOV @#274,MusicExit+22	; save keyboard interruption
+		MOV #MusicExit,@#274
+		MOV #0,@#177660		; allow keyboard interruption
+		MTPS #0
+
+PLAY:	MOV #SONG,ROW+2		; pointer to song data
+		CLR ODD+2
+
+ROW:	MOV #SONG,R4
+		MOV (R4)+,NOTE1+2	; note 1 speed - 48 cc
+		MOV (R4)+,NOTE2+2	; note 2 speed
+		MOV (R4)+,NOTE3+2	; note 3 speed
+		CMP R4,#SONGEND		; check end of song - 32 cc
+		BGE PLAY
+		MOV R4,ROW+2
+		MOV #50120,R4		; channel volume (2 bytes for stereo)
+		MOV #Tempo1,R0		; tempo for odd row
+ODD:	COM #0
+		BMI NOTE1
+		MOV #Tempo2,R0		; tempo for even row
+	
+NOTE1:	ADD #0,#0			; 44 cc
+		BCC 1				; 16 cc
+		XOR R4,R1			; 12 cc
+		BR NOTE2			; 16 cc
+1:		CMP R1,R1			; 12 cc
+		BR NOTE2			; 16 cc
+NOTE2:	ADD #0,#0
+		BCC 1
+		XOR R4,R2
+		BR NOTE3
+1:		CMP R2,R2
+		BR NOTE3
+NOTE3:	ADD #0,#0
+		BCC 1
+		XOR R4,R3
+		MOV R1,R5
+		ADD R2,R5
+		ADD R3,R5
+		MOV R5,@#177714		; Covox port
+		SOB R0,NOTE1	
+		BR ROW				; 16 cc
+1:		CMP R3,R3
+		MOV R1,R5
+		ADD R2,R5
+		ADD R3,R5
+		MOV R5,@#177714		; Covox port
+		SOB R0,NOTE1	
+		BR ROW				; 16 cc
+
+
+MusicExit:
+		MTPS #340
+		MOV #100,@#177660	; block keyboard interruption
+		MOV #100000,@#60	; restore keyboard interruption
+		MOV #100000,@#274	; restore keyboard interruption
+		CMP (SP)+,(SP)+
+		MOV @#177662,R0		; read key to init keyboard
+		RET
+
+
+	.include "music.mac"
+
+
+; frequency values
+
+;D = 2052.
+;Q = 2174. ; 2052 * 2^(1/12)
+
+Q = 2000.	; Do frequency 523,25113 Hz
+
+T1  = 1059463. ; 2^(1/12)
+T2  = 1122462. ; 2^(2/12)
+T3  = 1189207. ; 2^(3/12)
+T4  = 1259921. ; 2^(4/12)
+T5  = 1334840. ; 2^(5/12)
+T6  = 1414214. ; 2^(6/12)
+T7  = 1498307. ; 2^(7/12)
+T8  = 1587401. ; 2^(8/12)
+T9  = 1681793. ; 2^(9/12)
+T10 = 1781797. ; 2^(10/12)
+T11 = 1887748. ; 2^(11/12)
+M   = 1000000. ; million
+
+C1 = Q/4
+Cd1= C1*T1/M
+D1 = C1*T2/M
+Dd1= C1*T3/M
+E1 = C1*T4/M
+F1 = C1*T5/M
+Fd1= C1*T6/M
+G1 = C1*T7/M
+Gd1= C1*T8/M
+A1 = C1*T9/M
+Ad1= C1*T10/M
+B1 = C1*T11/M
+
+C2 = Q/2
+Cd2= C2*T1/M
+D2 = C2*T2/M
+Dd2= C2*T3/M
+E2 = C2*T4/M
+F2 = C2*T5/M
+Fd2= C2*T6/M
+G2 = C2*T7/M
+Gd2= C2*T8/M
+A2 = C2*T9/M
+Ad2= C2*T10/M
+B2 = C2*T11/M
+
+C3 = Q
+Cd3= C3*T1/M
+D3 = C3*T2/M
+Dd3= C3*T3/M
+E3 = C3*T4/M
+F3 = C3*T5/M
+Fd3= C3*T6/M
+G3 = C3*T7/M
+Gd3= C3*T8/M
+A3 = C3*T9/M
+Ad3= C3*T10/M
+B3 = C3*T11/M
+
+C4 = Q*2
+Cd4= C4*T1/M
+D4 = C4*T2/M
+Dd4= C4*T3/M
+E4 = C4*T4/M
+F4 = C4*T5/M
+Fd4= C4*T6/M
+G4 = C4*T7/M
+Gd4= C4*T8/M
+A4 = C4*T9/M
+Ad4= C4*T10/M
+B4 = C4*T11/M
+
+C5 = Q*4
+Cd5= C5*T1/M
+D5 = C5*T2/M
+Dd5= C5*T3/M
+E5 = C5*T4/M
+F5 = C5*T5/M
+Fd5= C5*T6/M
+G5 = C5*T7/M
+Gd5= C5*T8/M
+A5 = C5*T9/M
+Ad5= C5*T10/M
+B5 = C5*T11/M
+
+C6 = Q*8.
+Cd6= C6*T1/M
+D6 = C6*T2/M
+Dd6= C6*T3/M
+E6 = C6*T4/M
+F6 = C6*T5/M
+Fd6= C6*T6/M
+G6 = C6*T7/M
+Gd6= C6*T8/M
+A6 = C6*T9/M
+Ad6= C6*T10/M
+B6 = C6*T11/M
+
+C7 = Q*16.
+

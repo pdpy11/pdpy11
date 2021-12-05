@@ -1,0 +1,166 @@
+; TRON music theme, 3 channels on beeper
+; Manwe/SandS 2019
+
+	.extern all	; player must see BPM and SONG labels
+
+	BPM = 94.
+
+SONG:
+
+; --- pattern 00
+
+.WORD	G2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	G2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	F4	,	Ad4
+.WORD	G2	,	0	,	0
+.WORD	F2	,	0	,	0
+.WORD	A2	,	0	,	0
+
+.WORD	Ad2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	Ad2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	F4	,	Cd5
+.WORD	A2	,	0	,	Ad4
+.WORD	Ad1	,	0	,	0
+.WORD	Ad2	,	0	,	0
+
+.WORD	C3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	C3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	Gd3	,	D4	,	G4
+.WORD	Ad2	,	0	,	0
+.WORD	C2	,	0	,	0
+.WORD	C3	,	0	,	0
+
+.WORD	Cd3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	Cd3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	F4	,	B4	,	Cd5
+.WORD	Cd3	,	B4	,	E5
+.WORD	C3	,	0	,	0
+.WORD	Ad2	,	0	,	0
+
+
+.WORD	G2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	G2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	F4	,	Ad4
+.WORD	G2	,	0	,	0
+.WORD	F2	,	0	,	0
+.WORD	A2	,	0	,	0
+
+.WORD	Ad2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	Ad2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	F4	,	Cd5
+.WORD	A2	,	0	,	Ad4
+.WORD	Ad1	,	0	,	0
+.WORD	Ad2	,	0	,	0
+
+.WORD	C3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	C3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	Gd3	,	D4	,	G4
+.WORD	Ad2	,	0	,	0
+.WORD	C2	,	0	,	0
+.WORD	C3	,	0	,	0
+
+.WORD	Cd3	,	B4	,	Cd5
+.WORD	0	,	0	,	0
+.WORD	Cd3	,	B4	,	Cd5
+.WORD	0	,	0	,	0
+.WORD	G3	,	B4	,	E5
+.WORD	Cd3	,	0	,	0
+.WORD	C3	,	0	,	F4
+.WORD	Ad2	,	0	,	F4
+
+
+; --- pattern 01
+
+.WORD	G2	,	0	,	G4
+.WORD	0	,	0	,	G4
+.WORD	G2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	Ad4	,	G4
+.WORD	G2	,	F4	,	0
+.WORD	F2	,	0	,	0
+.WORD	A2	,	D4	,	0
+
+.WORD	Ad2	,	D4	,	0
+.WORD	0	,	D4	,	0
+.WORD	Ad2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	F4	,	Cd5
+.WORD	A2	,	0	,	Ad4
+.WORD	Ad1	,	0	,	0
+.WORD	Ad2	,	0	,	0
+
+.WORD	C3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	C3	,	0	,	C5
+.WORD	0	,	0	,	0
+.WORD	Gd3	,	D4	,	C5
+.WORD	Ad2	,	0	,	0
+.WORD	C2	,	0	,	Ad4
+.WORD	C3	,	0	,	C5
+
+.WORD	Cd3	,	0	,	0
+.WORD	0	,	0	,	D5
+.WORD	Cd3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	G3	,	0	,	0
+.WORD	Cd3	,	0	,	0
+.WORD	C3	,	0	,	0
+.WORD	Ad2	,	0	,	0
+
+
+.WORD	G2	,	0	,	G4
+.WORD	0	,	0	,	G4
+.WORD	G2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	Ad4	,	G4
+.WORD	G2	,	F4	,	0
+.WORD	F2	,	0	,	0
+.WORD	A2	,	D4	,	0
+
+.WORD	Ad2	,	D4	,	0
+.WORD	0	,	D4	,	0
+.WORD	Ad2	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	B3	,	F4	,	Cd5
+.WORD	A2	,	0	,	Ad4
+.WORD	Ad1	,	0	,	0
+.WORD	Ad2	,	0	,	0
+
+.WORD	C3	,	0	,	0
+.WORD	0	,	0	,	0
+.WORD	C3	,	G4	,	Ad4
+.WORD	0	,	0	,	0
+.WORD	Gd3	,	D4	,	C5
+.WORD	Ad2	,	0	,	0
+.WORD	C2	,	G4	,	Ad4
+.WORD	C3	,	Dd4	,	C5
+
+.WORD	Cd3	,	Dd4	,	C5
+.WORD	0	,	0	,	0
+.WORD	Cd3	,	0	,	0
+.WORD	0	,	0	,	Ad3
+.WORD	G3	,	0	,	Ad3
+.WORD	Cd3	,	0	,	0
+.WORD	C3	,	0	,	G3
+.WORD	Ad2	,	0	,	0
+
+; end marker
+
+.WORD	0	,	0	,	0
+
+SONGEND:
+	HALT

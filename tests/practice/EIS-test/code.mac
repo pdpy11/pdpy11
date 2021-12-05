@@ -1,0 +1,1066 @@
+
+; Extended arithmetic (EIS) test by Manwe/SandS (c)2018
+; Compile this source with PDPy11: https://github.com/imachug/PDPy11
+
+	.LINK 1000
+
+
+INIT:	MOV #HELLO,R1
+		CLR R2
+		EMT 20
+STOP:	MOV @#4,NOEIS+2		; save STOP vector
+		MOV SP,NOEIS+10
+		MOV #NOEIS,@#4
+		CMP @#10,#160016
+		BEQ 1
+			MOV #160016,@#10	; init EIS driver
+			MOV #WARN,R1
+			CLR R2
+			EMT 20
+1:		MOV #100,@#177660	; block keyboard interruption
+		ASH #1,R1
+		MOV #12,R0
+		EMT 16
+
+		CLR ERRORS
+		MOV #DATA,R5
+
+
+; MUL
+
+MULTST:	MOV (R5)+,R0	
+		CALL DEC16
+		MOV #TMUL,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		CALL DEC16
+		MOV #EQUAL,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		MOV (R5)+,R1
+		CALL DEC32
+		SUB #10,R5
+		MOV (R5)+,R0		; source
+		MOV (R5)+,R3		; multiplier
+
+		MTPS #7
+		MUL R3,R0			; execute test command
+		MFPS R4
+		BIC #177760,R4
+
+		PUSH R1
+		EMT 26				; get cursor position
+		MOV #44,R1
+		EMT 24				; set cursor position
+		POP R1
+
+		CALL PSWOUT			; print PSW
+		CMP R0,(R5)+
+		BNE 2
+			CMP R1,(R5)+
+			BNE 21
+				CMP R4,(R5)+
+				BEQ 1
+					MOV #PSWERR,R1
+					CLR R2
+					EMT 20
+					INC ERRORS
+					BR 3
+1:				MOV #OK,R1
+				CLR R2
+				EMT 20
+				BR 3		; next arguments
+2:		TST (R5)+			; skip low 16 bit
+21:		TST (R5)+			; skip PSW
+		CALL DEC32
+		MOV #12,R0			; print CR
+		EMT 16
+		INC ERRORS
+
+3:		DEC #10.			; loop
+		BNE MULTST
+		MOV #10.,.-4		; restore loop value
+
+		MOV #12,R0			; print CR
+		EMT 16
+
+
+; DIV
+
+DIVTST:	MOV (R5)+,R0
+		MOV (R5)+,R1
+		CALL DEC32
+		MOV #TDIV,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		CALL DEC16
+		MOV #EQUAL,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		BIT #2,2(R5)		; Overflow expected?
+		BEQ 11
+			SUB #10,R5
+			MOV (R5)+,R0
+			MOV (R5),R1
+			CALL DEC32
+			TST -(R5)
+			BR 12
+11:		CALL DEC16
+		MOV #TREM,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		CALL DEC16			; print expected remainder
+		MOV #")",R0
+		EMT 16
+		SUB #12,R5
+12:		MOV (R5)+,R0		; high 16 bits
+		MOV (R5)+,R1		; low 16 bits
+		MOV (R5)+,R3		; divisor
+
+		CLR R4
+		MTPS #7
+		DIV R3,R0			; execute test command
+		MFPS R4
+		BIC #177760,R4
+
+		MOV R1,R3			; save remainder
+		EMT 26				; get cursor position
+		MOV #44,R1
+		EMT 24				; set cursor position
+
+		CMP R0,(R5)+
+		BEQ 2
+1:			CALL DEC16		; print quotient
+			MOV #TREM,R1	; print " ("
+			CLR R2
+			EMT 20
+			MOV R3,R0
+			CALL DEC16		; print remainder
+			CMP (R5)+,(R5)+
+			MOV #")",R0
+			EMT 16
+			MOV #12,R0		; print CR
+			EMT 16
+			INC ERRORS
+			BR 6
+2:		CMP R3,(R5)+
+		BEQ 3
+			TST -(R5)
+			BR 1
+
+3:		CALL PSWOUT			; print PSW
+		CMP R4,(R5)+
+		BEQ 5
+			MOV #PSWERR,R1
+			CLR R2
+			EMT 20
+			INC ERRORS
+			BR 6
+
+5:		MOV #OK,R1
+		CLR R2
+		EMT 20
+
+6:		DEC #10.			; loop
+		BNE DIVTST
+		MOV #10.,.-4		; restore loop value
+
+		MOV #12,R0			; print CR
+		EMT 16
+
+
+; pause
+
+		CALL PAUSE
+
+
+; ASH
+
+ASHTST:	MOV #TASH,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0	
+		CALL DEC16
+		MOV #",",R0			; print comma
+		EMT 16
+		MOV (R5)+,R0
+		CALL DEC16
+		MOV #EQUAL,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		CALL DEC16
+		SUB #6,R5
+		MOV (R5)+,R0		; source
+		MOV (R5)+,R3		; shift amount
+
+		MTPS #7
+		ASH R3,R0			; execute test command
+		MFPS R4
+		BIC #177760,R4
+
+		EMT 26				; get cursor position
+		MOV #44,R1
+		EMT 24				; set cursor position
+
+		CALL PSWOUT			; print PSW
+		CMP R0,(R5)+
+		BNE 2
+			CMP R4,(R5)+	; compare PSW
+			BEQ 1
+				MOV #PSWERR,R1
+				CLR R2
+				EMT 20
+				INC ERRORS
+				BR 3
+1:			MOV #OK,R1
+			CLR R2
+			EMT 20
+			BR 3			; next arguments
+2:		CALL DEC16
+		MOV #12,R0			; print CR
+		EMT 16
+		INC ERRORS
+		TST (R5)+
+
+3:		DEC #5				; loop
+		BNE ASHTST
+		MOV #5,.-4			; restore loop value
+
+		MOV #12,R0			; print CR
+		EMT 16
+
+
+; ASHC
+
+ASHCTS:	MOV #TASHC,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		MOV (R5)+,R1
+		CALL DEC32
+		MOV #",",R0
+		EMT 16				; print comma
+		MOV (R5)+,R0
+		CALL DEC16
+		MOV #EQUAL,R1
+		CLR R2
+		EMT 20
+		MOV (R5)+,R0
+		MOV (R5)+,R1
+		CALL DEC32
+		SUB #12,R5
+		MOV (R5)+,R0		; high 16 bits
+		MOV (R5)+,R1		; low 16 bits
+		MOV (R5)+,R3		; shift amount
+
+		MTPS #7
+		ASHC R3,R0			; execute test command
+		MFPS R4
+		BIC #177760,R4
+
+		PUSH R1
+		EMT 26				; get cursor position
+		MOV #44,R1
+		EMT 24				; set cursor position
+		POP R1
+
+		CALL PSWOUT			; print PSW
+		CMP R0,(R5)+
+		BNE 2
+			CMP R1,(R5)+
+			BNE 21
+				CMP R4,(R5)+
+				BEQ 1
+					MOV #PSWERR,R1
+					CLR R2
+					EMT 20
+					INC ERRORS
+					BR 3
+1:				MOV #OK,R1
+				CLR R2
+				EMT 20
+				BR 3		; next arguments
+2:		TST (R5)+			; skip low 16 bit
+21:		TST (R5)+			; skip PSW
+		CALL DEC32
+		MOV #12,R0			; print CR
+		EMT 16
+
+3:		DEC #5				; loop
+		BNE ASHCTS
+		MOV #5,.-4			; restore loop value
+
+		MOV #12,R0			; print CR
+		EMT 16
+
+
+; pause
+
+		CALL PAUSE
+
+		JMP TSTADR
+
+
+DATA:
+		; MUL
+		.WORD 3.,		19127.	.DWORD 57381.		.WORD 1		; ---C
+		.WORD 7003.,	3456.	.DWORD 24202368.	.WORD 1		; ---C
+		.WORD 3456.,	7003.	.DWORD 24202368.	.WORD 1		; ---C
+		.WORD 31999.,	32720.	.DWORD 1047007280.	.WORD 1		; ---C
+		.WORD 3.,		-7.		.DWORD -21.			.WORD 10	; N---
+		.WORD -3.,		-7.		.DWORD 21.			.WORD 0		; ----
+		.WORD -3.,		7.		.DWORD -21.			.WORD 10	; N---
+		.WORD 0.,		8431.	.DWORD 0.			.WORD 4		; -Z--
+		.WORD -10439.,	0.		.DWORD 0.			.WORD 4		; -Z--
+		.WORD 77777,	100000	.DWORD 30000100000	.WORD 11	; N--C
+		; DIV
+		.DWORD -22.			.WORD 7,		-3,			-1,		10 	; N---
+		.DWORD 756007621.	.WORD 28946.,	26117.,		24939.,	0 	; ----
+		.DWORD 756007621.	.WORD 26117.,	28946.,		24939.,	0 	; ----
+		.DWORD 3857639.		.WORD -196.,	-19681.,	163.,	10	; N---
+		.DWORD 3857639.		.WORD 19634.,	196.,		9375.,	0	; ----
+		.DWORD -3857639.	.WORD 196.,		-19681.,	-163.,	10	; N---
+		.DWORD -3857639.	.WORD -19634.,	196.,		-9375.,	0	; ----
+		.DWORD 0.			.WORD 5.,		0.,			0.,		4	; -Z--
+		.DWORD 756007621.	.WORD 3.,		26417,		141305,	2	; --V-
+		.DWORD -1356481082.	.WORD 0.,		127445,		136706,	3	; --VC
+		; ASH
+		.WORD 19127.,	3.,		21944.,	2	; --V-
+		.WORD -25932.,	-5.,	-811.,	11	; N--C
+		.WORD 25932.,	-5.,	810.,	0	; ----
+		.WORD 0.,		31.,	0.,		4	; -Z--
+		.WORD 7321.,	0.,		7321.,	0	; ----
+		; ASHC
+		.DWORD 19127.		.WORD 3.	.DWORD 153016.		.WORD 0		; ----
+		.DWORD -1356481082.	.WORD -18.	.DWORD -5175.		.WORD 10	; N---
+		.DWORD -1356481082.	.WORD 8.	.DWORD 633193984.	.WORD 3		; --VC
+		.DWORD 0.			.WORD -4.	.DWORD 0.			.WORD 4		; -Z--
+		.DWORD -1548946585.	.WORD 0.	.DWORD -1548946585.	.WORD 10	; N---
+
+; data for addressing modes test
+
+TYPES1:	.ASCIZ "ASH #3,R4"
+		.ASCIZ "ASH (R3),R4"
+		.ASCIZ "ASH @(R5)+,R4"
+		.ASCIZ "ASH @-(R5),R4"
+		.ASCIZ "ASH (R3)+,R4"
+		.ASCIZ "ASH -(R3),R4"
+		.ASCIZ "ASH -4(R3),R4"
+		.ASCIZ "ASH @-10(R5),R4"
+		.ASCIZ "ASH (SP),R4"
+		.ASCIZ "ASH R2,R4"
+
+		.ASCIZ "DIV (PC),R2"
+		.ASCIZ "MUL @(PC)+,R2"
+		.ASCIZ "ASHC 16(PC),R2"
+		.ASCIZ "DIV @34(PC),R2"
+
+		.ASCIZ "MUL #5,R5"
+		.ASCIZ "MUL #999.,R5"
+		.ASCIZ "ASHC #-4,R5"
+		.ASCIZ "ASH #3,R5"
+		.ASCIZ "DIV #16000.,R5"
+		.ASCIZ "MUL #100000,R5"
+		.EVEN
+
+TYPES2:	ASH #3,R4				.WORD 14010,	0
+		ASH (R3),R4		NOP		.WORD 60040,	0
+		ASH @(R5)+,R4	NOP		.WORD 14010,	0
+		ASH @-(R5),R4	NOP		.WORD 3002,		0
+		ASH (R3)+,R4	NOP		.WORD 14010,	0
+		ASH -(R3),R4	NOP		.WORD 60040,	0
+		ASH -4(R3),R4			.WORD 6004,		0
+		ASH @-10(R5),R4			.WORD 1401,		0
+		ASH (SP),R4		NOP		.WORD 100200,	13	; N-VC
+		ASH R2,R4		NOP		.WORD 177700,	10	; N--- shift by -9.
+
+		DIV (PC),R2		NOP		.WORD 3.,		1.,		0	; ----
+		MUL @#STOP+2,R2			.DWORD 12.		.WORD	0	; ----
+		ASHC 16(PC),R2			.DWORD 3000000	.WORD	0	; ----
+		DIV @34(PC),R2			.WORD 220,		6000,	0	; ----
+
+		MUL #5.,R5				.WORD 12345,	70.,	0	; ----
+		MUL #999.,R5			.WORD 12345,	10452,	1	; ---C
+		ASHC #-4,R5				.WORD 12345,	120422,	1	; ---C
+		ASH #3,R5				.WORD 12345,	4220,	3	; --VC
+		DIV #16000.,R5			.WORD 12345,	8978.,	0	; ----
+		MUL #100000,R5			.WORD 12345,	100000,	11	; N--C
+		; 4220 << 16 + 4220 = 143657104.
+		; 143657104. / 16000. = 8978. (9104.)
+
+
+TSTADR:	MOV #ADDR,R1
+		CLR R2
+		EMT 20
+
+		MOV #37772,R3		; init data for test
+		MOV #37776,R5
+		MOV R3,(R5)
+		MOV R3,-10(R5)
+		MOV #-2,(R3)+
+		MOV #2,(R3)
+		MOV #-3,-4(R3)
+		MOV #1401,R4
+
+		MOV #TYPES1,R1		; text of instructions
+		MOV #TYPES2,R0		; instructions themself
+		MOV #7,-(SP)
+
+1:		CLR R2
+		EMT 20
+		MOV (R0)+,10(PC)	; get instruction
+		MOV (R0)+,6(PC)		; get argument or NOP
+		MTPS #7
+
+		ASH #3,R4			; instruction to modify and test
+
+		MFPS R2				; get PSW
+		BIC #177760,R2
+		PUSH R1
+		PUSH R2
+		EMT 26				; get cursor position
+		MOV #20,R1
+		EMT 24				; set cursor position
+		POP R2
+		PUSH R4
+		MOV R2,R4
+		CALL PSWOUT
+		POP R4
+		CMP R4,(R0)+
+		BEQ 2
+			INC ERRORS
+			PUSH R0
+			MOV R4,R0
+			CALL DEC16		; print wrong result
+			MOV #12,R0		; print CR
+			EMT 16
+			POP R0
+			TST (R0)+
+			BR 4
+2:		CMP R2,(R0)+		; test PSW
+		BEQ 3
+			MOV #PSWERR,R1
+			CLR R2
+			EMT 20
+			INC ERRORS
+			BR 4
+3:		MOV #OK,R1
+		CLR R2
+		EMT 20
+4:		POP R1
+		DEC #10.
+		BNE 1
+		MOV #10.,.-4
+		TST (SP)+
+
+
+		CLR R2				; init data for test
+		MOV #481.,R3
+
+TSTPC:	PUSH R2
+		CLR R2
+		EMT 20
+		POP R2
+		MOV (R0)+,10(PC)	; get instruction
+		MOV (R0)+,6(PC)		; get argument or NOP
+		MTPS #7
+
+		DIV (PC),R2
+		NOP					; dummy instruction 
+
+		MFPS R4				; get PSW
+		BIC #177760,R4
+
+		PUSH R1
+		PUSH R2
+		EMT 26				; get cursor position
+		MOV #20,R1
+		EMT 24				; set cursor position
+		POP R2
+		CALL PSWOUT
+		PUSH R2
+		CMP R2,(R0)+
+		BEQ 11
+			TST (R0)+
+			BR 12
+11:		CMP R3,(R0)+
+		BEQ 2
+12:			INC ERRORS
+			PUSH R0
+			MOV R2,R0
+			MOV R3,R1
+			CALL DEC32		; print wrong result
+			MOV #12,R0		; print CR
+			EMT 16
+			POP R0
+			BR 4
+2:		CMP R4,(R0)+		; test PSW
+		BEQ 3
+			MOV #PSWERR,R1
+			CLR R2
+			EMT 20
+			INC ERRORS
+			BR 4
+3:		MOV #OK,R1
+		CLR R2
+		EMT 20
+4:		POP R2
+		POP R1
+		DEC #4.
+		BNE TSTPC
+		MOV #4.,.-4
+
+		PUSH R0
+		MOV #12,R0		; print CR
+		EMT 16
+		POP R0
+
+; pause
+
+		CALL PAUSE
+
+
+; test odd registers
+
+ODDTST:	PUSH R1				; pointer to instructions text
+		MOV #ODD,R1
+		CLR R2
+		EMT 20
+		POP R1				; pointer to instructions text
+		MOV #12345,R4
+		MOV #14.,R5			; init data for test
+
+		MOV #6,R3			; loop counter
+1:			CMP R3,#1
+			BNE 2
+				MOV #77777,R5
+2:			CLR R2
+			EMT 20
+			PUSH R1				; save pointer to the next instruction's text
+
+			MOV (R0)+,10(PC)	; get instruction
+			MOV (R0)+,6(PC)		; get argument or NOP
+			MTPS #7
+
+			MUL #5.,R5
+
+			MFPS R2				; get PSW
+			BIC #177760,R2
+			PUSH R4
+			PUSH R2				; save PSW
+			EMT 26				; get cursor position
+			MOV #20,R1
+			EMT 24				; set cursor position
+			MOV (SP),R4			; MOV R2,R4
+			CALL PSWOUT
+			POP R2				; restore PSW
+			POP R4
+
+			CMP R4,(R0)+		; test R4
+			BNE 3
+			CMP R5,(R0)+		; test R5
+			BNE 4
+			CMP R2,(R0)+		; test PSW
+			BNE 5
+			MOV #OK,R1
+			CLR R2
+			EMT 20
+7:			POP R1				; restore pointer to instructions text
+		SOB R3,1
+		BR Count
+
+3:			TST (R0)+		; skip R5 value
+4:			TST (R0)+		; skip PSW
+			PUSH R0			; save pointer
+			MOV R4,R0
+			MOV R5,R1
+			CALL DEC32		; print wrong result
+			MOV #12,R0		; print CR
+			EMT 16
+			POP R0			; restore pointer
+			BR 6
+5:			MOV #PSWERR,R1
+			CLR R2
+			EMT 20
+6:			INC ERRORS
+			BR 7
+
+
+; count errors
+
+Count:	MOV #12,R0			; print CR
+		EMT 16
+		MOV ERRORS,R0
+		CALL DEC16
+		MOV #TXTERR,R1
+		CLR R2
+		EMT 20
+
+
+PERF:	CLR SCORE
+		MOV #TXTPER,R1
+		CLR R2
+		EMT 20
+
+
+; ASH performance test
+
+		MOV #TXTASH,R1
+		CLR R2
+		EMT 20
+
+		MOV #37774,R2		; init data for test
+		MOV R2,R3
+		MOV #2,(R2)+
+		MOV R3,(R2)
+		MOV #1401,R0
+
+		MOV #1,@#177706		; timer initial value
+		MOV #1,@#177712		; stop and init timer	
+		MOV #177710,R5
+		MTPS #340			; disable all interruptions
+		MOV #32,@#177712	; start timer
+1:		TST (R5)			; wait till it's really started
+		BNE	1
+
+		ASH #16.,R0
+		ASH #-16.,R0
+		ASH (R3),R0
+		ASH (R3)+,R0
+		ASH -(R3),R0
+		ASH @(R2)+,R0
+		ASH @-(R2),R0
+		ASH 0(R3),R0
+		ASH @0(R2),R0
+		ASH #-4,R0
+
+		MOV (R5),R0			; get timer value
+		NEG R0
+		MTPS #0				; enable all interruptions
+		ADD R0,SCORE
+		CALL CALC
+		CALL DEC16			; print timer result
+
+
+; ASHC performance test
+
+		MOV #TXTASC,R1
+		CLR R2
+		EMT 20
+
+		MOV #37776,R2		; init data for test
+		MOV #3,(R3)
+		MOV #1401,R0
+		MOV R0,R1
+
+		MOV #1,@#177706		; timer initial value
+		MOV #1,@#177712		; stop and init timer	
+		MOV #177710,R5
+		MTPS #340			; disable all interruptions
+		MOV #32,@#177712	; start timer
+2:		TST (R5)			; wait till it's really started
+		BNE	2
+
+		ASHC #5,R0
+		ASHC #-5,R0
+		ASHC (R3),R0
+		ASHC (R3)+,R0
+		ASHC -(R3),R0
+		ASHC @(R2)+,R0
+		ASHC @-(R2),R0
+		ASHC 0(R3),R0
+		ASHC @0(R2),R0
+		ASHC #30,R0
+
+		MOV (R5),R0			; get timer value
+		NEG R0
+		MTPS #0				; enable all interruptions
+		ADD R0,SCORE
+		CALL CALC
+		CALL DEC16			; print timer result
+
+
+; MUL performance test
+
+		MOV #TXTMUL,R1
+		CLR R2
+		EMT 20
+
+		MOV #37776,R2		; init data for test
+		MOV #2,(R3)
+		MOV #17.,R0
+		MOV #124472,R1
+
+		MOV #1,@#177706		; timer initial value
+		MOV #1,@#177712		; stop and init timer	
+		MOV #177710,R5
+		MTPS #340			; disable all interruptions
+		MOV #32,@#177712	; start timer
+3:		TST (R5)			; wait till it's really started
+		BNE	3
+
+		MUL #5,R0
+		MOV R1,R0
+		MUL (R3),R0
+		MOV R1,R0
+		MUL (R3)+,R0
+		MOV R1,R0
+		MUL -(R3),R0
+		MOV R1,R0
+		MUL @(R2)+,R0
+		MOV R1,R0
+		MUL @-(R2),R0
+		MOV R1,R0
+		MUL 0(R3),R0
+		MOV R1,R0
+		MUL @0(R2),R0
+		MOV R1,R0
+		MUL #-4,R0
+		MUL #54172,R0
+
+		MOV (R5),R0			; get timer value
+		NEG R0
+		MTPS #0				; enable all interruptions
+		ADD R0,SCORE
+		CALL CALC
+		CALL DEC16			; print timer result
+
+
+; DIV performance test
+
+		MOV #TXTDIV,R1
+		CLR R2
+		EMT 20
+
+		MOV #37776,R2		; init data for test
+		MOV #4642,R0
+		MOV #146424,R1
+
+		MOV #1,@#177706		; timer initial value
+		MOV #1,@#177712		; stop and init timer	
+		MOV #177710,R5
+		MTPS #340			; disable all interruptions
+		MOV #32,@#177712	; start timer
+4:		TST (R5)			; wait till it's really started
+		BNE	4
+
+		DIV #19732.,R0		; 161664276 / 19732 = 8193
+		DIV #-289.,R0
+		CLR R0
+		DIV (R3),R0
+		NEG (R3)
+		MOV R0,R1
+		CLR R0
+		DIV (R3)+,R0
+		MOV R0,R1
+		CLR R0
+		DIV -(R3),R0
+		MOV R0,R1
+		CLR R0
+		DIV @(R2)+,R0
+		MOV R0,R1
+		CLR R0
+		DIV @-(R2),R0
+		MOV R0,R1
+		CLR R0
+		DIV 0(R3),R0
+		MOV R0,R1
+		CLR R0
+		DIV @0(R2),R0
+		MOV R0,R1
+		CLR R0
+		DIV #12345,R0
+
+		MOV (R5),R0			; get timer value
+		NEG R0
+		MTPS #0				; enable all interruptions
+		ADD R0,SCORE
+		CALL CALC
+		CALL DEC16			; print timer result
+
+
+; Overall benchmark
+
+		MOV #TXTBEN,R1
+		CLR R2
+		EMT 20
+;		MOV SCORE,R0
+;		CALL DEC16
+;		MOV #12,R0
+;		EMT 16
+		MOV BENCH,R0
+		MOV BENCH+2,R1
+		DIV SCORE,R0
+		ASL R1
+		CMP R1,SCORE
+		BLO 5
+		INC R0
+5:		CALL DEC16
+		MOV #TXTPRO,R1
+		CLR R2
+		EMT 20
+
+
+; End
+
+QUIT:	MOV NOEIS+2,@#4	; restore STOP vector
+		MOV NOEIS+10,SP
+QUIT2:	CLR R0
+1:		SOB R0,1		; pause
+		MOV R0,@#177660	; allow keyboard interruption
+		MTPS R0
+		MOV @#177662,R0	; read a key to init leyboard
+		HALT
+
+
+; R0 * 128 / 10 - average of 10 instructions, in CPU cycles 
+
+CALC:	MUL #128.,R0
+		DIV #10.,R0
+		CMP R1,#5.
+		BLO 1
+		INC R0
+1:		RET
+
+
+; print 32 bit number
+; R0 high 16 bits
+; R1 low 16 bits
+
+DEC32:	MOV PC,MINUS1
+		ADD #MINUS2-DEC32-2,MINUS1	; link to the sign
+
+		PUSH R0
+		PUSH R1
+		PUSH R2
+		PUSH R3
+		PUSH R4
+		PUSH R5
+		MOV #NUMBER,R2		; pointer to output text string
+		MOV #TEN32,R3
+		MOV #TEN16,R5
+
+		TST R0
+		BPL 1
+			INC MINUS1		; pointer to minus symbol
+			NEG R1
+			COM R0
+1:		CALL DIGIT
+		CMP R4,#60
+		BEQ 3
+2:			MOVB @MINUS1,(R2)+	; print space or minus
+			BR 5
+3:	;	MOVB #40,(R2)+		; print space, comment it if you don't need right alignment
+		TST (R5)			; last digit?
+		BNE 1
+		MOVB @MINUS1,(R2)+	; print space or minus
+		BR 6
+
+4:		CALL DIGIT
+5:		MOVB R4,(R2)+		; print R4
+		TST (R5)			; last digit?
+		BNE 4
+
+6:		ADD #60,R1			; 0 symbol in ASCII codepage
+		MOVB R1,(R2)+		; print the last digit
+		CLRB (R2)			; end of string
+		MOV #NUMBER,R1
+		MOV #12.,R2
+		EMT 20
+
+		POP R5
+		POP R4
+		POP R3
+		POP R2
+		POP R1
+		POP R0
+		RET
+
+MINUS1: .WORD 1337
+; MINUS2:	.BYTE " " .BYTE "-"
+MINUS2:	.BYTE 1 .BYTE "-"
+
+; count current digit in 32-bit number
+
+DIGIT:	MOV #57,R4			; 0 symbol in ASCII codepage - 1
+1:		INC R4				; count digits
+		SUB (R5),R1
+		SBC R0
+		SUB (R3),R0
+		BPL 1
+		ADD (R5)+,R1		; restore value
+		ADC R0
+		ADD (R3)+,R0
+		RET
+
+TEN32:	.WORD 35632,   2765,   230,   17,     1,    0,    0,   0,  0 ,0
+TEN16:	.WORD 145000,160400,113200,41100,103240,10000.,1000.,100.,10.,0
+
+NUMBER:	.ASCIZ "-2147483647"	; maximum possible 32 bit number
+		.EVEN
+
+; print 16 bit number
+; from R0
+
+DEC16:	PUSH R0
+		PUSH R1
+		PUSH R2
+		PUSH R3
+		PUSH R4
+		PUSH R5
+
+		MOV #NUMBER,R2	; pointer to output text string
+		MOV #TEN16+12,R5
+
+		MOV R0,R3
+		BPL 1
+			NEG R0
+			BR 2
+
+1:	; MOVB #40,(R2)+	; print space, comment it if you don't need right alignment
+2:		CMP (R5)+,R0
+		BHI 1			; branch if higher, for 16-bit not signed
+
+		TST R3			; was R0 negative?
+		BPL 3
+			MOVB #"-",(R2)+		; print minus
+
+3:		TST -(R5)		; move pointer back
+		BEQ 6			; print last digit
+
+4:		MOV #57,R4		; 0 symbol in ASCII codepage - 1
+5:		INC R4			; count digits
+		SUB (R5),R0
+		BHIS 5			; branch if higher or same, for 16-bit not signed
+		ADD (R5)+,R0
+
+		MOVB R4,(R2)+	; print R4
+		TST (R5)
+		BNE 4
+
+6:		ADD #60,R0
+		MOVB R0,(R2)+	; print R0
+		CLRB (R2)
+		MOV #NUMBER,R1
+		MOV #12.,R2
+		EMT 20
+
+		POP R5
+		POP R4
+		POP R3
+		POP R2
+		POP R1
+		POP R0
+		RET
+
+
+; print PSW from R4
+
+PSWOUT:	PUSH R0
+		PUSH R1
+		PUSH R2
+		PUSH R3
+		MOV #PSWTXT,R1
+		MOV #10,R2
+		MOV #4,R3
+1:		MOVB (R1)+,R0
+		BIT R2,R4
+		BNE 2
+		MOV #"-",R0
+2:		EMT 16
+		ASR R2
+		SOB R3,1
+		MOV #40,R0	; print space
+		EMT 16
+		POP R3
+		POP R2
+		POP R1
+		POP R0
+		RET
+PSWTXT: .ASCII "NZVC"
+
+
+; pause
+
+PAUSE:	PUSH R1
+		PUSH R2
+		MOV #KEY,R1			; press any key
+		CLR R2
+		EMT 20
+1:		BIT #100,@#177716
+		BNE 1
+		EMT 26				; get cursor position
+		CLR R1
+		EMT 24				; set cursor position
+		MOV #KEY2,R1		; press any key
+		CLR R2
+		EMT 20
+		EMT 26				; get cursor position
+		CLR R1
+		EMT 24				; set cursor position
+		POP R2
+		POP R1
+		RET
+
+
+; EIS is not supported
+
+NOEIS:	MOV #100000,@#4	; restore STOP vector
+		MOV #1000,SP
+		MOV #TXTNO,R1
+		CLR R2
+		EMT 20
+		JMP QUIT2
+
+HELLO:	.ASCII "Extended Instruction Set (EIS) test by Manwe (c)2018-2020"
+		.BYTE 12 .BYTE 0
+WARN:	.ASCIZ "Warning: vector 10 is not set to 160016 in your DOS."
+TXTNO:	.BYTE 12 .ASCII "EIS is not supported on your machine." .BYTE 12
+		.ASCII "Run proper EIS driver to emulate MUL, DIV, ASH, ASHC."
+		.BYTE 12 .BYTE 0
+
+TASH:	.ASCIZ "ASH "
+TASHC:	.ASCIZ "ASHC "
+TMUL:	.ASCIZ " * "
+TDIV:	.ASCIZ " / "
+TREM:	.ASCIZ " ("
+
+EQUAL:	.ASCIZ " = "
+OK:		.ASCII "OK" .BYTE 12 .BYTE 0
+PSWERR:	.ASCII "Wrong flags" .BYTE 12 .BYTE 0
+
+TXTERR:	.ASCII " errors detected" .BYTE 12 .BYTE 12 .BYTE 0
+
+KEY:	.ASCIZ "Press any key to continue..."
+KEY2:	.ASCIZ "                            "
+
+ADDR:	.ASCII "Addressing modes test" .BYTE 12 .BYTE 12 .BYTE 0
+
+ODD:	.ASCII "Odd registers test" .BYTE 12 .BYTE 12 .BYTE 0
+
+TXTPER:	.ASCII "Average CPU cycles test (lower is better)" .BYTE 12 .BYTE 0
+
+TXTASH:	.BYTE 12 .ASCIZ "ASH:  "
+TXTASC:	.BYTE 12 .ASCIZ "ASHC: "
+TXTMUL:	.BYTE 12 .ASCIZ "MUL:  "
+TXTDIV:	.BYTE 12 .ASCIZ "DIV:  "
+
+TXTBEN:	.BYTE 12 .BYTE 12 .ASCIZ "Benchmark rate (higher is better): "
+TXTPRO:	.ASCII "%" .BYTE 12 .BYTE 0
+
+TXTADR:	.ASCIZ "Addressing mode error"
+		.EVEN
+
+ERRORS: .WORD 0
+
+SCORE:	.BLKW 4
+BENCH:	.DWORD 64700.
+
+	.END
+

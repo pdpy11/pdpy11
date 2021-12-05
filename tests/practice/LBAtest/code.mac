@@ -1,0 +1,776 @@
+; test LBA mode access to hard disk drives
+; compile this source with PDPy11 cross-assembler
+; (c) Manwe/SandS 2020. www.manwe.ru
+
+		PasportMaster	= 36000
+		PasportSlave	= 37000
+
+		; offsets in HDD pasport
+		Cylinders	= 2
+		Heads		= 6
+		SectorSize	= 10.	; bytes per sector
+		Sectors		= 12.	; sectors per track
+		Serial		= 20.
+		BufferSize	= 42.	; how many blocks in buffer
+		Firmware	= 46.
+		Model		= 54.
+		Capability	= 98.	; bit 8 for DMA, bit 9 for LBA
+		TotalBlocks	= 120.	; double word
+
+
+		RESET
+		MOV SP,QUIT+2		; save stack pointer
+		MOV @#4,QUIT+6		; save system STOP vector
+		MOV #STOP,@#4
+		MOV #340,@#6
+		MTPS #340			; disable all interruptions
+		MOV #100,@#177660	; block keyboard interruption
+		CALL InitFont
+		CALL ClearScreen
+		MOV #1330,@#177664	; show screen
+
+DetectHDD:
+		CLR Drives			; number of hard drives
+		CALL DetectMaster
+		CALL DetectSlave
+
+		CLR CHS				; sign to perform CHS test
+		CLR LBA				; sign to perform LBA test
+		TST Drives
+		BNE 1
+			HALT			; if no hard drives
+1:		CMP Drives,#1		; only 1 hard disk drive?
+		BEQ 3
+
+		MOV #TxtMasterSlave,R1
+		CALL PrintString
+2:		CALL AnyKey
+		CLR HDDselect		; select master
+		MOV #PasportMaster,R4
+		CMP R0,#"M"
+		BEQ 3
+		CMP R0,#"S"
+		BNE 2
+			INC HDDselect	; select slave
+			MOV #PasportSlave,R4
+
+3:		MOV HDDselect,R5
+		CALL WaitHDD
+		BCC 4
+			MOV #TxtHDDtimeout,R1
+			JMP ERROR
+4:		MOV Cylinders(R4),MaxCylinder
+		MOV Heads(R4),MaxHead
+		MOV Sectors(R4),MaxSector
+		MOV TotalBlocks(R4),MaxBlock+2
+		MOV TotalBlocks+2(R4),MaxBlock
+
+ChooseAction:
+		MOV #TxtCHSorLBA,R1
+		CALL PrintString
+1:		CALL AnyKey
+		CMP R0,#"B"			; test both (CHS+LBA)
+		BEQ 4
+		CMP R0,#"L"
+		BNE 2
+			DEC CHS			; sign to skip CHS test
+			BR 4
+2:		CMP R0,#"C"
+		BNE 3
+			DEC LBA			; sign to skip LBA test
+			BR 4
+3:		CMP R0,#"E"
+		BNE 1
+			JMP EraseDisk	; erase disk!
+
+4:		MOV #TxtStartTest,R1
+		CALL PrintString
+		MOV #22.,R1			; X
+		CLR R2				; Y
+		CALL CursorSet		; set cursor position
+		MOV MaxBlock+2,R0
+		MOV MaxBlock,R1
+		CALL DecOut
+		MOV #NUMBER,R1
+		CALL PrintString	; print maximum number of blocks
+
+
+Test:	MOV #Cylinder,R4	; pointer to HDD geometry data
+		MOV #3.,R5			; Y
+1:		MOV #10.,R1			; X
+		MOV R5,R2
+		CALL CursorSet		; set cursor position
+		INC R5				; next line
+		CLR R1				; high 16 bit
+		CMP R4,#Block
+		BNE 2
+			MOV (R4)+,R1
+2:		MOV (R4)+,R0
+		CALL DecOut
+		MOV #NUMBER,R1
+		CALL PrintString
+		MOV #TxtHDDtimeout+11.,R1
+		CALL PrintString	; print few spaces
+		CMP R4,#Block
+		BLE 1
+
+		TST CHS
+		BNE TestLBA
+TestCHS:
+		MOV #1,R0			; number of blocks to load
+		MOV Cylinder,R1		; cylinder a.k.a. track
+		MOV Head,R2			; head
+		MOV Sector,R3		; sector
+		MOV #74000,R4		; address to load
+		MOV HDDselect,R5	; master or slave
+		CALL BlockReadCHS	; read blocks in CHS mode
+		BCC 1
+			JMP ERROR
+1:		TST LBA
+		BNE CompareBlocks
+
+TestLBA:
+		MOV #1,R0			; number of blocks to load
+		MOV Block+2,R1		; block number low 16 bits
+		MOV Block,R2		; block number high 16 bits
+		MOV #76000,R4		; address to load
+		MOV HDDselect,R5	; master or slave
+		CALL BlockReadLBA	; read blocks in LBA mode
+		BCC CompareBlocks
+;			MOV #TxtReadError,R1
+			JMP ERROR
+
+CompareBlocks:
+		CMP CHS,LBA
+		BNE Pause			; skip if no CHS or no LBA
+
+		MOV #76000,R2		; compare blocks that was loaded
+		MOV #74000,R1		; in CHS and LBA modes
+		MOV #256.,R0
+1:			CMP (R1)+,(R2)+
+			BEQ 2
+				MOV #TxtNoMatch,R1
+				JMP ERROR
+2:		SOB R0,1
+
+Pause:	BIT #100,@#177716	; any key is pressed for pause?
+		BEQ Pause			; wait for key released
+
+		TST LBA
+		BNE 1				; skip if no LBA
+
+		MOV #Block+2,R0		; pointer to current values
+		ADD #1,(R0)			; INC does not set C-bit!
+		ADC -(R0)			; LBA block number
+
+		CMP (R0)+,MaxBlock	; compare high 16 bits
+		BNE 1
+		CMP (R0),MaxBlock+2	; compare low 16 bits
+		BEQ 2
+
+1:		TST CHS
+		BNE Test
+
+		MOV #Sector,R0
+		INC (R0)			; Sector
+		CMP (R0),12(R0)		; MaxSector
+		BLOS Test
+			MOV #1,(R0)		; Sector
+			INC -(R0)		; Head
+			CMP (R0),12(R0)	; MaxHead
+			BLO Test
+				CLR (R0)	; Head
+				INC	-(R0)	; Cylinder
+				CMP (R0),12(R0)	; MaxCylinder
+				BLO Test
+
+2:		MOV #TxtCompleted,R1
+		CALL PrintString
+		JMP QUIT
+
+
+EraseDisk:
+		MOV #TxtErase,R1
+		CALL PrintString
+		CALL AnyKey
+		CMP R0,#"Y"
+		BNE 7
+
+		CLR Block
+		CLR Block+2
+
+0:		MOV #TxtWrite,R1	; print "Writing block"
+		CALL PrintString
+		MOV MaxBlock,R1		; high 16 bits
+		MOV MaxBlock+2,R0	; low 16 bits
+		CALL DecOut
+		MOV #TxtBlocks,R1	; print total blocks
+		CALL PrintString
+		MOV #NUMBER,R1		; print max block
+		CALL PrintString
+
+1:		MOV Block+2,R0		; block number low 16 bits
+		MOV Block,R1		; block number high 16 bits
+		CALL DecOut
+		MOV #1.,R5			; Y
+		MOV #15.,R1			; X
+		CALL CursorSet		; set cursor position
+		MOV #NUMBER,R1
+		CALL PrintString
+
+		MOV #76000,R3
+		MOV R3,R4			; address to write from
+
+		MOV Block,R2		; block number high 16 bits
+		MOV Block+2,R1		; block number low 16 bits
+		SWAB R1				; Intel bytes order
+		SWAB R2
+		COM R1				; inverse data
+		COM R2
+		MOV #128.,R0		; render data to write
+2:			MOV R2,(R3)+	; block number high 16 bits
+			MOV R1,(R3)+	; block number low 16 bits
+		SOB R0,2
+
+3:		MOV Block,R2		; block number high 16 bits
+		MOV Block+2,R1		; block number low 16 bits
+		MOV HDDselect,R5	; master or slave
+		MOV #1,R0			; number of blocks to load
+		CALL BlockWriteLBA	; write blocks in LBA mode
+		BCC 5
+;			MOV #TxTWriteError,R1
+			CALL PrintString
+			CALL AnyKey
+			CMP R0,#"N"		; no?
+			BNE 0
+			JMP QUIT
+
+5:		MOV #Block+2,R0		; pointer to current values
+		ADD #1,(R0)			; INC does not set C-bit!
+		ADC -(R0)			; LBA block number
+		CMP (R0)+,MaxBlock	; compare high 16 bits
+		BNE 1
+		CMP (R0),MaxBlock+2	; compare low 16 bits
+		BNE 1
+
+		MOV #TxtCleared,R1
+		CALL PrintString
+7:		JMP QUIT
+
+
+HDDport:	.WORD 177740	; 177740 for Alter, 177640 for Samara
+
+Drives:		.WORD 0		; number of hard disks detected
+HDDselect:	.WORD -1	; 0 = master, 1 = slave, -1 = none
+CHS:		.WORD 0		; 0 = supported, -1 = not supported
+LBA:		.WORD 0		; 0 = supported, -1 = not supported
+
+Cylinder:	.WORD 0
+Head:		.WORD 0
+Sector:		.WORD 1
+Block:		.DWORD 0
+
+MaxCylinder:	.WORD 100.
+MaxHead:		.WORD 1
+MaxSector:		.WORD 63.
+MaxBlock:		.DWORD 6300.
+
+
+; Wait for HDD response
+; R5 - master (0) or slave (1)
+
+WaitHDD:
+		MOV #177757,R0
+		TST R5
+		BNE 1				; skip if slave
+	 		MOV #177777,R0	; slave drive
+1:		MOV HDDport,R3
+		ADD #2,R3			; HDD head register
+
+		MOV R0,(R3)			; select drive (master or slave)
+		SUB #2,R3
+
+		MOV #1500,R0		; number of attempts
+2:			TSTB (R3)		; check HDD bussy status
+			BPL 3
+			BIT #100,(R3)	; check HDD ready status
+			BEQ 5
+3:			MOV R0,R1
+4:			SOB R1,4		; pause
+		SOB R0,2
+		SEC					; set error sign
+		RET
+
+5:		CLC					; no error sign
+		RET
+
+
+; Read HDD specification (a.k.a. pasport)
+; R4 - where to load HDD pasport
+; R5 - master (0) or slave (1)
+
+ReadPasport:
+		MOV #177757,R0
+		TST R5
+		BNE 1				; skip if slave
+	 		MOV #177777,R0	; slave drive
+1:		MOV HDDport,R3
+		ADD #2,R3			; HDD head register
+		MOV R0,(R3)			; select drive (master or slave)
+		MOV #23,-(R3)		; request HDD pasport
+		MOV #1500,R0
+2:			TSTB (R3)		; check HDD bussy status
+			BMI 3
+			MOV R0,R5
+			SOB R5,.		; pause
+		SOB R0,2
+		MOV #TxtHDDtimeout,R1
+		SEC					; drive is not response
+		RET
+3:		MOV HDDport,R5
+		ADD #16,R5			; HDD data register
+		MOV #256.,R0		; number of words to read (256 in block)
+4:			BIT #10,(R3)	; check HDD data ready status
+			BNE 4
+5:			TSTB (R3)		; check HDD bussy status
+			BPL 5
+			MOV (R5),(R4)	; copy from HDD buffer to computer memory
+			COM (R4)+		; inverse data
+		SOB R0,4
+		SUB #512.-Serial,R4	; serial number
+		MOV #10.,R0
+6:			SWAB (R4)+		; change byte order
+		SOB R0,6
+		ADD #6,R4			; firmware revision and model number
+		MOV #24.,R0
+7:			SWAB (R4)+		; change byte order
+		SOB R0,7
+		SUB #94.,R4			; restore pointer to HDD pasport
+		BIT #1,(R3)			; check HDD error status
+		BNE 8
+			MOV #TxtReadError,R1
+			SEC				; set error sign
+8:		RET
+
+
+; Print HDD info
+; R4 - pointer to HDD pasport
+
+HDDinfo:
+		MOV R4,R1
+		ADD #Serial,R1
+		CLRB 20.(R1)		; maximum number of symbols
+		CALL PrintString	; print serial number
+		MOV #12,R0
+		CALL PrintSymbol	; print Enter
+		BIT #200,(R4)		; removable cartridge drive?
+		BEQ 2
+			MOV #TxtRemovable,R1
+			CALL PrintString
+2:		MOV #TxtLBA,R1
+		BIT #1000,Capability(R4)
+		BNE 4
+			MOV #TxtCHS,R1
+4:		CALL PrintString
+		BIT #2000,(R4)		; disk transfer rate > 10 Mbs
+		BEQ 5
+			MOV #TxtTransfer,R1
+			CALL PrintString
+5:		BIT #20,(R4)		; head switch time > 15 usec
+		BEQ 6
+			MOV #TxtHeadSwitch,R1
+			CALL PrintString
+6:		MOV #12,R0
+		CALL PrintSymbol	; print Enter
+HDDgeometry:
+		MOV #TxtInf,R5
+1:		MOV (R5)+,R1
+		BEQ 3
+		CALL PrintString
+		CLR R1				; high 16 bits
+		MOV R4,R0			; pointer to HDD pasport
+		ADD (R5),R0			; offset
+		CMP (R5)+,#TotalBlocks
+		BNE 2
+			MOV 2(R0),R1
+2:		MOV (R0),R0			; get 16-bit value from HDD pasport
+		CALL DecOut
+		MOV #NUMBER,R1		; pointer to converted number
+		CALL PrintString
+		MOV #12,R0
+		CALL PrintSymbol	; print Enter
+		BR 1
+3:		RET
+TxtInf:	.WORD TxtCylinders,Cylinders
+		.WORD TxtHeads,Heads
+		.WORD TxtSectors,Sectors
+		.WORD TxtSectorSize,SectorSize
+		.WORD TxtBufferSize,BufferSize
+		.WORD TxtBlocks,TotalBlocks
+		.WORD 0
+
+
+; output R4 - pointer to HDD pasport
+DetectMaster:
+		MOV #TxtMaster,R1
+		CALL PrintString		; print "Master drive"
+		CLR R5					; master drive
+		MOV #NoSMK,@#4
+		CALL WaitHDD
+		MOV #STOP,@#4
+		BCC 1
+			MOV #NotDetected,R1
+			BR 2
+1:		MOV #PasportMaster,R4	; address to load HDD pasport
+		CALL ReadPasport
+		BCC 3
+2:			CALL PrintString	; print error message
+			RET
+3:		INC Drives
+		CLR HDDselect			; select master
+		BIC #1,(R4)				; set master sign in pasport
+		CALL HDDinfo
+		RET
+
+
+; output R4 - pointer to HDD pasport
+DetectSlave:
+		MOV #TxtSlave,R1
+		CALL PrintString		; print "Slave drive"
+		MOV #1,R5				; slave drive
+		CALL WaitHDD
+		BCC 1
+			MOV #NotDetected,R1
+			BR 2
+1:		MOV #PasportSlave,R4	; address to load HDD pasport
+		CALL ReadPasport
+		BCC 3
+2:			CALL PrintString	; print error message
+			RET
+3:		INC Drives
+		MOV #1,HDDselect		; select slave
+		BIS #1,(R4)				; set slave sign in pasport
+		CALL HDDinfo
+		RET
+
+
+; read blocks LBA
+; R0 - number of blocks to load
+; R1 - block number, low word
+; R2 - block number, high word
+; R4 - address in memory to load data from HDD
+; R5 - master (0) or slave (1)
+
+BlockReadLBA:
+		TST R5
+		BEQ 1					; skip if master drive
+			BIS #10000,R2		; select slave drive
+1:		BIS #40000,R2			; set LBA mode
+		COM R0
+		COM R1
+		COM R2
+		MOV HDDport,R5			; HDD controller port
+		ADD #12,R5
+		MOV R0,(R5)				; 177752 - blocks counter
+		MOV R1,-(R5)			; 177750
+		SWAB R1
+		MOV R1,-(R5)			; 177746
+		MOV R2,-(R5)			; 177744
+		SWAB R2
+		MOV R2,-(R5)			; 177742
+BlockRead:
+		MOV #337,-(R5)			; 177740 - command: start to read to HDD buffer
+		MOV R5,R1
+		ADD #16,R1				; 177756 - HDD data register
+		COM R0
+1:			CLR R2
+2:				TSTB (R5)		; check HDD bussy status
+				BMI 3
+			SOB R2,2
+			MOV #TxtBusyError,R1
+			BR 8
+3:	;		BIT #1,(R5)			; check HDD error status
+	;		BNE 4
+	;		MOV #TxtSeekError,R1
+	;		BR 8
+4:				BIT #100,(R5)	; check HDD data ready status
+				BEQ 5
+			SOB R2,4
+			MOV #TxtReadyError,R1
+			BR 8
+5:				BIT #10,(R5)	; check HDD buffer ready status
+				BEQ 6
+			SOB R2,5
+			MOV #TxtBufferError,R1
+			BR 8
+6:			MOV #64.,R2			; number of words to read / 4
+7:				MOV (R1),(R4)+	; copy from HDD buffer to computer memory
+				MOV (R1),(R4)+
+				MOV (R1),(R4)+
+				MOV (R1),(R4)+
+			SOB R2,7
+			BIT #1,(R5)			; check HDD error status
+			BNE 9
+				MOV #TxtWriteError,R1
+8:				SEC				; set error sign
+				RET
+9:		SOB R0,1
+		RET
+
+
+; read blocks CHS
+; R0 - number of blocks to load
+; R1 - cylinder
+; R2 - head
+; R3 - sector
+; R4 - address in memory to load data from HDD
+; R5 - master (0) or slave (1)
+
+BlockReadCHS:
+		TST R5
+		BEQ 1					; skip if master drive
+			BIS #20,R2			; select slave drive
+1:		BIC #400,R3				; set CHS mode
+		COM R0
+		COM R1
+		COM R2
+		COM R3
+		MOV HDDport,R5			; HDD controller port
+		ADD #12,R5
+		MOV R0,(R5)				; 177752 - blocks counter
+		MOV R3,-(R5)			; 177750 - sector
+		MOV R1,-(R5)			; 177746 - cylinder low
+		SWAB R1
+		MOV R1,-(R5)			; 177744 - cylinder high
+		MOV R2,-(R5)			; 177742 - head
+		BR BlockRead
+
+
+; write blocks LBA
+; R0 - number of blocks to load
+; R1 - block number, low word
+; R2 - block number, high word
+; R4 - address in memory to write data from HDD
+; R5 - master (0) or slave (1)
+
+BlockWriteLBA:
+		TST R5
+		BEQ 0					; skip if master drive
+			BIS #10000,R2		; select slave drive
+0:		BIS #40000,R2			; set LBA mode
+		COM R0
+		COM R1
+		COM R2
+		MOV HDDport,R5			; HDD controller port
+		ADD #12,R5
+		MOV R0,(R5)				; 177752 - blocks counter
+		MOV R1,-(R5)			; 177750
+		SWAB R1
+		MOV R1,-(R5)			; 177746
+		MOV R2,-(R5)			; 177744
+		SWAB R2
+		MOV R2,-(R5)			; 177742
+		SUB #2,R5				; 177740
+		CLR R2					; attempts
+1:			TSTB (R5)			; check HDD bussy status
+			BMI 2
+		SOB R2,1
+		MOV #TxtSeekError,R1
+		BR 9					; error
+2:		MOV #317,(R5)			; 177740 - command: start to write to HDD buffer
+		MOV R5,R1
+		ADD #16,R1				; 177756 - HDD data register
+		COM R0
+3:			CLR R2				; attempts
+4:				TSTB (R5)		; check HDD bussy status
+				BMI 5
+			SOB R2,4
+			MOV #TxtBusyError,R1
+			BR 9
+5:				BIT #100,(R5)	; check HDD ready status
+				BEQ 6
+			SOB R2,5
+			MOV #TxtReadyError,R1
+			BR 9
+6:				BIT #10,(R5)	; check HDD buffer ready status
+				BEQ 7
+			SOB R2,6
+			MOV #TxtBufferError,R1
+			BR 9
+7:			MOV #64.,R2			; number of words to write / 4
+8:				MOV (R4)+,(R1)	; copy from computer memory to HDD buffer
+				MOV (R4)+,(R1)
+				MOV (R4)+,(R1)
+				MOV (R4)+,(R1)
+			SOB R2,8
+			BIT #1,(R5)			; check HDD error status
+			BNE 10
+				MOV #TxtWriteError,R1
+9:				SEC				; set error sign
+				RET
+10:		SOB R0,3
+		RET
+
+
+; convert 16 bit number to text string, octal
+; R0 - number
+
+OctOut:	PUSH R1
+		PUSH R2
+		PUSH R3
+		MOV #NUMBER,R1
+		MOV #5,R3		; process 5 octal digits
+		ROL R0
+1:			CLR R2
+			ROL R0
+			ROL R2
+			ROL R0
+			ROL R2
+			ROL R0
+			ROL R2
+			ADD #60,R2	; ASCII code of 0
+			MOVB R2,(R1)+
+		SOB R3,1
+		CLRB (R1)
+		POP R3
+		POP R2
+		POP R1
+		RET
+
+
+; convert 32 bit number to text string, decimal
+; R0 - number to convert low 16 bit
+; R1 - number to convert high 16 bit
+
+DecOut:	PUSH R3
+		PUSH R4
+		PUSH R5
+
+		MOV #NUMBER,R3		; pointer to output text string
+		MOV #NUMBER-4,R5	; pointer to powers of 10
+
+1:		MOV #"0"-1,R4		; ASCII code of 0 symbol - 1
+2:			INC R4			; count digits
+			SUB 2(R5),R0	; low 16 bits
+			SBC R1
+			SUB (R5),R1		; high 16 bits
+		BPL 2				; branch if higher or same
+
+		ADD 2(R5),R0		; low 16 bits
+		ADC R1
+		ADD (R5),R1			; high 16 bits
+
+		CMP R4,#"0"			; got zero?
+		BNE 3
+		CMP R3,#NUMBER		; still empty string?
+		BEQ 4				; skip leading zero
+
+3:		MOVB R4,(R3)+		; print R4
+4:		CMP -(R5),-(R5)		; next decimal digit
+		BNE 1				; not 0:0?
+
+		ADD #"0",R0
+		MOVB R0,(R3)+		; print last digit
+		CLRB (R3) 			; end of text marker
+
+		POP R5
+		POP R4
+		POP R3
+		RET
+.DWORD 	0,
+		10.,
+		100.,
+		1000.,
+		10000.,
+		100000.,
+		1000000.,
+		10000000.,
+		100000000.,
+		1000000000.
+NUMBER:	.BLKB 12.
+
+
+; wait for any key or button
+
+AnyKey:	BIT #100,@#177716	; wait for key pressed
+		BNE AnyKey
+		MOV @#177662,R0		; read ASCII code to reset
+		BIC #240,R0			; fix letter case and language
+1:		BIT #100,@#177716	; wait for key released
+		BEQ 1
+		RET
+
+
+NoSMK:	MOV #177640,HDDport	; try Samara controller
+		MOV #NoSamara,@#4
+		MOV #WaitHDD,(SP)	; retry
+		RTI
+
+
+NoSamara:
+		MOV #TxtController,R1
+		CALL PrintString
+		CALL AnyKey
+		BR QUIT
+
+
+ERROR:	CALL PrintString	; type error message
+		MOV #12,R0			; next line
+		CALL PrintSymbol
+		BR QUIT
+
+
+STOP:	MOV (SP),R0			; address
+		CALL OctOut
+		MOV #TxtStop,R1
+		CALL PrintString
+		MOV #NUMBER,R1
+		CALL PrintString	; print address
+QUIT:	MOV #1000,SP
+		MOV #100000,@#4
+		CALL AnyKey
+		CLR @#177660		; allow keyboard interruption
+		RET
+
+
+TxtController:	.ASCIZ "no HDD controller detected"
+TxtMaster:		.ASCIZ "Master HDD: "
+TxtSlave:		.ASCIZ <12>"Slave HDD: "
+TxtHDDtimeout:	.ASCIZ "HDD timeout  "<12>
+NotDetected:	.ASCIZ "not detected"<12>
+TxtRemovable:	.ASCIZ "Removable media. "
+TxtLBA:			.ASCIZ "LBA mode."<12>
+TxtCHS:			.ASCIZ "No LBA mode, CHS only."<12>
+TxtTransfer:	.ASCIZ "Fast transfer rate. "
+TxtHeadSwitch:	.ASCIZ "Slow head switch."
+TxtSeekError:	.ASCIZ "Position error"<12>
+TxtReadError:	.ASCIZ "Read error"<12>
+TxtSectorSize:	.ASCIZ "Bytes per sector: "
+TxtBufferSize:	.ASCIZ "Blocks in HDD buffer: "
+TxtCylinders:	.ASCIZ "Cylinders: "
+TxtHeads:		.ASCIZ "    Heads: "
+TxtSectors:		.ASCIZ "  Sectors: "
+TxtBlocks:		.ASCIZ "Total blocks: "
+TxtCHSorLBA:	.ASCIZ <12>"Test (C)HS only, (L)BA only or (B)oth "
+TxtStartTest:	.ASCII <14>"Total blocks to test: "<12>
+				.ASCII "Hold any key to pause"<12>
+				.ASCII <12>"Cylinder:"<12>
+				.ASCII "    Head:"<12>
+				.ASCII "  Sector:"<12>
+				.ASCIZ "   Block:"
+TxtMasterSlave:	.ASCIZ <12>"Select (M)aster or (S)lave "
+TxtNoMatch:		.ASCIZ <12>"Error: different data in CHS and LBA modes"
+TxtCompleted:	.ASCIZ <12>"Test completed, no errors detected"
+TxtErase:		.ASCIZ <12>"Attention! All data will be lost!"<12>"Erase disk?"
+TxtWrite:		.ASCIZ <14>"Writing block: "<12>
+TxtWriteError:	.ASCIZ " Write error. Retry?"
+TxtBusyError:	.ASCIZ " HDD is busy. Retry?"
+TxtReadyError:	.ASCIZ " HDD isn't ready. Retry?"
+TxtBufferError:	.ASCIZ " Buffer error. Retry?"
+TxtCleared:		.ASCIZ <12><12>"Disk is clean"
+TxtStop:		.ASCIZ <12>"interruption at address "
+		.EVEN
+
+		.include "6px-lat.mac"
+
+		.END

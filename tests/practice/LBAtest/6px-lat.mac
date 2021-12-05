@@ -1,0 +1,288 @@
+; 6 pixel-font for BK-0010 and BK-0011.
+; Compile this source with PDPy11: https://github.com/imachug/PDPy11
+
+	.extern InitFont,ClearScreen,CursorSet,PrintString,PrintSymbol,Free
+
+		; System variables
+		CursorShift		= 40	; half-byte shift sigh (byte)
+		CursorShow		= 56	; 0 = show cursor (byte)
+		CursorAddress	= 160
+		CursorX			= 176	; 0..41
+		CursorY			= 200	; 0..24
+		Screen			= 202
+		ScreenSize		= 206
+		CursorColour	= 214
+
+		; Constants
+		LineHeight		= 1200
+		TotalSymbols	= (FontEnd-Font)/6
+		FontSize		= TotalSymbols*8.	; unpacked font size in bytes
+
+		Colorize1	= Font+FontSize
+		Colorize2	= Colorize1+400
+		ShiftTable	= Colorize2+400
+		Free		= ShiftTable+(TotalSymbols*2)
+
+InitFont:
+		MOV #40000,@#Screen		; set screen start adress
+		MOV #40000,@#ScreenSize
+		TST Unpacked
+		BNE 1
+			CALL BuildTables
+			INC Unpacked
+1:
+;		MOV #52525,@#CursorColour	; set symbol color mask
+		CLR @#CursorColour			; set symbol color mask
+		MOVB #377,@#CursorShow		; hide cursor
+		CLR R1					; X
+		CLR R2					; Y
+		CALL CursorSet
+		RET
+Unpacked:	.WORD 0			; is the font unpacked already?
+
+
+; R1 - cursor X (0..41)
+; R2 - cursor Y (0..24)
+CursorSet:
+		MOV R1,@#CursorX
+		MOV R2,@#CursorY
+		CALL CalculateCursorAddress
+		RET
+
+
+; output R5 - cursor address
+CalculateCursorAddress:
+		MOV @#Screen,R1
+		ADD #200,R1			; window offset
+		MOV @#CursorY,R2
+		BEQ 2
+1:		ADD #LineHeight,R1
+		SOB R2,1
+2:		CLRB @#CursorShift
+		MOV @#CursorX,R2
+		BIT #1,R2
+		BNE 3
+		COMB @#CursorShift	; set sign CursorX is even
+3:		ASL R2
+		ADD @#CursorX,R2
+		ASR R2				; CursorX * 1.5
+		ADD R2,R1
+		MOV R1,@#CursorAddress
+		RET
+
+
+; R1 - pointer to text string
+PrintString:
+		PUSH R0
+		BR 2
+1:		PUSH R1
+		CALL PrintSymbol
+		POP R1
+2:		MOVB (R1)+,R0
+		BNE 1
+		POP R0
+		RET
+
+
+; R0 - ASCII code
+PrintSymbol:
+		TST R0				; skip ASCII-codes large than 200
+		BMI 1
+		SUB #40,R0			; space code
+		BPL 4
+			CMP R0,#12-40			; Enter code
+			BNE 2
+				CLR @#CursorX
+				BIC #77,@#CursorAddress
+				MOVB #377,@#CursorShift
+				INC @#CursorY
+				ADD #LineHeight,@#CursorAddress
+1:				RET
+2:			CMP R0,#14-40			; Clear screen code
+			BNE 3
+				CLR R1
+				CLR R2
+				CALL CursorSet
+				CALL ClearScreen
+				RET
+3:			CMP R0,#30-40			; Backspace code
+			BNE 1
+				DEC @#CursorX
+				DEC @#CursorAddress
+				MOV #Font,R0		; pointer to space sprite
+				CLR R1				; index in ShiftTable
+				BR DrawSymbol
+4:		ASL R0
+		MOV R0,R1			; index in ShiftTable
+		ASL R0
+		ASL R0				; * 8
+		ADD #Font,R0		; pointer to sprite
+		BR DrawSymbol
+
+
+; R0 - pointer to sprite
+DrawSymbol:
+		PUSH R3
+		PUSH R4
+		PUSH R5
+		MOV @#CursorAddress,R5
+		ADD ShiftTable(R1),R5	; apply vertical shift for symbol
+		MOV @#CursorColour,R4
+		MOV #8.,R2
+		TSTB @#CursorShift
+		BNE DrawSymbolShifted
+
+		BIT #1,R5			; odd screen adress?
+		BNE 2
+		MOV #7777,R3		; erase mask
+1:			BIC R3,(R5)		; clear space
+			MOVB (R0)+,R1
+			BEQ 11
+			MOV Colorize1(R1),R1
+			BIC R4,R1		; apply colour mask
+			BIS R1,(R5)		; draw pixels
+11:			ADD #100,R5
+		SOB R2,1
+		BR CursorRight
+2:		MOV #17,R3			; erase mask
+3:			CLRB (R5)		; clear space
+			MOVB (R0)+,R1
+			BNE 31
+				INC R5
+				BR 32
+31:			MOV Colorize1(R1),R1
+			BIC R4,R1		; apply colour mask
+			BISB R1,(R5)+	; draw pixels
+32:			BICB R3,(R5)	; clear space
+			SWAB R1
+			BISB R1,(R5)	; draw pixels
+			ADD #77,R5
+		SOB R2,3
+;		BR CursorRight
+
+CursorRight:
+		TSTB @#CursorShift
+		BEQ 2
+			ADD #2,@#CursorAddress
+		BR 3
+2:			INC @#CursorAddress
+3:		COMB @#CursorShift
+		INC @#CursorX
+		CMP @#CursorX,#42.	; next line?
+		BLO 4
+			CLR @#CursorX
+			BIC #77,@#CursorAddress
+			INC @#CursorY
+			ADD #LineHeight,@#CursorAddress
+4:		POP R5
+		POP R4
+		POP R3
+		RET
+
+; R0 - pointer to sprite
+; R5 - screen address
+DrawSymbolShifted:
+		BIT #1,R5			; odd screen adress?
+		BNE 2
+		MOV #177760,R3		; erase mask
+1:			BIC R3,(R5)		; clear space
+			MOVB (R0)+,R1
+			BEQ 11
+			MOV Colorize2(R1),R1
+			BIC R4,R1		; apply colour mask
+			BIS R1,(R5)		; draw pixels
+11:			ADD #100,R5
+		SOB R2,1
+		BR CursorRight
+2:		MOV #360,R3			; erase mask
+3:			BICB R3,(R5)	; clear space
+			MOVB (R0)+,R1
+			BNE 31
+				INC R5
+				BR 32
+31:			MOV Colorize2(R1),R1
+			BIC R4,R1		; apply colour mask
+			BISB R1,(R5)+	; draw pixels
+32:			CLRB (R5)		; clear space
+			SWAB R1
+			BISB R1,(R5)	; draw pixels
+			ADD #77,R5
+		SOB R2,3
+		BR CursorRight
+
+
+ClearScreen:
+		CLR R5
+		MOV @#Screen,R4
+		MOV @#ScreenSize,R3
+		ASR R3
+1:			MOV R5,(R4)+
+		SOB R3,1
+		RET
+
+
+BuildTables:
+		MOV #Colorize1+400,R2
+		MOV #177,R0
+1:			MOV R0,R1
+			CLR R3
+			MOV #8.,R4
+2:				ASL R3
+				ASL R3
+				ROLB R1
+				BCC 3
+				BIS #3,R3
+3:			SOB R4,2
+			MOV R3,-(R2)
+			ASL R3
+			ASL R3
+			ASL R3
+			ASL R3
+			MOV R3,400(R2)
+		SOB R0,1
+		CLR -(R2)
+		CLR 400(R2)
+
+UnpackFont:
+		MOV #FontSize*6,R0	; number of bits to unpack
+		MOV #FontEnd,R1
+		MOV #Font+FontSize,R2
+		CLR R3
+		CLR R4
+		BR 2
+1:			ROLB (R1)
+			ROLB (R2)
+2:			DEC R3			; source bit counter
+			BGT 3
+				MOV #8.,R3
+				DEC R1
+3:			DEC R4			; destination bit counter
+			BGT 4
+				MOV #6.,R4
+				ASLB (R2)
+				DEC R2
+				CLRB (R2)
+4:		SOB R0,1
+
+ShiftSymbols:
+		MOV #ShiftTable,R1
+		MOV #TotalSymbols,R0	; total symbols
+1:		CLR (R1)+				; clear table
+		SOB R0,1
+		MOV #ShiftList,R1
+3:		MOV (R1)+,R0			; read symbol number
+		BEQ 7
+		ASL R0
+		MOV (R1)+,R2			; read horisontal offset
+		MOV R2,ShiftTable(R0)
+		BR 3
+7:		RET
+
+
+ShiftList:	.WORD 12.,100,27.,100,71.,100,81.,100,89.,100,102.,100,114.,100,117.,100,138.,-100,0
+		.EVEN
+
+Font:	insert_file "font-6x8-packed.raw"
+FontEnd:
+
+.END

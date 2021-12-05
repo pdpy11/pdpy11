@@ -1,0 +1,2510 @@
+; Pong Charged game for BK-0010 and BK-0011.
+; Compile this source with PDPy11: https://github.com/imachug/PDPy11
+; Original game design and code (c) Manwe/SandS 2019-2021
+
+		.extern PlaySound,STEREO	; for music player
+
+		PORT = 		177714	; joystick port address
+		KEYBSTATE =	177660	; keyboard state register
+		PALETTE =	177662	; colour palette port address
+		SCROLL	=	177664
+		PAL =		15.*400	; palette number
+		KEY = 		177662	; keyboard register (7 bits)
+		KEYPRESSED = 177716	; bit 100 - is any key pressed?
+		TIMER = 	177712	; timer port address
+		AUTOREPEATDELAY = 16.	; time to turn auto-repeat on
+		KEYDELAY =	10.		; delay when auto-repeat is on
+		PauseKey =	14		; ASCII code
+		MENUSCREEN =74200	; bottom screen address of menu -2000
+
+		SIZE = 34.			; carriage size
+		ChargeBonus = 500	; add to charge level when repel
+		LooseBonus	= 1700	; add to charge level when loose
+		TurboCost = 30		; spend during carriage fast motion
+		PowerCost = 400		; spend during ball turbo hit
+		BallSpeedUp = 3		; add to speed on wall colission
+		CarriageSpeed = 300	; xxx00
+		CarriageTurbo = 600	; xxx00
+
+		FONTTABLE = FREE
+		MONO2COLOUR = FONTTABLE+2*26.
+		BUFFER = MONO2COLOUR+512.
+		BUFFERSIZE = 40		; to save background behind the ball
+		TEMP = BUFFER+BUFFERSIZE
+		DemoDelay = 487.	; delay before demo mode autostart
+
+
+		MOV SP,EXIT+2		; save stack pointer
+		MOV @#4,EXIT+6		; save STOP vector
+		MOV @#100,Old100+2	; save VSync timer vector
+		MOV #STOPKEY,@#4	; set new STOP vector
+		MOV #340,@#6		; set PSW for STOP interruption
+		MTPS #340			; disable all interruptions
+		MOV #100,@#KEYBSTATE	; block keyboard interruption
+		CMPB @#177717,#200	; is it BK-0010 or BK-0011?
+		BEQ 1				; skip if BK-0010
+		MOV #11,MODEL		; if BK-0011
+1:		MOV #3,MENUITEM		; default menu = play versus
+		JMP INIT
+
+; joystick codes
+
+J1FAST:	.WORD 100		; joystick 1 main button
+J1UP:	.WORD 1			; joystick 1 up
+J1DOWN: .WORD 4			; joystick 1 down
+J1HIT:	.WORD 40		; joystick 1 secondary button
+		HALT			; divider
+J2FAST:	.WORD 40000		; joystick 2 main button
+J2UP:	.WORD 400		; joystick 2 up
+J2DOWN: .WORD 2000		; joystick 2 down
+J2HIT:	.WORD 20000		; joystick 2 secondary button
+
+; keyboard codes
+
+K1UP:		.WORD 127	; W - keyboard up
+K1DOWN: 	.WORD 123	; S - keyboard down
+K1UPFAST:	.WORD 27	; W+CY - keyboard fast up
+K1DOWNFAST: .WORD 23	; S+CY - keyboard fast down
+K1FIRE:		.WORD 40	; Space - power hit keyboard button
+
+REFRESH:	.WORD 480.	; timer period for screen refresh
+REFRESH2:	.WORD 280.	; 287
+SYNC:		.WORD 447.	; timer value to sync
+
+; fixed point format:
+; 1 bit for overflow, 9 bits for integer part, 6 bits for fract part
+; 0iiiiiii'iiffffff
+; screen coordinates:
+; X from 0 to 340. represented as 12600...65200
+; Y from 0 to 256. represented as 20000...60000
+; screen center: X=40000, Y=40000
+
+		X0 = 12600		; left X on the visible screen
+		Y0 = 20000		; top Y on the visible screen
+
+BallXspeed:	.WORD 300	; ball X speed
+BallX:		.WORD 40000	; ball X position
+BallXold:	.WORD 40000	; old ball X position
+BallYspeed:	.WORD 300	; ball Y speed
+BallY:		.WORD 40000	; ball Y position fract
+BallYold:	.WORD 40000	; old ball Y position
+
+P1Y:		.WORD 128.	; carriage 1 screen Y
+P1Yold:		.WORD 128.	; carriage 1 screen Y old
+POS1:		.WORD 40000	; carriage 1 position, fixed point
+P1ADDRold:	.WORD 53600	; carriage 1 screen address
+
+P2Y:		.WORD 128.	; carriage 2 screen Y
+P2Yold:		.WORD 128.	; carriage 2 screen Y old
+POS2:		.WORD 40000	; carriage 2 position, fixed point
+P2ADDRold:	.WORD 53677	; carriage 2 screen address
+
+BallXspeedOld:	.WORD 300	; stored while the ball's speed is fast
+BallYspeedOld:	.WORD 300
+
+; integer variables
+
+SCORE1:	.WORD 7			; player 1 score
+SCORE2:	.WORD 0			; player 2 score
+
+				.BYTE 0			; to make even
+CHARG1old:		.BYTE 0
+CHARG1:			.WORD 0			; player 1 charge level from 0 to 36. in high byte
+CHARGESPRITE1:	.WORD NUMBERS
+CHARGESCREEN1:	.WORD 40000
+				.BYTE 0			; to make even
+CHARG2old:		.BYTE 0
+CHARG2:			.WORD 0			; player 2 charge level
+CHARGESPRITE2:	.WORD NUMBERS
+CHARGESCREEN2:	.WORD 40000
+
+
+EXIT:	MOV #1000,SP
+		MOV #100000,@#4
+		CMP MODEL,#10
+		BEQ Exit2
+			MOV #40000,@#PALETTE	; set palette 0 and stop VSync timer
+Old100:		MOV #100000,@#100
+Exit2:	CLR R0
+		MOV R0,@#KEYBSTATE		; allow keyboard interruption
+		MTPS R0
+		MOV @#KEY,R0			; init keyboard
+		RET
+
+STOPKEY:
+		TST PARENTITEM
+		BEQ 2					; if main menu
+			MOV PARENTITEM,MENUITEM	; return to main menu
+			MOV EXIT+2,SP
+			BR INIT2
+2:		MOV EXIT+2,SP			; stay in main menu
+		BR BEGIN2
+
+VSYNC:	RTI
+
+
+; init
+
+INIT:	CALL CLS
+		CALL InitFont			; build the table of addresses
+		CALL TestTimer
+		CALL TestPort			; test joystick port for broken bits
+
+INIT2:	CALL CLS				; clear screen
+		CMP MODEL,#10			; is it BK-0010?
+		BEQ BK0010				; skip if BK-0010
+
+BK0011:	MOV #6,MENUMAX
+		MOV #MENUSCREEN-6*2000+24,MENUADDRESS
+		MOV #EXIT,JUMP+12		; replace menu item
+		MOV #TXTTWEAK,R2
+		MOV #TXTEXIT,R1
+1:			MOVB (R1)+,(R2)+
+		BNE 1
+		MOV #40000+11.+100*31.,ShowLogo+2	; place logo lower a bit
+		MOV #40000+PAL,@#PALETTE	; set 15th palette and stop VSync timer
+		MTPS #340				; disable all interruptions
+		CLR KEYPRESSED			; allow STOP key interruption (MOV #10000)
+		BR BEGIN
+
+BK0010:	MOV #7,MENUMAX
+		MOV #MENUSCREEN-7*2000+24,MENUADDRESS	; screen address
+
+; run subroutines from menu
+
+BEGIN:	CALL ShowLogo
+		CLR PARENTITEM			; sign of main menu
+BEGIN2:	CALL MAINMENU
+		CALL CLS				; clear screen
+		MOV MENUITEM,R0
+		CMP R0,#8.				; compare with hidden menu item (demo mode)
+		BEQ 1
+			MOV R0,PARENTITEM	; save menu item number to return
+1:		ASL R0
+		CALL @JUMP-2(R0)		; execute program related to menu item
+		CALL CLS				; clear screen after previous subroutine
+		BR BEGIN
+
+; subroutines addresses
+
+JUMP:	.WORD HELP				; how to play
+		.WORD SINGLE			; play single
+		.WORD VERSUS			; play versus
+		.WORD CONTROLS			; set controls
+		.WORD SetSound			; change sound output
+		.WORD CALIBRATION		; tweak screen
+		.WORD EXIT				; exit to DOS
+		.WORD DEMO				; demo mode, 8th menu item
+
+; play demo
+
+DEMO:	MOV #COMPUTER,GAMEMODE	; set computer as player 2
+		MOV #LEVELDEMO,DEMOMODE	; set computer as player 1
+		CALL DrawLine
+		MOV #TXTDEMO1,R1
+		MOV #23.+PausePosition,R2	; X=23
+		MOV #125252,R3				; colour
+		CALL PRINT
+		MOV #TXTDEMO2,R1
+		MOV #15.+196.*100+40000,R2	; X=15, Y=196
+		CALL PRINT
+		BR VERS2
+
+; play single
+
+SINGLE:	MOV #COMPUTER,GAMEMODE	; set game mode to single
+		BR VERS1
+
+; play versus
+
+VERSUS:	MOV #PLAYER2,GAMEMODE	; set game mode to versus
+VERS1:	MOV #PLAYER1,DEMOMODE
+		CALL DrawLine
+VERS2:	CMP MODEL,#11
+		BNE 1
+			MOV #VSYNC,@#100	; set VSync vector
+			MOV #340,@#102		; set PSW for VSync interruption
+			MOV #13.*400,@#PALETTE	; set 13th palette and run VSync timer
+1:		MOV #Clear,R1			; reset variables
+		MOV #(ROUND-Clear)/2,R0
+2:		CLR @(R1)+
+		SOB R0,2
+3:		MOV @#PORT,R0			; wait for joystick and a key are released
+		BIC JOYSTICKMASK,R0
+		BNE 3
+		BIT #100,@#KEYPRESSED
+		BEQ 3
+		BR ROUND
+Clear:	.WORD SCORE1, SCORE2, CHARG1, CHARG1old, CHARG2, CHARG2old, GAMEOVER, GOAL, OUT
+
+ROUND:	CALL EraseCarriages
+		TST OUT
+		BEQ 4					; if 0:0
+		BMI 1
+			MOV #CHARG1,R0		; player 1
+			BR 2
+1:			MOV #CHARG2,R0		; player 2
+2:			CMP (R0),#36.*400-LooseBonus	; maximum charge
+			BLO 3			
+			MOV #36.*400-LooseBonus,(R0)
+3:			ADD #LooseBonus,(R0)
+			MOVB 1(R0),-1(R0)	; copy to old value
+4:		CALL PrintScore
+		TST GAMEOVER
+		BEQ 6
+			CMP DEMOMODE,#LEVELDEMO
+			BNE 5
+				JMP STOPKEY
+5:			CALL Winner
+			RET
+6:		CALL NewRound			; reset game data
+		CALL DrawBall			; draw ball and fill background buffer
+		CALL ShowCarriages
+		CALL StartSound
+		CLR GOAL				; no goal yet
+		CLR OUT					; ball is on the field
+		MOV @#KEY,R0			; read a key to init keyboard
+
+		; each frame
+
+FRAME:	TST GOAL
+		BEQ 1
+			MOV #X0-100*4.,Xmin+2	; set playfield borders
+			MOV #X0+100*344.,Xmax+2
+			BR 4
+1:		CALL @DEMOMODE			; check keys and move carriages for player 1
+		CMP P1Y,P1Yold			; if position was not changed
+		BNE 2
+			CALL Randomize
+2:		CALL @GAMEMODE			; call COMPUTER or PLAYER2
+
+4:		CALL CarriagesY			; calculate new carriages Y
+		CALL MoveBall			; move ball
+		CALL BallScreen			; calculate ball's screen address
+
+		CMP MODEL,#11
+		BNE 5
+			MTPS #140			; enable VSync timer interruption
+			WAIT				; BK 0011 waits for the frame sync
+			MTPS #340			; disable VSync timer interruption
+			BR 7
+5:		MOV #TIMER-2,R4			; BK 0010 waits for frame sync
+		MOV SYNC,R5
+6:		CMP (R4),R5
+		BNE	6
+
+7:		CALL ClearBall			; update screen
+		CALL DrawCarriages
+		MOV #CHARG1+1,R0		; left player
+		CALL ChargeUpdate
+		MOV #CHARG2+1,R0		; right player
+		CALL ChargeUpdate
+		CALL DrawBall
+
+		CALL PlaySound			; and detect power hit
+
+		TST OUT					; ball left the playfield?
+		BEQ FRAME				; next frame
+
+		CALL ClearBall
+		BR ROUND				; end of the round
+
+
+; move the ball with R3,R4 speed
+
+BallStep:
+		CLR CROSS			; ball is not crossed left or right border yet
+		CLR TOUCHv			; ball is not touching a vertical edge
+		CLR R5				; sign of collision
+		ADD R3,R1			; add delta X to X coordinate
+		ADD R4,R2			; add delta Y to Y coordinate
+Xmin:	CMP R1,#X0+100*9.	; X <= 9. ?
+		BHIS Xmax
+			INC CROSS		; ball crossed left border
+			INC R5
+			BR Ymin
+Xmax:	CMP R1,#X0+100*331.	; X >= 331. ?
+		BLOS Ymin
+			DEC CROSS		; ball crossed right border
+			INC R5
+Ymin:	CMP R2,#Y0+100*5.	; Y <= 5. ?
+		BHIS Ymax
+			INC TOUCHv		; ball hit top edge
+			INC R5
+			RET
+Ymax:	CMP R2,#Y0+100*251.	; Y >= 251. ?
+		BLOS 1
+			DEC TOUCHv		; ball hit bottom edge
+			INC R5
+1:		RET
+
+
+; calculate ball moves subroutine
+
+MoveBall:
+		MOV BallX,R1
+		MOV BallY,R2
+		MOV R1,BallXold		; save X coordinate to "old"
+		MOV R2,BallYold		; save Y coordinate to "old"
+		MOV BallXspeed,R3	; get delta X
+		MOV BallYspeed,R4	; get delta Y
+		CALL BallStep
+		TST R5				; sign of collision
+		BNE TestGoal		; if the ball crossed any edge goto TestGoal
+			TST FAST
+			BLE 3			; skip if the ball's speed is not fast
+				TST R3		; detect the ball horisontal direction
+				BMI 1
+				MOV #CHARG1,R0
+				BR 2
+1:				MOV #CHARG2,R0
+2:				SUB #PowerCost,(R0)	; spend charge while the ball is flying fast (turbo hit)
+				BPL 3
+					CLR (R0)		; set minimum charge level
+3:			JMP Store		; return from subroutine
+TestGoal:
+		TST GOAL
+		BEQ Trace			; if no goal yet, trace a collision
+			TST CROSS
+			BEQ Trace		; if left or right border was not crossed
+				MOV CROSS,OUT
+				CLR R2		; don't draw the ball
+				JMP Store
+Trace:	MOV #77,R0			; subpixel step
+		MOV R3,R1			; copy X speed
+		BPL 1
+			NEG R3			; abs X speed
+1:		MOV R4,R2			; copy Y speed
+		BPL 2
+			NEG R4			; abs Y speed
+2:		ASR R3				; slowdown
+		ASR R4
+		CMP R3,R0			; reduce speed to 77 or less
+		BGT 2
+		CMP R4,R0
+		BGT 2
+		TST R1
+		BPL 3
+			NEG R3			; restore sign of X speed
+3:		TST R2
+		BPL 4
+			NEG R4			; restore sign of Y speed
+4:		MOV BallXold,R1
+		MOV BallYold,R2
+5:		CALL BallStep		; trace the ball from its old position
+		TST R5
+		BEQ 5				; continue to trace
+Collision:
+		TST TOUCHv			; top or bottom edge collision?
+		BEQ 4
+			NEG BallYspeed	; reflect from top or bottom edge
+			BPL 1
+			SUB #BallSpeedUp,BallYspeed	; speed up a bit
+			BR 2
+1:			ADD #BallSpeedUp,BallYspeed	; speed up a bit
+2:			TST BallXspeed
+			BPL 3
+			SUB #BallSpeedUp,BallXspeed	; speed up a bit
+			BR 4
+3:			ADD #BallSpeedUp,BallXspeed	; speed up a bit
+4:		MOV POS2,R5			; test if right carriage repel the ball
+		TST CROSS			; left or right edge was crossed?
+		BEQ Store			; if no left or right collisions
+		BMI 5
+			MOV POS1,R5		; test if left carriage repel the ball
+5:		SUB #100,R5			; check collisions with carriages
+		SUB R2,R5			; distance between carriage position and ball's Y
+		BPL 6
+			NEG R5			; abs
+6:		CMP R5,#100*(SIZE/2+2)	; or +1
+		BLOS Repel
+			MOV CROSS,GOAL	; a player missed the ball
+			BR Store
+
+Repel:	TST FAST
+		BEQ 3					; skip if the ball speed is normal (0)
+			MOV BallXspeedOld,R3
+			CMP BallX,#40000	; left or right half of the screen?
+			BPL 1
+				NEG R3			; left paddle
+1:			MOV R3,BallXspeed	; restore normal horisontal speed
+			MOV BallYspeedOld,R4
+			TST BallYspeed		; test current vertical speed sign
+			BPL 2
+				NEG R4			; set vertical speed sign
+2:			MOV R4,BallYspeed	; restore normal vertical speed
+			CLR FAST			; set normal speed for the ball
+
+3:		NEG BallXspeed			; reflect
+
+Charge:
+		TST CROSS			; who repel?
+		BMI 1
+			MOV #CHARG1,R5	; player 1
+			MOV P1Y,R0		; left player repels, the ball moves to the right
+			SUB P1Yold,R0	; compare old Y position with new one
+			BR 2
+1:		MOV #CHARG2,R5		; player 2
+		MOV P2Y,R0			; right player repels, the ball moves to the left
+		SUB P2Yold,R0		; compare old Y position with new one
+
+2:		CMP (R5),#36.*400-ChargeBonus	; maximum charge level?
+		BMI 3
+			MOV #36.*400,(R5)
+			BR Spin
+3:			ADD #ChargeBonus,(R5)	; increase charge
+
+Spin:	TST R0
+		BEQ Store				; if no spin goto Store
+			MOV BallYspeed,R3
+			XOR R0,R3			; compare directions
+			BPL Store			; skip if different signs
+			MOV #-1,FAST
+			MOV BallXspeed,R3
+			ASR R3				; double horisontal speed
+			ADD R3,BallXspeed	; set new horisontal speed 1.5 times faster
+
+Store:	MOV R1,BallX		; store new coordinates
+		MOV R2,BallY
+		RET
+
+
+; calculate ball's screen address
+
+BallScreen:
+		MOV BallY,R2
+		BNE 1				; if not 0
+			CLR BALLADDR
+			RET
+1:		ADD #40,R2			; round Y
+		BIC #77,R2
+		ADD #Y0-400,R2		; screen Y offset
+		MOV BallX,R1
+		ADD #40,R1			; round X
+		ASR R1				; R1 = R1*3/4
+		MOV R1,R3
+		ASR R1
+		ADD R3,R1			; R1 from 10000 to 50000, center = 30000
+		SUB #300,R1			; 3 pixels to left from center
+		MOV R1,R3
+		BIC #777,R3
+		SWAB R3
+		SUB #20,R3			; screen X offset
+		MOV R3,Xoffset
+		ADD R3,R2			; screen address
+		MOV R2,BALLADDR
+		BIC #177077,R1
+		ASL R1
+		ASL R1
+		ASL R1
+		SWAB R1				; sprite number * 2
+		MOV BallSprites(R1),BALLSPRITE
+		RET
+
+
+; calculate carriages Y
+
+CarriagesY:
+		MOV POS1,R1
+		ADD #40,R1				; round
+		SUB #Y0,R1
+		ASL R1
+		ASL R1
+		CLRB R1
+		SWAB R1					; screen Y
+		MOV R1,P1Y
+
+		MOV POS2,R1
+		ADD #40,R1				; round
+		SUB #Y0,R1
+		ASL R1
+		ASL R1
+		CLRB R1
+		SWAB R1					; screen Y
+		MOV R1,P2Y
+		RET
+
+
+; clear ball subroutine
+
+ClearBall:
+		MOV BallADDRold,R2		; screen address
+		MOV #BUFFER,R4			; saved background
+		MOV #76,R3
+		.REPEAT 8.				; sprite height
+		{
+			MOV (R4)+,(R2)+
+			MOV (R4)+,(R2)
+			ADD R3,R2
+		}
+		RET
+
+
+; draw ball subroutine
+
+DrawBall:
+		MOV BALLSPRITE,R1
+		MOV BALLADDR,R2
+		BNE 1
+			RET
+1:		MOV R2,BallADDRold
+		MOV #BUFFER,R4			; where to save background
+		MOV #8.,R0				; sprite height
+		MOV #76,R3
+		MOV Xoffset,R5			; usually from -2 to 64
+		BMI 4					; over left border?
+		CMP R5,#62.				; over right border?
+		BNE 3
+			MOV #4,R5			; the ball crosses left border
+2:			MOV (R2),(R4)+		; save background to buffer
+			BIS (R1),(R2)+		; draw sprite over background
+			MOV (R2),(R4)+		; save background to buffer
+			ADD R5,R1			; skip column
+			ADD R3,R2
+		SOB R0,2
+		RET
+3:			MOV (R2),(R4)+		; save background to buffer
+			BIS (R1)+,(R2)+		; draw sprite over background
+			MOV (R2),(R4)+
+			BIS (R1)+,(R2)
+			ADD R3,R2
+		SOB R0,3
+		RET
+4:			MOV #4,R5
+			SUB #2,R1
+5:			MOV (R2)+,(R4)+		; save background to buffer
+			MOV (R2),(R4)+
+			ADD R5,R1			; skip columns
+			BIS (R1),(R2)
+			ADD R3,R2
+		SOB R0,5
+		RET
+
+
+; draw new edge part of carriages
+
+DrawCarriages:
+		MOV #377,R1					; colour
+		MOV #100,R5
+		CLR R0
+DrawLeft:
+		; left carriage
+		MOV P1Y,R4
+		SUB P1Yold,R4
+		BEQ DrawRight				; if Y was not changed
+		BMI 2
+		; move the carriage down
+		MOV P1ADDRold,R2			; get old screen address of the left carriage
+1:			MOVB R0,(R2)			; clear
+			MOVB R1,SIZE*100(R2)	; draw
+			ADD R5,R2				; next row
+		SOB R4,1
+		BR 4
+		; move the carriage up
+2:		NEG R4						; steps in loop
+		MOV P1ADDRold,R2			; get old screen address of the left carriage
+3:			SUB R5,R2				; next row
+			MOVB R1,(R2)			; draw
+			MOVB R0,SIZE*100(R2)	; clear
+		SOB R4,3
+
+4:		MOV R2,P1ADDRold			; save for the next frame
+		MOV P1Y,P1Yold
+
+DrawRight:
+		; right carriage
+		MOV P2Y,R4
+		SUB P2Yold,R4
+		BEQ 5						; if Y was not changed
+		BMI 2
+		; move the carriage down
+		MOV P2ADDRold,R2			; get old screen address of the left carriage
+1:			MOVB R0,(R2)			; clear
+			MOVB R1,SIZE*100(R2)	; draw
+			ADD R5,R2				; next row
+		SOB R4,1
+		BR 4
+		; move the carriage up
+2:		NEG R4						; steps in loop
+		MOV P2ADDRold,R2			; get old screen address of the left carriage
+3:			SUB R5,R2				; next row
+			MOVB R1,(R2)			; draw
+			MOVB R0,SIZE*100(R2)	; clear
+		SOB R4,3
+
+4:		MOV R2,P2ADDRold			; save for the next frame
+		MOV P2Y,P2Yold
+5:		RET
+
+
+; draw carriages subroutine
+
+ShowCarriages:
+		MOV #60000-SIZE*40,R1
+		MOV #140003,R5			; 2 dots
+		MOV #4,R4				; carriage width
+1:			MOV #SIZE,R0		; carriage height
+2:				MOVB R5,(R1)
+				SWAB R5
+				MOVB R5,77(R1)
+				SWAB R5
+				ADD #100,R1
+			SOB R0,2
+			MOV #20000,R0		; pause
+3:				NOP
+			SOB R0,3
+			SEC
+			ROLB R5
+			SEC
+			ROLB R5
+			SWAB R5
+			SEC
+			RORB R5
+			SEC
+			RORB R5
+			SWAB R5
+			SUB #SIZE*100,R1
+		SOB R4,1
+		RET
+
+
+; erase carriages subroutine
+
+EraseCarriages:
+		MOV P1ADDRold,R1
+		MOV R1,R3
+		ADD #(SIZE-1)*100,R3	; end screen address
+		MOV P2ADDRold,R2
+		MOV R2,R4
+		ADD #(SIZE-1)*100,R4	; end screen address
+		MOV #SIZE/2,R0			; carriage size
+1:			CLRB (R1)
+			CLRB (R3)
+			ADD #100,R1
+			SUB #100,R3
+			CLRB (R2)
+			CLRB (R4)
+			ADD #100,R2
+			SUB #100,R4
+			MOV #4000,R5		; pause
+2:			SOB R5,2
+		SOB R0,1
+		RET
+
+
+; computer opponet moves
+
+COMPUTER:
+		MOV #CHARG2,R2			; pointer to charge level 0..36.
+		MOV #CarriageSpeed,R3
+		MOV POS2,R4				; get paddle position
+		MOV SCORE1,R0			; how many balls were missed by A.I.
+		ASL R0
+		ADD #AI,R0				; choose A.I. subroutine
+		CALL @(R0)				; run proper A.I. subroutine
+		CMP R4,#20100+100*SIZE/2	; check top border
+		BHIS 1
+			MOV #20100+100*SIZE/2,R4
+			BR 2
+1:		CMP R4,#57700-100*SIZE/2	; check bottom border
+		BLOS 2
+			MOV #57700-100*SIZE/2,R4
+2:		MOV R4,POS2				; store new paddle position
+		RET
+
+
+		; A.I. subroutines for each level
+AI:		.WORD LEVEL0,LEVEL1,LEVEL2,LEVEL3,LEVEL4,LEVEL5,LEVEL6,LEVEL7,LEVEL8,LEVEL9
+
+LEVEL0:	TST BallXspeed			; detect moving direction
+		BPL LEVEL2
+		MOV #40000,R0			; vertical center
+		CMP R4,R0				; compare paddle position with vertical center
+		BEQ 2
+		BMI 1
+		ADD #100,R4
+		RET
+1:		SUB #100,R4
+2:		RET
+
+
+LEVEL1:	TST BallXspeed			; detect moving direction
+		BPL LEVEL2
+		MOV #40000,R0			; vertical center
+		CMP R4,R0				; compare paddle position with vertical center
+		BEQ 2
+		BPL 1
+		ADD #100,R4
+		RET
+1:		SUB #100,R4
+2:		RET
+
+
+LEVEL4:	TST BallXspeed			; detect moving direction
+		BMI LEVEL2
+		CMP BallX,#X0+100*280.	; X >= 280. ?
+		BLO LEVEL2
+LEV4a:	MOV BallY,R5
+LEV4b:	BIC #100077,R5			; ball vertical position, int
+		SUB R4,R5				; compare paddle position with vertical ball position
+		BMI 4
+		BGT 1
+		RET
+1:		CMP R5,R3				; move paddle down
+		BGT 2
+		ADD R5,R4
+		RET
+2:		CMP (R2),#TurboCost		; check charge level
+		BMI 3					; skip if charge level is low
+		SUB #TurboCost,(R2)		; spend some charge
+		MOV #CarriageTurbo,R3
+3:		ADD R3,R4
+		RET
+4:		NEG R5
+		CMP R5,R3				; move paddle up
+		BGT 5
+		SUB R5,R4
+		RET
+5:		CMP (R2),#TurboCost		; check charge level
+		BMI 6					; skip if charge level is low
+		SUB #TurboCost,(R2)		; spend some charge
+		MOV #CarriageTurbo,R3
+6:		SUB R3,R4
+		RET
+
+
+LEVEL5:	TST CROSS
+		BPL LEVEL3
+		CMP FAST,#100
+		BEQ LEVEL2
+		CMP (R2),#36.*400		; check player's 2 charge level
+		BMI LEVEL2				; skip if low level
+			PUSH R3
+			PUSH R4
+			CALL Randomize
+			CMP RND2,#60000
+			BHI 1
+			CALL PowerSpeedUp	; post power hit
+1:			POP R4
+			POP R3
+2:		BR LEVEL2
+
+
+LEVEL2:	MOV BallY,R5
+LEV2a:	BIC #100077,R5			; ball vertical position, int
+		SUB R4,R5				; compare paddle position with vertical ball position
+		BMI 3
+		BGT 1
+		RET
+1:		CMP R5,R3				; move paddle down
+		BGE 2
+		ADD R5,R3
+		RET
+2:		ADD R3,R4
+		RET
+3:		NEG R5
+		CMP R5,R3				; move paddle up
+		BGE 4
+		SUB R5,R4
+		RET
+4:		SUB R3,R4
+		RET
+
+
+LEVEL3:	TST BallXspeed			; detect moving direction
+		BPL LEVEL2
+LEV3a:	MOV #40000,R0			; vertical center
+LEV3b:	CMP R4,R0				; compare paddle position with vertical center
+		BEQ 3
+		BPL 1
+		ADD #CarriageSpeed,R4
+		CMP R4,R0
+		BGT 2
+			RET
+1:		SUB #CarriageSpeed,R4
+		CMP R4,R0
+		BGE 3
+2:			MOV R0,R4
+3:			RET
+
+
+LEVEL6:	TST CROSS
+		BPL 0
+		CMP FAST,#100
+		BEQ 0
+		CMP (R2),#36.*400		; check player's 2 charge level
+		BMI 0					; skip if low level
+			PUSH R3
+			PUSH R4
+			CALL PowerSpeedUp	; post power hit
+			POP R4
+			POP R3
+			RET
+0:		TST BallXspeed			; detect moving direction
+		BMI LEVEL3
+		CMP BallX,#X0+100*300.	; X >= 300. ?
+		BLO LEVEL3
+		BR LEV4a
+
+; screen coordinates:
+; X from 0 to 340. represented as 12600...65200
+; Y from 0 to 256. represented as 20000...60000
+; screen center: X=40000, Y=40000
+LEVEL7:	TST BallXspeed			; detect moving direction
+		BMI LEV3a				; move to vertical center
+		MOV BallX,R1
+		CMP R1,#X0+100*83.
+		BMI LEV3a
+		MOV BallY,R5
+		CMP R1,#X0+100*212.
+		BGT LEV7b
+	; middle field
+LEV7a:	CMP R5,#40000			; top or bottom half of screen?
+		BGT 1
+		; top half of screen
+		TST BallYspeed
+		BMI LEV3a
+		MOV #50000,R0
+		BR LEV3b
+		; bottom half of screen
+1:		TST BallYspeed
+		BPL LEV3a
+		MOV #30000,R0
+		BR LEV3b
+	; right field
+LEV7b:	SUB #X0+100*331.,R1		; delta X (negated)
+		TST BallYspeed
+		BMI 3
+		; ball moves down
+		SUB R1,R5				; BallY + delta X = target Y
+		BR LEV2a
+		; ball moves up
+3:		ADD R1,R5				; BallY - delta X = target Y
+		BR LEV2a	
+
+
+LEVEL8:	PUSH R2
+		PUSH R3
+		CALL Randomize
+		POP R3
+		POP R2
+		BMI LEVEL7
+		TST BallXspeed			; detect moving direction
+		BMI LEV3a				; move to vertical center
+		MOV BallY,R5
+		MOV BallX,R1
+		CMP R1,#X0+100*280.		; X >= 280. ?
+		BGE 2
+		CMP R1,#X0+100*83.
+		BMI LEV3a
+		CMP R1,#X0+100*212.
+		BLOS LEV7a
+	; right field
+		SUB #X0+100*331.,R1		; delta X (negated)
+		TST BallYspeed
+		BMI 3
+		SUB R1,R5				; BallY + delta X = target Y
+2:		JMP LEV4b				; accelerated move
+3:		ADD R1,R5				; BallY - delta X = target Y
+		JMP LEV4b				; accelerated move
+
+
+LEVEL9:	TST CROSS
+		BPL LEVEL7
+		CMP FAST,#100
+		BEQ LEVEL7
+		CMP (R2),#36.*400		; check player's 2 charge level
+		BMI LEVEL7				; skip if low level
+			PUSH R3
+			PUSH R4
+			CALL PowerSpeedUp	; post power hit
+			POP R4
+			POP R3
+			RET
+
+
+; computer plays as player 1
+
+LEVELDEMO:
+		BIT #100,@#KEYPRESSED	; is any key pressed?
+		BNE 2
+			MOV @#KEY,R0		; read ASCII code to init keyboard
+1:			JMP STOPKEY
+2:		MOV @#PORT,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		BNE 1
+		MOV #CHARG1,R2			; pointer to charge level 0..36.
+		MOV #CarriageSpeed,R3
+		MOV POS1,R4				; get paddle position
+; algorithm from level 6
+LVL6:	TST CROSS
+		BMI 0
+		CMP FAST,#100
+		BEQ 0
+		CMP (R2),#36.*400		; check player's 1 charge level
+		BMI 0					; skip if low level
+			PUSH R3
+			PUSH R4
+			CALL PowerSpeedUp	; post power hit
+			POP R4
+			POP R3
+			RET
+0:		TST BallXspeed			; detect moving direction
+		BPL 2
+			CMP BallX,#X0+100*40.	; X <= 40. ?
+			BGT 1
+				CALL LEV4a		; accelerate
+				BR 4
+1:			CALL LEVEL2			; follow the ball
+			BR 4
+2:		MOV #40000,R0			; vertical center
+		CMP R4,R0				; compare paddle position with vertical center
+		BEQ 7
+		BPL 3
+		ADD #CarriageSpeed,R4
+		CMP R4,R0
+		BMI 6
+			MOV R0,R4
+			BR 6
+3:		SUB #CarriageSpeed,R4
+		CMP R4,R0
+		BGE 6
+			MOV R0,R4
+			BR 6
+; check borders
+4:		CMP R4,#20100+100*SIZE/2	; check top border
+		BHIS 5
+			MOV #20100+100*SIZE/2,R4
+			BR 6
+5:		CMP R4,#57700-100*SIZE/2	; check bottom border
+		BLOS 6
+			MOV #57700-100*SIZE/2,R4
+6:		MOV R4,POS1				; store new paddle position
+7:		RET
+
+
+; check keyboard and joysticks
+; move carriages
+
+PLAYER1:
+		MOV #POS1,R4			; pointer to carriage parameters
+		MOV #J1FAST,R3			; pointer to joystick codes
+		MOV #CHARG1,R2			; pointer to charge level 0..36.
+		BIT #100,@#KEYPRESSED	; is any key pressed?
+		BNE 7
+			MOV @#KEY,R0		; get ASCII code of a key pressed
+			MOV #CarriageSpeed,R5	; delta = 3
+			CMP R0,#PauseKey
+			BNE 1
+				CALL Pause
+1:			CMP R0,K1UP			; does player 1 holds up on keyboard?
+			BEQ 2
+			CMP R0,K1DOWN		; does player 1 holds down on keyboard?
+			BEQ 4
+			CMP R0,K1UPFAST		; fast up key?
+			BNE 3
+				CMP (R2),#TurboCost
+				BMI 2						; skip if charge level is low
+					SUB #TurboCost,(R2)		; spend some charge
+					MOV #CarriageTurbo,R5	; delta = 6
+2:				BR CARRIAGEUP
+3:			CMP R0,K1DOWNFAST	; fast down key?
+			BNE 5
+				CMP (R2),#TurboCost
+				BMI 4						; skip if charge level is low
+					SUB #TurboCost,(R2)		; spend some charge
+					MOV #CarriageTurbo,R5	; delta = 6
+4:				BR CARRIAGEDOWN
+5:			CMP R0,K1FIRE		; power hit key?
+			BNE 7
+				RET
+7:		BR CHECKJOYSTICK
+
+
+PLAYER2:
+		MOV #POS2,R4			; pointer to carriage parameters
+		MOV #J2FAST,R3			; pointer to joystick codes
+		MOV #CHARG2,R2			; charge level 0..36.
+;		BR CHECKJOYSTICK
+
+
+; check joystick and move carriage
+; input:	R2 - pointer to charge level
+;			R3 - pointer to joystick codes
+;			R4 - pointer to carriage parameters
+
+CHECKJOYSTICK:
+		MOV @#PORT,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		CLR R1					; energy to spend
+		MOV #CarriageSpeed,R5	; delta = 3
+		BIT (R3)+,R0			; does player holds fast on joystick?
+		BEQ 1
+			CMP (R2),#TurboCost	; skip if charge level is low
+			BMI 1
+				MOV #TurboCost,R1
+				MOV #CarriageTurbo,R5	; fast move, delta = 6
+1:		BIT (R3)+,R0			; does player holds up on joystick?
+		BEQ 2
+			CALL CARRIAGEUP
+			SUB R1,(R2)			; spend some energy
+			RET
+2:		BIT (R3)+,R0			; does player holds down on joystick?
+		BEQ 3
+			CALL CARRIAGEDOWN
+			SUB R1,(R2)			; spend some energy
+3:			RET
+
+
+; move carriage up subroutine
+; input:	R4 - pointer to carriage parameters
+;			R5 - speed
+
+CARRIAGEUP:
+		PUSH R3
+		MOV (R4),R3				; get carriage position
+		SUB R5,R3				; sub carriage delta
+		MOV R3,R5
+		BIC #100077,R5				; position, int
+		CMP R5,#20100+100*SIZE/2	; check top border
+		BHIS 1
+			MOV #20100+100*SIZE/2,R3
+1:		MOV R3,(R4)				; save new coordinate to POSx
+		POP R3
+		RET
+
+
+; move carriage down subroutine
+; input:	R4 - pointer to carriage parameters
+;			R5 - speed
+
+CARRIAGEDOWN:
+		PUSH R3
+		MOV (R4),R3				; get carriage position
+		ADD R5,R3				; sub carriage delta
+		MOV R3,R5
+		BIC #100077,R5				; position, int
+		CMP R5,#57700-100*SIZE/2	; check bottom border
+		BLOS 1
+			MOV #57700-100*SIZE/2,R3
+1:		MOV R3,(R4)				; save new coordinate to POSx
+		POP R3
+		RET
+
+
+; save current ball's speed and incrise it
+
+PowerSpeedUp:
+		MOV #100,FAST			; set ball's fast speed sign
+		MOV BallXspeed,R3		; horisontal speed
+		BPL 1
+			NEG R3
+1:		MOV R3,BallXspeedOld	; save abs horisontal speed
+		MOV BallYspeed,R4
+		BPL 2					; test vertical speed sign
+			NEG R4				; abs value
+2:		MOV R4,BallYspeedOld	; save abs vertical speed
+		MOV R3,R4
+		ASL R3					; speed up!
+		ADD R4,R3				; 3 times
+		TST BallXspeed
+		BPL 3
+			NEG R3				; invert BallXspeed direction
+3:		MOV R3,BallXspeed
+		ASL BallYspeed
+		RET
+
+
+; clear screen subroutine
+
+CLS:	MOV #4000,R0
+		MOV #40000,R1
+		CLR R2
+1:			MOV R2,(R1)+		; MOV works faster than CLR
+			MOV R2,(R1)+
+			MOV R2,(R1)+
+			MOV R2,(R1)+
+		SOB R0,1
+		MOV #1330,@#SCROLL		; set default scroll position
+		RET
+
+
+LogoPalette:
+		MOV #4000,R2			; delay
+		CMP MODEL,#11
+		BEQ 2
+1:		SOB R2,1
+		RET
+2:		MTPS #140				; enable VSync timer interruption
+		WAIT					; BK 0011 waits for the frame sync
+		MTPS #340				; disable VSync timer interruption
+		MOV #1000,@#PALETTE		; set palette for logo and start VSync timer
+3:		SOB R2,3
+		MOV #PAL,@#PALETTE		; set palette for menu
+		RET
+
+
+; menu subroutine
+; make changes on MENUITEM
+
+MAINMENU:
+		MOV #DemoDelay,DemoCount
+		CMP MODEL,#11
+		BNE 1
+			MOV #VSYNC,@#100
+			MOV #PAL,@#PALETTE	; set 15th palette and start VSync timer
+1:		MOV #TXTMENU1-1,MENUCURRENT+2
+		MOV #TXTMENU1,R1		; display menu
+MENU:	MOV MENUADDRESS,R2		; screen address
+		MOV #1,R0
+1:			ADD #2000,R2
+			CLR R3
+			CMP R0,MENUITEM
+			BEQ 2
+				MOV #52525,R3	; change colour
+2:			PUSH R0
+			PUSH R2
+			CALL PRINT
+			POP R2
+			POP R0
+		INC R0
+		CMP R0,MENUMAX
+		BLE 1
+
+5:		CALL Randomize
+		CALL LogoPalette
+		BIT #100,@#KEYPRESSED	; is a key released?
+		BEQ 5					; do nothing while the previous key is still pressed
+		MOV @#KEY,R0			; get ASCII code to reset keyboard
+6:		MOV @#PORT,R0
+		BIC JOYSTICKMASK,R0
+		BNE 6					; are joysticks released?
+
+MENUK:	DEC DemoCount
+		BPL 2
+			TST PARENTITEM
+			BNE 1
+				MOV MENUITEM,PARENTITEM
+1:			MOV #8.,MENUITEM	; hidden menu item for demo mode
+			BR MENUEX
+2:		CALL Randomize
+		CALL LogoPalette
+		BIT #100,@#KEYPRESSED	; check keyboard: is any key pressed?
+		BNE MENUJ
+			MOV @#KEY,R0		; get ASCII code of a key pressed
+			MOV #DemoDelay,DemoCount
+			CMP R0,K1UP			; up key?
+			BNE 3
+				CALL MENUUP
+				BR 6
+3:			CMP R0,#32			; up key?
+			BNE 4
+				CALL MENUUP
+				BR 6
+4:			CMP R0,#33			; down key?
+			BNE 5
+				CALL MENUDN
+				BR 6
+5:			CMP R0,K1DOWN		; down key?
+			BNE MENUEX			; exit if any other key
+				CALL MENUDN
+
+6:			TST AUTOREPEAT
+			BNE KeyRepeat
+
+			MOV #AUTOREPEATDELAY,R1
+7:				CALL LogoPalette
+				BIT #100,@#KEYPRESSED	; is a key released?
+				BNE RepeatOff
+			SOB R1,7
+			MOV R0,AUTOREPEAT	; set auto-repeat on
+
+KeyRepeat:	MOV #KEYDELAY,R1
+1:				CALL LogoPalette
+				BIT #100,@#KEYPRESSED	; is a key released?
+				BNE RepeatOff
+			SOB R1,1
+			BR MENUK
+
+RepeatOff:	CLR AUTOREPEAT
+
+MENUJ:	MOV J1UP,R0				; check joystick
+		BIS J2UP,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		BIT R0,@#PORT			; does player 1 or 2 holds up on joystick?
+		BEQ 1
+			CALL MENUUP
+			BR 3
+
+1:		MOV J1DOWN,R0
+		BIS J2DOWN,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		BIT R0,@#PORT			; does player 1 or 2 holds down on joystick?
+		BEQ 2
+			CALL MENUDN
+			BR 3
+
+2:		MOV J1HIT,R0			; combine codes of buttons
+		BIS J2HIT,R0
+		BIS J1FAST,R0
+		BIS J2FAST,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		BIT R0,@#PORT			; does player 1 or 2 holds A or B on joystick?
+		BEQ MENUK 				; check keyboard again
+			BR MENUEX
+
+3:			MOV #DemoDelay,DemoCount
+			TST AUTOREPEAT
+			BNE JoyRepeat
+
+			MOV #AUTOREPEATDELAY,R1
+4:				CALL LogoPalette
+				BIT R0,@#PORT
+				BEQ RepeatOff
+			SOB R1,4
+			MOV R0,AUTOREPEAT	; set auto-repeat on
+
+JoyRepeat:	MOV #KEYDELAY,R1
+1:				CALL LogoPalette
+				BIT R0,@#PORT	; are joysticks released?
+				BEQ RepeatOff
+			SOB R1,1
+			BR MENUJ
+
+MENUEX:	RET
+
+
+; menu up subroutine
+
+MENUUP:	PUSH R0
+		CMP MENUITEM,#1
+		BLE 1
+		MOV #52525,R3		; dark colour mask
+		CALL MENUCURRENT	; redraw current menu item
+		DEC MENUITEM		; decrise menu item
+		CLR R3				; bright colour mask
+		CALL MENUCURRENT	; print new menu item
+1:		POP R0
+		RET
+
+
+; menu down subroutine
+
+MENUDN:	PUSH R0
+		CMP MENUITEM,MENUMAX
+		BGE 1
+		MOV #52525,R3		; dark colour mask
+		CALL MENUCURRENT	; redraw current menu item
+		INC MENUITEM		; incrise menu item
+		CLR R3				; bright colour mask
+		CALL MENUCURRENT	; print new menu item
+1:		POP R0
+		RET
+
+
+; redraw current menu item subroutine
+
+MENUCURRENT:
+		MOV #TXTMENU1-1,R1		; text string addtess-1
+		MOV MENUADDRESS,R2		; screen address
+		MOV MENUITEM,R0
+1:			ADD #2000,R2
+2:			TSTB (R1)+			; search 0 byte
+			BNE 2
+		SOB R0,1
+		CALL PRINT
+		RET
+
+
+; screen calibration subroutine
+
+CALIBRATION:
+		MOV #TXT01,R1			; print instruction
+		MOV #56003,R2
+		MOV #52525,R3
+		CALL PRINT
+		MOV #57403,R2
+		CALL PRINT
+		MOV #61003,R2
+		CALL PRINT
+
+1:		BIT #100,@#KEYPRESSED	; is a key released?
+		BEQ 1
+		MOV @#KEY,R0			; get ASCII code to reset keyboard
+2:		MOV @#PORT,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		TST R0					; are joystics released?
+		BNE 2
+
+		MOV #TIMER-2,R4
+		MOV REFRESH,@#TIMER-4	; timer initial value
+		MOV #100,R2
+
+3:		MOV #1,@#TIMER			; stop and init timer	
+		MOV #20,@#TIMER			; start timer
+
+		MOV #377,R3
+		MOV #40042,R1
+		MOV #400,R0
+4:			MOV R3,(R1)
+			ADD R2,R1
+		SOB R0,4
+
+		MOV @#PORT,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		BNE CALIBRDONE
+		BIT #100,@#KEYPRESSED
+		BEQ CALIBRDONE
+
+		MOV REFRESH2,R5
+5:		CMP (R4),R5				; wait for half screen refresh
+		BNE	5
+
+		MOV #177400,R3
+		MOV #40042,R1
+		MOV #400,R0
+6:			MOV R3,(R1)
+			ADD R2,R1
+		SOB R0,6
+
+		MOV @#PORT,R0
+		BIC JOYSTICKMASK,R0		; in case some pins on port are broken
+		BNE CALIBRDONE
+		BIT #100,@#KEYPRESSED
+		BEQ CALIBRDONE
+
+		MOV REFRESH,R5
+7:		CMP (R4),R5				; wait for ray returns
+		BNE	7
+		BR 3
+
+CALIBRDONE:
+		MOV @#KEY,R0			; read keyboard to reset it
+
+		MOV REFRESH,R5			; calculate sync value
+		SUB REFRESH2,R5
+		ASR R5
+		ASR R5
+		ADD REFRESH2,R5
+		MOV R5,SYNC
+
+		MOV #40042,R1
+
+1:		MOV REFRESH,R5
+2:		CMP (R4),R5				; wait for sync
+		BNE	2
+
+		CLR R3
+		MOV #400,R0				; move line to the right
+3:			MOVB R3,(R1)
+			ADD R2,R1
+		SOB R0,3
+		SUB #37777,R1
+		CMP R1,#40100
+		BGE 5
+
+		MOV #377,R3
+		MOV #400,R0				; move line to the right
+4:			MOVB R3,(R1)
+			ADD R2,R1
+		SOB R0,4
+		SUB #40000,R1
+		BR 1
+
+5:		RET
+
+
+; help subroutine
+
+HELP:	CMP MODEL,#11
+		BNE 0
+			MOV #13.*400+40000,@#PALETTE	; set 13th palette and stop VSync timer
+0:		MOV #HLPTXT,R1			; pointer to text
+		MOV #HELPSCREEN,R0
+1:			MOV (R0)+,R2		; screen address
+			BEQ 2
+			MOV (R0)+,R3		; colour
+			PUSH R0		
+			CALL PRINT
+			POP R0
+		BR 1
+2:		BISB #14,@#42347		; draw red dot
+		BISB #25,@#75440
+
+		MOV #DemoDelay*3,DemoCount
+		CALL AnyKey
+		RET
+
+
+; redefine controls subroutine
+
+SetSound:
+		MOV #DemoDelay*2,DemoCount
+		MOV MENUITEM,PARENTITEM	; save parent menu paramenters
+		MOV MENUMAX,PARENT+10
+		MOV MENUADDRESS,PARENT+16
+
+		MOV #TXTSND1-1,MENUCURRENT+2
+		MOV #1,MENUITEM
+		TST STEREO
+		BEQ 1
+			MOV #3,MENUITEM		; if current device is stereo covox
+			BR 2
+1:		CMP PlaySound+2,#177716	; if current device is speaker
+		BEQ 2
+			MOV #2,MENUITEM		; if current device is covox
+2:		MOV #4,MENUMAX
+		MOV #MENUSCREEN-4*2000+21.,MENUADDRESS	; screen address
+		MOV #TXTSND1,R1			; display menu
+		CALL MENU
+
+		CMP MENUITEM,#4			; back to the main menu
+		BLO 3
+			JMP PARENT
+3:		CLR STEREO
+		CMP MENUITEM,#1
+		BNE 4
+			MOV #100,PlaySound+6
+			MOV #177716,PlaySound+2	; speaker
+			BR 5
+4:		MOV #200,PlaySound+6
+		MOV #177714,PlaySound+2		; covox
+		CMP MENUITEM,#2
+		BEQ 5
+			INC STEREO				; stereo covox
+5:		CALL StartSound
+		JMP PARENT
+
+
+; redefine controls subroutine
+
+CONTROLS:
+		MOV MENUITEM,PARENTITEM	; save parent menu paramenters
+		MOV MENUMAX,PARENT+10
+		MOV MENUADDRESS,PARENT+16
+
+		MOV #1,MENUITEM
+Contr1:	MOV #4,MENUMAX
+		MOV #TXTMENU6-1,MENUCURRENT+2
+		MOV #MENUSCREEN-4*2000+14,MENUADDRESS	; screen address
+		MOV #TXTMENU6,R1		; display menu
+		MOV #DemoDelay*2,DemoCount
+		CALL MENU
+
+		CMP MENUITEM,#4			; back to the main menu
+		BGE PARENT
+
+		MOV MENUADDRESS,R1		; fade out menu
+		ADD #2000,R1
+		MOV R1,R2
+		ADD #100,R2
+		MOV #146314,R3			; mask 1
+		MOV #31463,R4			; mask 2
+		MOV #34,R5
+1:		MOV #40,R0
+2:			BIC R3,(R1)+
+			BIC R4,(R2)+
+		SOB R0,2
+		ADD #100,R1
+		ADD #100,R2
+		SOB R5,1
+
+		MOV #5,R0				; number of keys to redefine
+		MOV #TXTCONTROL1,R1		; pointer to keys list text
+		MOV #47523,R2			; screen address
+		CMP MENUITEM,#1			; redefine keyboard?
+		BEQ 3
+			MOV #4,R0
+			MOV #TXTCONTROL2,R1		; pointer to keys list text
+			MOV #47527,R2			; screen address
+3:		PUSH R2
+		MOV #52525,R3			; colour
+4:			PUSH R0
+			PUSH R2
+			CALL PRINT
+			POP R2
+			POP R0
+			ADD #2000,R2
+		SOB R0,4
+		POP R2
+		SUB #2,R2				; arrow screen address
+
+DrawArrow:
+		MOV #ARROWPIN,R1		; arrow sprite
+		MOV #8.,R0
+1:			MOVB (R1)+,(R2)
+			ADD #100,R2
+		SOB R0,1
+
+		MOV MENUITEM,R5
+		ASL R5
+		MOV SaveKeys+4(R5),R4	; number of keys to redefine
+		MOV SaveKeys-2(R5),R5	; where to save new keys
+
+		MOV #-1.,DemoCount		; disable counter
+		MOV R2,R1				; arrow screen address
+		DEC R4
+2:			CALL AnyKey			; spoils R2 and R3 because of Randomize subroutine
+			CMP R0,-2(R5)		; the same key again?
+			BEQ 2
+			MOV R0,(R5)+
+			ADD #1000,R1		; arrow screen address
+			MOV #8.,R0
+3:				MOVB -2000(R1),(R1)
+				CLRB -2000(R1)
+				ADD #100,R1		; move arrow
+				SOB R0,3
+		SOB R4,2				; number of keys
+		CALL AnyKey				; spoils R2 and R3 because of Randomize subroutine
+		MOV R0,(R5)+			; store key
+
+		MOV #47521,R2			; screen address
+		CLR R1					; clear submenu area
+		MOV #5*1000,R0
+4:			MOV R1,(R2)+
+		SOB R0,4
+
+CompareControls:
+		CMP R5,#K1UP+10.		; Player 1 keyboard was redefined?
+		BEQ Contr1
+		MOV #J1FAST+8.,R4
+		CMP R5,R4				; Player 1 joystick was redefined?
+		BNE 1
+			MOV #J2FAST+8.,R4	; Player 2 joystick was redefined
+1:		MOV -(R5),R2			; combine 4 keys
+		BIS -(R5),R2
+		BIS -(R5),R2
+		BIS -(R5),R2
+		BIC R2,-(R4)			; reset 4 keys
+		BIC R2,-(R4)
+		BIC R2,-(R4)
+		BIC R2,-(R4)
+		JMP Contr1				; back to the controls menu
+
+ 
+PARENT:	MOV PARENTITEM,MENUITEM		; restore parent menu position
+		MOV #6,MENUMAX
+		MOV #62024,MENUADDRESS
+		RET
+PARENTITEM:	.WORD 0
+
+SaveKeys:	.WORD K1UP,J1FAST,J2FAST	; address of leys
+			.WORD 5,4,4					; number of keys
+
+
+; reset game data for new round
+
+NewRound:
+		CLR CROSS
+		CLR TOUCHv
+		MOV #-1,FAST			; set low speed for the ball
+		MOV #InitialValues,R1
+		MOV #BallXspeed,R2
+		MOV #(InitFont-InitialValues)/2,R0	; 15.
+1:			MOV (R1)+,(R2)+
+		SOB R0,1
+		CALL BallScreen			; calculate ball screen address
+		MOV #X0+100*9.,Xmin+2	; coordinates of carriages
+		MOV #X0+100*331.,Xmax+2
+
+		MOV RND1,R0
+		BIC #177760,R0
+		CALL Randomize
+		MOV BallXspeed,R1
+		MOV BallYspeed,R2
+		ADD R0,R1				; add random number from 0 to 15. to horisontal speed
+		SUB R0,R2
+		MOV R1,BallXspeedOld	; save abs value
+		MOV R2,BallYspeedOld	; save abs value
+		SUB #100,R1				; slow for the first launch
+		SUB #100,R2
+		TST RND1
+		BPL 2
+			NEG R2				; randomly inverse vertical direction
+2:		MOV R2,BallYspeed
+		CALL Randomize
+		TST OUT
+		BNE 3
+			TST RND1			; if 0:0
+3:		BPL 4
+			NEG R1				; inverse horisontal direction if player 2 won
+4:		MOV R1,BallXspeed
+		RET
+InitialValues:
+		.WORD 300	; ball X speed
+		.WORD 40000	; ball X position
+		.WORD 40000	; old ball X position
+		.WORD 300	; ball Y speed
+		.WORD 40000	; ball Y position fract
+		.WORD 40000	; old ball Y position
+		.WORD 128.	; carriage 1 screen Y
+		.WORD 128.	; carriage 1 screen Y old
+		.WORD 40000	; carriage 1 position, fixed point
+		.WORD 60000-SIZE*40	; carriage 1 screen address
+		.WORD 128.	; carriage 2 screen Y
+		.WORD 128.	; carriage 2 screen Y old
+		.WORD 40000	; carriage 2 position, fixed point
+		.WORD 60077-SIZE*40	; carriage 2 screen address
+
+
+; init font subroutine
+
+InitFont:
+		MOV #FONTTABLE,R2
+		MOV #FONT,R1
+		MOV #26.,R0			; number of letters in font
+1:			MOV R1,(R2)+
+			ADD #14.,R1		; letter size in bytes
+		SOB R0,1
+	; build monochrome to colour table
+		MOV #MONO2COLOUR+512.,R2
+		MOV #256.,R0
+2:			MOV R0,R1
+			SUB #129.,R1
+			MOV #8.,R4
+3:				ROR R1
+				ROR R5
+				ASR R5
+4:			SOB R4,3
+			MOV R5,-(R2)
+		SOB R0,2
+		RET
+
+
+; print text subroutine
+; input:	R1 - pointer to the text string
+;			R2 - screen address
+;			R3 - colour mask
+
+PRINT:	MOVB (R1)+,R5
+		BEQ 4
+			CMP R5,#56				; ASCII code of . symbol
+			BNE 2
+				MOV #74,R0			; draw dot
+				BIC R3,R0
+				MOVB R0,500(R2)
+				MOVB R0,600(R2)
+				INC R2
+				BR PRINT
+2:			SUB #101,R5				; ASCII code of A letter
+			BPL 3
+				INC R2				; if not a letter
+				BR PRINT
+3:			ASL R5
+			MOV FONTTABLE(R5),R5	; get address of the symbol graphics
+			MOV #77,R4
+			.REPEAT 6				; symbol height
+			{
+				MOV (R5)+,R0
+				BIC R3,R0
+				MOVB R0,(R2)+
+				SWAB R0
+				MOVB R0,(R2)
+				ADD R4,R2
+			}
+			MOV (R5)+,R0
+			BIC R3,R0
+			MOVB R0,(R2)+
+			SWAB R0
+			MOVB R0,(R2)
+			SUB #577,R2
+			BR PRINT
+4:		RET
+
+
+; print score subroutine
+; input:	R2 - screen address
+;			R3 - colour mask
+
+PrintScore:
+		TST GOAL
+		BNE 1
+			CLR R0				; 0:0
+			MOV #NUMBERS,R1		; 0 symbol address
+			MOV #55626,R2		; screen address
+			MOVB CHARG1+1,R4	; charge 1 level
+			CALL PrintScore0
+			MOV R1,CHARGESPRITE1
+			MOV R2,CHARGESCREEN1
+			CLR R0
+			MOV #NUMBERS,R1		; 0 symbol address
+			MOV #55644,R2
+			MOVB CHARG2+1,R4	; charge 2 level
+			CALL PrintScore0
+			MOV R1,CHARGESPRITE2
+			MOV R2,CHARGESCREEN2
+			RET
+1:		BPL 4
+		MOV SCORE1,R0			; ball crossed the right border
+		MOV #55626,R2			; screen address
+		MOVB CHARG1+1,R4		; charge 1 level
+		CALL PrintScore1
+		MOV CHARGESPRITE,CHARGESPRITE1
+		MOV CHARGESCREEN,CHARGESCREEN1
+
+		MOV SCORE2,R0
+		MOV #NUMBERS,R1			; font address
+		MOV #55644,R2
+		MOVB CHARG2+1,R4		; charge 2 level
+		TST R0
+		BEQ 3					; if 0
+2:			ADD #6*18.,R1		; letter size
+		SOB R0,2
+3:		CALL PrintScore0
+		MOV CHARGESPRITE,CHARGESPRITE2
+		MOV CHARGESCREEN,CHARGESCREEN2
+		INC SCORE1
+		CMP SCORE1,#10.
+		BGE 7
+		RET
+
+4:		MOV SCORE2,R0			; ball crossed the left border
+		MOV #55644,R2			; screen address
+		MOVB CHARG2+1,R4		; charge 2 level
+		CALL PrintScore1
+		MOV CHARGESPRITE,CHARGESPRITE2
+		MOV CHARGESCREEN,CHARGESCREEN2
+
+		MOV SCORE1,R0
+		MOV #NUMBERS,R1			; font address
+		MOV #55626,R2
+		MOVB CHARG1+1,R4		; charge 1 level
+		TST R0
+		BEQ 6					; if 0
+5:			ADD #6*18.,R1		; letter size
+		SOB R0,5
+6:		CALL PrintScore0
+		MOV CHARGESPRITE,CHARGESPRITE1
+		MOV CHARGESCREEN,CHARGESCREEN1
+		INC SCORE2
+		CMP SCORE2,#10.
+		BGE 7
+		RET
+7:		INC GAMEOVER
+		RET
+
+PrintScore1:
+		MOV #NUMBERS,R1			; font address
+		TST R0
+		BEQ 2					; if 0
+1:			ADD #6*18.,R1		; letter size
+		SOB R0,1
+2:		MOV #19.,R5				; letter height +1
+3:			PUSH R1				; sprite address
+			PUSH R2				; screen address
+			CALL PrintScore0
+			POP R2
+			POP R1
+			ADD #6,R1			; next sprite row
+			MOV #7000,R0
+4:			SOB R0,4			; pause
+		SOB R5,3
+		RET
+
+PrintScore0:
+		PUSH R5
+		MOV #125252,R3			; set default colour mask
+		MOV #36.,R0				; letter height * 2
+1:			CMP R0,R4			; compare with charge level
+			BNE 2
+				MOV R1,CHARGESPRITE
+				MOV R2,CHARGESCREEN
+				MOV #52525,R3	; change colour mask
+
+2:			MOV (R1)+,R5		; draw the row
+			BIC R3,R5
+			MOV R5,(R2)+
+			MOV (R1)+,R5
+			BIC R3,R5
+			MOV R5,(R2)+
+			MOV (R1)+,R5
+			BIC R3,R5
+			MOV R5,(R2)
+
+			SUB #6,R1			; double line, repeat sprite row
+			ADD #74,R2			; next row
+			DEC R0				; step in loop
+			CMP R0,R4			; compare with charge level
+			BGT 4				; if current line is higher than charge level goto 4
+			BNE 3
+				MOV R1,CHARGESPRITE
+				MOV R2,CHARGESCREEN
+				MOV #52525,R3	; change colour mask
+3:			
+			MOV (R1)+,R5		; draw the row
+			BIC R3,R5
+			MOV R5,(R2)+
+			MOV (R1)+,R5
+			BIC R3,R5
+			MOV R5,(R2)+
+			MOV (R1)+,R5
+			BIC R3,R5
+			MOV R5,(R2)
+			BR 5
+
+4:			CLR (R2)+			; clear the row
+			CLR (R2)+
+			CLR (R2)
+			ADD #6,R1			; next sprite row
+
+5:			ADD #74,R2			; next screen line
+		SOB R0,1
+		TST R4					; compare with charge level with 0
+		BNE 6
+			MOV R1,CHARGESPRITE
+			MOV R2,CHARGESCREEN
+6:		POP R5
+		RET
+CHARGESPRITE:	.WORD NUMBERS	; temporary sprite address
+CHARGESCREEN:	.WORD 40000		; temporary screen address
+
+
+; update charge level if needed
+
+ChargeUpdate:
+		CMPB (R0),-2(R0)	; compare with previous value
+		BEQ 3
+		BMI 4
+		INCB -2(R0)			; incrise previous charge level
+		INC R0
+		MOV (R0)+,R1		; get sprite address
+		MOV (R0),R2			; get screen aggress
+		SUB #100,R2			; upper screen line
+		BIT #100,R2			; odd screen line?
+		BEQ 1
+		SUB #6,R1			; previous sprite row
+1:		MOV R2,(R0)			; save new screen address
+		MOV R1,-(R0)		; save new sprite address
+		MOV #52525,R3		; colour mask
+2:		MOV (R1)+,R4		; draw the row
+		BIC R3,R4
+		MOV R4,(R2)+
+		MOV (R1)+,R4
+		BIC R3,R4
+		MOV R4,(R2)+
+		MOV (R1),R4
+		BIC R3,R4
+		MOV R4,(R2)
+3:		RET
+4:		; level down
+		DECB -2(R0)			; decrise previous charge level
+		INC R0
+		MOV (R0)+,R1		; get sprite address
+		MOV (R0),R2			; get screen aggress
+		ADD #100,(R0)		; save new screen address
+		BIT #100,R2			; odd screen line?
+		BNE 5
+		MOV #125252,R3		; colour mask
+		BR 2
+5:		ADD #6,-(R0)		; save new sprite address
+		CLR (R2)+			; clear the odd row
+		CLR (R2)+
+		CLR (R2)
+		RET
+
+
+; show the winner
+
+Winner:	MOV #TEMP+700,R2		; clear temporay buffer
+		MOV #340,R0
+2:			CLR -(R2)
+		SOB R0,2
+		MOV #WINNER2,R1
+		TST GOAL				; who wins?
+		BPL 3
+			MOV #WINNER1,R1
+			CMP GAMEMODE,#COMPUTER
+			BNE 3
+				MOV #WINNER3,R1
+3:		MOV #52525,R3			; colour
+		CALL PRINT
+
+		MOV #TEMP,R1			; shift by 1 pixel
+		CLR R3
+		MOV #340,R0
+4:			CLR R2
+			ROL (R1)
+			ADC R2
+			ASL R2
+			ROL (R1)
+			ADC R2
+			BIS R3,(R1)+
+			MOV R2,R3
+		SOB R0,4
+
+		MOV #55626,R1		; score screen address
+		MOV #62152,R2
+		MOV #24.,R0			; score height
+5:			MOV #10000,R4	; pause
+			SOB R4,.
+			MOV #3,R4
+6:				CLR 16(R1)	; clear score
+				CLR (R1)+
+				CLR -(R2)
+				CLR -16(R2)
+			SOB R4,6
+			ADD #72,R1
+			SUB #72,R2
+		SOB R0,5
+
+ShowWinner:
+		MOV #TEMP,R1			; show test
+		MOV #18.+121.*100+40000,R2	; X=18,Y=121
+		MOV #7,R0				; letters height
+1:			MOV #14.,R3			; text width
+2:				MOV (R1)+,(R2)+
+			SOB R3,2
+			ADD #100-14.*2,R1
+			ADD #200-14.*2,R2	; skip row
+		SOB R0,1				; pause
+		TST GOAL
+		BPL 3
+			CMP GAMEMODE,#COMPUTER
+			BNE 3
+				CALL MUSIC		; play music for player 1
+				RET
+3:		MOV #DemoDelay*3/2,DemoCount
+		CALL AnyKey
+		MOV @#KEY,R0			; read ASCII code to reset 
+		RET
+
+
+Pause:	PUSH R0
+		PUSH R1
+		PUSH R2
+		PUSH R3
+		PUSH R4
+		PUSH R5
+
+		PausePosition = 52.*100+40000
+
+		CLR Pause2+2
+1:		MOV @#PORT,R0			; wait for joystick and a key are released
+		BIC JOYSTICKMASK,R0
+		BNE 1
+		BIT #100,@#KEYPRESSED
+		BEQ 1
+		MOV #PausePosition,R1
+		MOV #TEMP,R2				; temporay buffer
+		MOV #340,R0
+2:			MOV (R1)+,(R2)+			; copy from screen to buffer
+		SOB R0,2
+
+Pause1:	MOV #TXTPAUS,R1
+		MOV #27.+PausePosition,R2	; X=27
+		MOV #52525,R3				; colour
+		CALL PRINT
+
+		CALL Pause3					; wait for a key pressed
+
+		MOV #TEMP,R1				; temporay buffer
+		MOV #PausePosition,R2
+		MOV #340,R0
+2:			MOV (R1)+,(R2)+			; copy from screen to buffer
+		SOB R0,2
+Pause2:	TST #0
+		BNE 2
+
+		CALL Pause3					; wait for a key pressed
+
+		TST Pause2+2
+		BEQ Pause1
+
+2:		POP R5
+		POP R4
+		POP R3
+		POP R2
+		POP R1
+		POP R0
+		RET
+
+Pause3:	MOV #11000,R1
+1:			MOV @#PORT,R0			; wait for joystick or a key is pressed
+			BIC JOYSTICKMASK,R0
+			BNE 2					; are joysticks released?
+			BIT #100,@#KEYPRESSED	; wait for any key
+			BNE 3
+				MOV @#KEY,R0		; read ASCII code to reset 
+				CMP R0,#PauseKey
+				BEQ 3
+2:				INC Pause2+2
+				RET
+3:			CALL Randomize
+		SOB R1,1
+		RET
+
+
+; test inner CPU timer
+
+TestTimer:
+		CMP MODEL,#10
+		BEQ 1					; goto if BK-0010
+		RET
+1:		MOV REFRESH,@#TIMER-4	; BK-0010 timer initial value
+		MOV #1,@#TIMER			; stop and init timer	
+		MOV #20,@#TIMER			; start timer
+		MOV TIMER-2,R1
+		MOV #10,R0				; short pause
+2:		SOB R0,2
+		CMP TIMER-2,R1			; check timer counter
+		BEQ 3
+		RET
+3:		MOV #BROKENTIMER,R1	; pointer to text
+		MOV #TIMERSCREEN,R0	; pointer to screen addresses
+4:			MOV (R0)+,R2		; screen address
+			BEQ 5
+			MOV (R0)+,R3		; colour
+			PUSH R0		
+			CALL PRINT
+			POP R0
+		BR 4
+5:		MOV #-1.,DemoCount		; disable counter
+		CALL AnyKey
+		JMP EXIT
+
+
+; test joystick port for broken bits
+
+TestPort:
+		CLR R0					; check joystick
+1:			TST @#PORT
+			BEQ 0
+		SOB R0,1
+		MOV #TXTJOYSTICK,R1		; text string address
+		MOV #57412,R2			; screen address
+		MOV #125252,R3			; colour mask
+		CALL PRINT				; release joystick please
+		MOV #3,R3
+2:			MOV #1330,@#SCROLL	; show screen
+3:				CMP (R1),R1		; dummy commands for slowdown
+				TST @#PORT
+				BEQ 0
+			SOB R0,3
+			MOV #330,@#SCROLL	; hide screen
+			MOV #70000,R0
+4:				TST @#PORT
+				BEQ 0
+			SOB R0,4
+		SOB R3,2
+		CALL CLS
+		MOV #BROKENPORT,R1		; pointer to text
+		MOV #ERRORSCREEN,R0		; pointer to screen addresses
+5:			MOV (R0)+,R2		; screen address
+			BEQ 6
+			MOV (R0)+,R3		; colour
+			PUSH R0		
+			CALL PRINT
+			POP R0
+		BR 5
+6:		MOV @#PORT,JOYSTICKMASK	; some pins are broken :(
+7:		NOP
+		BIT #100,@#KEYPRESSED	; wait for any key
+		BNE 7
+0:		RET
+
+
+; show PONG logo
+
+ShowLogo:
+		MOV #40000+11.+100*23.,R2	; screen address
+		MOV #LOGO,R1
+		MOV #125252,R4				; colour mask
+		MOV #LogoLines,LinePoint	; pointer to the first line
+1:		MOVB @LinePoint,R0			; picture height
+		BEQ 4
+2:			MOV #168./8.,R3			; picture with
+3:				MOVB (R1)+,R5
+				ASL R5				; convert to colour
+				MOV MONO2COLOUR+256.(R5),R5
+				BIC R4,R5			; apply colour
+				MOVB R5,(R2)+
+				SWAB R5
+				MOVB R5,(R2)+
+			SOB R3,3
+			ADD #22.,R2
+		SOB R0,2
+		COM R4						; inverse colour
+		INC LinePoint
+		BR 1
+4:		RET
+LinePoint:	.WORD LogoLines
+LogoLines:	.BYTE 9.,1,8.,1,6,1,5,1,3,1,2,1,1,2,1,3,1,4,1,8.,1,5,18.,0
+			.EVEN
+
+; draw a line between opponents
+
+DrawLine:
+		MOV #10421,R2	; 52525 blue colour
+		MOV #40000,R1
+		MOV #40,R0
+1:			MOV R2,37700(R1)
+			MOV R2,(R1)+
+		SOB R0,1
+		MOV #500,R2
+		MOV #40537,R1	; screen address
+		MOV #25,R0
+2:			MOV #3,R3
+3:				MOVB R2,(R1)+
+				SWAB R2
+				MOVB R2,(R1)
+				SWAB R2
+				ADD #177,R1
+			SOB R3,3
+			ADD #600,R1
+		SOB R0,2
+		RET
+
+
+; to play or not to play?
+
+PlaySound:
+		MOV #177716,R5			; sound device port
+		MOV #100,R4				; bit in port
+		MOV #NoSound,SOUND
+		TST TOUCHv				; ball hit top or bottom edge?
+		BEQ 5
+		MOV #WallSound,SOUND
+5:		TST GOAL
+		BNE 6
+		TST CROSS				; carriage repel the ball?
+		BEQ 6
+		MOV #HitSound,SOUND
+6:		JMP @SOUND				; play sound
+
+
+; play start sound
+
+StartSound:
+		MOV PlaySound+2,R5		; speaker port address
+		MOV PlaySound+6,R1		; bit in port
+		MOV #100,R3				; wave lenght
+		MOV R3,R4
+		MOV #60,R0				; sound duration
+		TST STEREO
+		BNE StartSoundStereo
+1:			MOVB R1,(R5)		; send 1 to speaker
+			MOV R3,R2
+2:			NOP
+			SOB R2,2
+			MOVB #0,(R5)		; send 0 to speaker
+			MOV R4,R2
+3:			NOP
+			SOB R2,3
+			DEC R3				; change pulse width
+			INC R4
+		SOB R0,1
+		RET
+StartSoundStereo:
+		MOV #100200,R1			; stereo sound
+1:			MOV R1,(R5)			; send 1 to speaker
+			MOV R3,R2
+2:			NOP
+			SOB R2,2
+			MOV #0,(R5)			; send 0 to speaker
+			MOV R4,R2
+3:			NOP
+			SOB R2,3
+			DEC R3				; change pulse width
+			INC R4
+		SOB R0,1
+		RET
+
+; play wall sound
+
+WallSound:
+		MOV #50,R2
+		MOV #7,R0
+		TST STEREO
+		BNE WallSoundStereo		; if stereo goto WallSoundStereo
+1:			MOV R2,R1
+			MOVB R4,(R5)		; send 1 to speaker
+2:			SOB R1,2
+			MOVB #0,(R5)		; send 0 to speaker
+			MOV R2,R1
+3:			SOB R1,3
+			ADD #10,R2
+		SOB R0,1
+		RET
+WallSoundStereo:
+		MOV Xoffset,R4			; ball horisontal position, 1..63
+		ASL R4					; volume up
+		MOV #200,R3
+		SUB R4,R3
+		SWAB R4					; send to other channel
+		BIS R3,R4				; mix channels
+1:			MOV R2,R1
+			MOV R4,(R5)			; send value to stereo covox
+2:			SOB R1,2
+			MOV #0,(R5)			; send 0 to stereo covox
+			MOV R2,R1
+3:			SOB R1,3
+			ADD #10,R2
+		SOB R0,1
+
+NoSound:
+		RET
+
+
+; play repel sound
+
+HitSound:
+		MOV #160,R2
+		MOV #7,R0
+		TST STEREO
+		BNE HitSoundStereo	; if stereo goto HitSoundStereo
+1:			MOV R2,R1
+			MOVB R4,(R5)	; send 1 to stereo covox
+2:			SOB R1,2
+			MOVB #0,(R5)	; send 0 to stereo covox
+			MOV R2,R1
+			CMP FAST,#100
+			BEQ 3			; skip if power hit
+				CALL CheckPowerKey
+				ASR R1
+				INC R1
+3:			SOB R1,3
+			SUB #10,R2
+		SOB R0,1
+		RET
+HitSoundStereo:
+		TST CROSS
+		BPL 1				; if left carriage goto 0
+			SWAB R4			; play in other ear
+1:			MOV R2,R1
+			MOV R4,(R5)		; send 1 to stereo covox
+2:			SOB R1,2
+			MOV #0,(R5)		; send 0 to stereo covox
+			MOV R2,R1
+			CMP FAST,#100
+			BEQ 3			; skip if power hit
+				CALL CheckPowerKey
+				ASR R1
+				INC R1
+3:			SOB R1,3
+			SUB #10,R2
+		SOB R0,1
+		RET
+
+
+; check power hit key while playing collision sound
+
+CheckPowerKey:
+		MOV @#PORT,R3			; read code from joystick port
+		BIC JOYSTICKMASK,R3		; in case some pins on port are broken
+		CMP BallX,#40000		; where is the ball (left or right half of the screen)?
+		BGT 3
+
+		BIT #100,@#KEYPRESSED	; test keyboard for power hit key
+		BNE 1					; skip if no key pressed
+			CMP @#KEY,K1FIRE	; power hit key?
+			BEQ 2
+1:		BIT J1HIT,R3			; does player 1 holds hit key on joystick?
+		BEQ 4
+2:			CMP CHARG1,#36.*400	; check player's 1 charge level
+			BMI 4				; skip if low level
+			CALL PowerSpeedUp	; post power hit
+			RET
+3:		BIT J2HIT,R3			; does player 2 holds hit key on joystick?
+		BEQ 4
+			CMP CHARG2,#36.*400	; check player's 2 charge level
+			BMI 4				; skip if low level
+			CALL PowerSpeedUp	; post power hit
+4:		RET
+
+
+; wait for any key or button
+
+AnyKey:	CALL Randomize
+		MOV @#PORT,R0			; wait for joystick and a key are released
+		BIC JOYSTICKMASK,R0
+		BNE AnyKey
+		BIT #100,@#KEYPRESSED
+		BEQ AnyKey
+
+1:		TST DemoCount
+		BMI 2					; skip counter if < 0
+			DEC DemoCount
+			BEQ 5				; exit if no activity for a long time
+2:		MOV #170.,R1			; slow time
+3:			CALL Randomize
+			MOV @#PORT,R0			; wait for joystick or a key is pressed
+			BIC JOYSTICKMASK,R0
+			BNE 5					; are joysticks released?
+			BIT #100,@#KEYPRESSED	; wait for any key
+			BEQ 4
+		SOB R1,3
+		BR 1
+4:		MOV @#KEY,R0			; read ASCII code to reset 
+5:		RET
+
+
+; randomizer
+
+Randomize:
+		MOV (PC)+,R3
+RND1:	.WORD 173451	; seed 1
+		MOV (PC)+,R2
+RND2:	.WORD 54102		; seed 2
+		ROR R3
+		ROL R2
+		SWAB R2
+		XOR R2,R3
+		MOV R3,RND1
+		MOV R2,RND2
+		RET
+
+
+; variables
+
+MODEL:			.WORD 10		; 10 for BK-0010, 11 for BK-0011
+MENUITEM:		.WORD 3			; currently selected menu item
+MENUMAX:		.WORD 6			; total menu items
+MENUADDRESS:	.WORD 60024		; menu screen address-2000
+JOYSTICKMASK:	.WORD 0			; mask for broken joysticks
+GAMEMODE:		.WORD 1			; #COMPUTER or #PLAYER2
+DEMOMODE:		.WORD PLAYER1	; #PLAYER1 or #LEVELDEMO
+BALLADDR:		.WORD 57336		; screen address of the ball
+BALLSPRITE:		.WORD BALL+30	; pointer to the ball sprite
+BallADDRold:	.WORD 57336		; old screen address of the ball
+Xoffset:		.WORD 0			; ball's horisontal screen offset in bytes (0..63)
+FAST:			.WORD 0			; ball speed, 0 - normal, 1 - fast, -1 - slow
+SOUND:			.WORD NoSound	; address of sound subroutine
+STEREO:			.WORD 0			; 0 for mono, 1 for stereo
+
+GOAL:		.WORD 0	; 0 during the game
+					; -1 if player 1 wins
+					; 1 if player 2 wins
+CROSS:		.WORD 0	; 0 while ball is flying
+					; 1 when it crossed the left border
+					; -1 when it crossed the right border
+TOUCHv:		.WORD 0	; 0 while ball is flying
+					; 1 when it touches top edge
+					; -1 when it touches bottom edge
+OUT:		.WORD 0	; 1 when the ball goes out of the playfield
+GAMEOVER:	.WORD 0
+AUTOREPEAT:	.WORD 0 ; 1 if auto-repeat os on, 0 if off
+DemoCount:	.WORD 1000	; delay before demo mode autostart
+DemoMenu:	.WORD 3	; main menu item number when return from demo mode
+
+
+; text strings
+
+			.WORD 0	; first string marker
+TXTMENU1:	.ASCIZ "  HOWTO PLAY"
+TXTMENU2:	.ASCIZ " PLAY SINGLE"
+TXTMENU3:	.ASCIZ " PLAY VERSUS"
+TXTMENU4:	.ASCIZ "SET CONTROLS"
+SNDMENU:	.ASCIZ "SOUND DEVICE"
+TXTTWEAK:	.ASCIZ "TWEAK SCREEN"
+TXTEXIT:	.ASCIZ "        EXIT"
+
+TXTSND1:	.ASCIZ "    SPEAKER"
+TXTSND2:	.ASCIZ "      COVOX"
+TXTSND3:	.ASCIZ "STEREOCOVOX"
+TXTSND4:	.ASCIZ "       BACK"
+
+TXTMENU6:	.ASCIZ " LEFT PLAYER KEYBOARD"
+TXTMENU7:	.ASCIZ " LEFT PLAYER JOYSTICK"
+TXTMENU8:	.ASCIZ "RIGHT PLAYER JOYSTICK"
+TXTMENU9:	.ASCIZ "                BACK"
+
+TXTCONTROL1:
+			.ASCIZ "PADDLE UP"
+			.ASCIZ "PADDLE DOWN"
+			.ASCIZ "ACCELERATED UP"
+			.ASCIZ "ACCELERATED DOWN"
+			.ASCIZ "POWER HIT"
+TXTCONTROL2:
+			.ASCIZ "ACCELERATE"
+			.ASCIZ "PADDLE UP"
+			.ASCIZ "PADDLE DOWN"
+			.ASCIZ "POWER HIT"
+
+TXT01:		.ASCIZ "HIT ANY KEY"
+TXT02:		.ASCIZ "WHEN THE LINE"
+TXT03:		.ASCIZ "IS ALL STRAIGHT"
+TXT04:		.ASCIZ "APPLYING CHANGES"
+
+WINNER1:	.ASCIZ "PLAYER ONE WINS"
+WINNER2:	.ASCIZ "PLAYER TWO WINS"
+WINNER3:	.ASCIZ "  YOU ARE TOUGH"
+
+TXTPAUS:	.ASCIZ "PAUSE"
+TXTDEMO1:	.ASCIZ "DEMO  MODE"
+TXTDEMO2:	.ASCIZ "PRESS A KEY TO EXIT"
+
+BROKENTIMER:	.ASCIZ "THE BUILTIN TIMER ON THIS"
+				.ASCIZ "COMPUTER DOES NOT WORK PROPERLY"
+				.ASCIZ "REPLACE THE CPU TO RUN THIS GAME"
+				.ASCIZ "SERIOUSLY"
+	.EVEN
+TIMERSCREEN:	.WORD 54611,0
+				.WORD 56303,0
+				.WORD 61103,52525
+				.WORD 62627,125252
+				.WORD 0
+
+TXTJOYSTICK:	.ASCIZ "PLEASE RELEASE JOYSTICK"
+BROKENPORT:		.ASCIZ "THE PARALLEL PORT ON THIS"
+				.ASCIZ "COMPUTER MAY NOT WORK PROPERLY"
+				.ASCIZ "IF YOU HAVE ANY PROBLEM WITH"
+				.ASCIZ "JOYSTICK"
+				.ASCIZ "REDEFINE CONTROLS IN MENU"
+	.EVEN
+ERRORSCREEN:	.WORD 53611,125252
+				.WORD 55304,125252
+				.WORD 60106,52525
+				.WORD 61630,0
+				.WORD 63310,52525
+				.WORD 0
+
+HLPTXT:	.ASCIZ "PONG CHARGED" .ASCIZ "IS TWO PLAYER GAME"
+		.ASCIZ "WE RECOMMEND TO USE JOYSTICKS"
+		.ASCIZ "FOR THE BEST GAME EXPERIENCE"
+		.ASCIZ "GET NINTENDO GAMEPADS ADAPTER"
+		.ASCIZ "AT" .ASCIZ "HARDWARE.THESANDS.RU"
+		.ASCIZ "EARN ENERGY BY BOUNCE THE BALL"
+		.ASCIZ "SPEND ENERGY TO ACCELERATE"
+		.ASCIZ "PERFORM POWER HIT WHEN THE"
+		.ASCIZ "ENERGY LEVEL IS MAXIMUM"
+		.ASCIZ "ORIGINAL GAME DESIGN BY MANWE"
+		.ASCIZ "MMXIX MMXXI"
+	.EVEN
+
+HELPSCREEN:
+		.WORD 42004,52525	; pong charged
+		.WORD 42034,0		; is two...
+		.WORD 44606,0		; we...
+		.WORD 46307,0
+		.WORD 51105,0
+		.WORD 52613,0
+		.WORD 52620,52525
+		.WORD 57405,0		; earn...
+		.WORD 62210,0		; spend...
+		.WORD 65010,0		; perform...
+		.WORD 66512,0		; energy...
+		.WORD 73405,125252	; original...
+		.WORD 75126,125252	; 2019...
+		.WORD 0
+
+
+; table of sprites
+
+BallSprites:	.WORD BALL,BALL+40,BALL+100,BALL+140
+				.WORD BALL+200,BALL+240,BALL+300,BALL+340
+
+; sprites
+
+BALL:		insert_file "balls2.raw"
+
+ARROWPIN:	.BYTE 2,12,52,252,52,12,2,0
+
+LOGO:		insert_file "pong-logo-mono.raw"
+
+NUMBERS:	insert_file "font-SquarePixel2-numbers.raw"
+FONT:		insert_file "font-ArcadeClassic-letters.raw"
+	.EVEN
+			.include "player.mac"
+
+FREE:
+	.END

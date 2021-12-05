@@ -1,0 +1,108 @@
+
+; Joystick control for Micro Commander (MKDOS) v. 1.0
+; Compile this source with PDPy11: https://github.com/PDPy11
+; (c) Manwe/SandS 2021
+
+	Left	= 10
+	Right	= 2
+	Up		= 1
+	Down	= 4
+	ButA	= 40
+	ButB	= 100
+	ButSel	= 200
+	ButSt	= 20
+
+	DrvSize	= ENDDRV-DRIVER
+
+
+		MOV #NODOS,R1
+		MOV @#120014,R0			; pointer to disk catalog in memory
+		CMP 402(R0),#51414		; MKDOS format marker
+		BNE QUIT
+			CMP @#120004,#100000+315.	; check version 3.15
+			BLO QUIT
+
+
+		CMP @#167776,#176200	; check HDD controller version SMK-64
+		BHIS 1
+			MOV #SMK,R1
+			BR QUIT
+1:		MOV #170000,R1			; user memory address
+2:		TST (R1)				; free memory?
+		BEQ 4
+			CMP DrvSize-2(R1),#"JV"	; is JoyVox driver installed already?
+			BEQ 4
+3:			ADD (R1),R1
+			CMP R1,#175770-DrvSize
+			BLOS 2				; check next memory block
+				MOV #NOMEM,R1
+				BR QUIT
+4:		MOV R1,R3
+
+
+		MOV #MC,R1
+		MOV #124772,R2			; check Micro Commander
+		CMP (R2)+,#12704
+		BNE QUIT
+		CMP (R2)+,#12
+		BNE QUIT
+
+		MOV R3,R1
+		ADD #6,R3
+		MOV R3,-(R2)			; begin of driver in user memory
+		MOV #137,-(R2)			; fix Micro Commander
+
+		ADD #Joyst-DRIVER-7,R3	; address of joystick codes array
+		MOV R3,Check+4
+		MOV R3,Check+14			; fix joystick array address
+		ADD #8.,R3
+		MOV R3,Press+2			; fix keys array address
+
+		MOV #DRIVER,R2
+		MOV #DrvSize/2+1,R0
+7:			MOV (R2)+,(R1)+		; copy driver to user memory
+		SOB R0,7
+
+
+		MOV #GOOD,R1
+QUIT:	MOV #200,R2
+		EMT 20
+		RET						; quit to DOS
+
+
+SMK:	.ASCIZ "SMK controller required"
+NODOS:	.ASCIZ "MKDOS 3.15 or higher required"
+MC:		.ASCIZ "Wrong Micro Commander version"
+NOMEM:	.ASCIZ "Not enough space in high memory"
+GOOD:	.ASCII "JoyVox driver is installed successfully!"
+		.BYTE 12,0
+		.EVEN
+
+DRIVER:	.WORD DrvSize		; size
+		.WORD 0				; vector
+		.WORD 0				; end marker
+		NOP					; first instruction of driver
+		TST @#177714
+		BEQ Exit
+		MOV #8.,R4
+Check:		CMPB @#177714,Joyst-1(R4)	; read joystick port 1
+			BEQ Press
+			CMPB @#177715,Joyst-1(R4)	; read joystick port 2
+			BEQ Press
+		SOB R4,Check
+Exit:	MOV #12,R4			; return to Micro Commander
+		JMP @#124776
+
+Press:	MOVB Keys(R4),R4
+		MOVB R4,@#104
+		MOVB R4,@#105
+		BR Exit
+
+Joyst:	.BYTE Left, Right, Up, Down, ButA, ButB, ButSel, ButSt
+Keys:	.BYTE 10,   31,    32, 33,   12,   11,   23,     203
+		;                            enter tab   select  view
+		.ASCII "JV"
+ENDDRV:	HALT
+
+	.END
+

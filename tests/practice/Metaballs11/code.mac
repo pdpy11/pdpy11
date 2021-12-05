@@ -1,0 +1,163 @@
+; Metaballs 512 byte intro (c) Manwe/SandS 2019
+; for BK-0011M Soviet home computer
+; compile this code with PDPy11 by Ivanq
+; github.com/imachug/PDPy11
+
+
+	RADIUS	= 135.
+	COLORS	= RADIUS
+	WIDTH	= 36.
+	HEIGT	= 28.
+	SIZE	= 46.	; sqrt(width^2+height^2) - number of square roots in the table
+
+	PALET	= FIN	; COLORS*2 words
+	QUAD	= PALET + COLORS * 4	; quads table (SIZE*2 bytes)
+	SQRT	= QUAD + SIZE * 2 + 2	; square root table for numbers 0..SIZE*SIZE+SIZE words
+	CIRCLE	= SQRT + (SIZE * SIZE + SIZE ) * 2	; circle sprite
+	CENTER	= CIRCLE + (HEIGT+2) * WIDTH * 4 + WIDTH * 2	; address of the circle sprite's center
+
+
+;		BK-0011M version!
+
+		EMT 0					; clear screen, set Screen 0
+		MOV #1,R0
+		EMT 51					; disable cursor
+		MOV #40000,@#177662		; set 0 palette, enable stop key, VSync timer off
+		MOV #16000,@#177716		; set Screen 0 page
+
+		; precalculate patterns links
+		MOV #PALET,R4
+		MOV #PATT,R1
+		MOV #COLORS*2,R0
+2:			MOV R1,(R4)+
+			CMP R1,#PATT+175.
+			BGE 3
+			ADD #5,R1
+3:		SOB R0,2
+		; now R4 points to QUAD
+
+		; precalculate quads and square roots
+ROOTS:	MOV #SQRT,R5		; pointer to square roots table
+		CLR -(SP)			; previous index in the table
+		MOV #1,R1			; current X
+		MOV R1,R2			; current X^2
+		MOV R1,(R5)+
+1:			; R0=RADIUS/R1
+			CLR R3
+			MOV #-4,R0
+2:			INC R0
+			ADD R1,R3
+			CMP R3,#RADIUS
+			BLE 2
+			; interpolate
+3:			MOV R2,(R4)+	; store quad
+			MOV R2,R3
+			ASL R3			; increase X by delta
+			SUB (SP)+,R3
+			MOV R3,-(SP)	; save for the next iteration
+			ASL R3
+			ADD #SQRT,R3	; next index in table
+			; store to table
+4:			MOV R0,(R5)+
+			CMP R5,R3
+			BLO 4
+			; calculate next X^2
+			ADD R1,R2		; X^2+X
+			ADD R1,R2		; X^2+2X
+			INC R2			; X^2+2X+1=(X+1)^2
+			INC R1			; X=X+1
+		CMP R1,#SIZE
+		BLE 1
+		TST (SP)+
+		; now R5 points to CIRCLE
+
+		; prerender circle
+CIR:	MOV #(HEIGT+2)*2,R2		; Y
+1:		MOV #WIDTH*2,R1			; X
+2:			MOV R2,R0			; Y
+			SUB #HEIGT+2,R0		; Y - Yblob
+			BPL 3
+				NEG R0
+3:			ASL R0
+			MOV QUAD(R0),R4		; (Y - Yblob)^2
+			MOV R1,R0			; X
+			SUB #WIDTH,R0		; X - Xblob
+			BPL 4
+				NEG R0
+4:			ASL R0
+			ADD QUAD(R0),R4		; + (X - Xblob)^2
+			ASL R4				; Distance^2 * 2
+			MOV SQRT(R4),(R5)+	; store Radius/Distance
+		SOB R1,2
+		SOB R2,1
+
+		; calculate circle's sprite offsets
+DRAW:	MOV #BLOBS,R1	; pointer to coordinates
+		MOV #CENTER,R2
+		MOV R2,R3
+		SUB (R1)+,R3
+		SUB (R1)+,R3	; circle 1, offset in the sprite
+		MOV R2,R4
+		SUB (R1)+,R4
+		SUB (R1)+,R4	; circle 2, offset in the sprite
+		MOV R2,R5
+		SUB (R1)+,R5
+		SUB (R1)+,R5	; circle 3, offset in the sprite
+
+		; sum and draw circles
+		MOV #HEIGT,LOOP+2
+		MOV #60040-(HEIGT*5/2)*100-WIDTH/2,R2	; window screen address
+YNEXT:		MOV #WIDTH,R1			; X		
+XNEXT:			MOV (R3)+,R0		; get 1st circle's colour
+				ADD (R4)+,R0		; add 2nd circle's colour
+				ADD (R5)+,R0		; add 3rd circle's colour
+POINT:			ASL R0
+				MOV PALET(R0),R0	; get link to color pattern
+				MOVB (R0)+,(R2)
+				MOVB (R0)+,100(R2)
+				MOVB (R0)+,200(R2)
+				MOVB (R0)+,300(R2)
+				MOVB (R0), 400(R2)
+				INC R2
+			SOB R1,XNEXT
+			MOV #WIDTH*2,R1
+			ADD R1,R3
+			ADD R1,R4
+			ADD R1,R5
+			ADD #500-WIDTH,R2		; next line
+LOOP:	DEC #HEIGT
+		BNE YNEXT
+
+		; move objects
+COORD: 	MOV #DIRECT+14,R1
+		MOV #3,R0
+1:			ADD -(R1),14(R1)	; X
+			BGT 2
+				NEG (R1)		; negate direction
+2:			CMP 14(R1),#WIDTH*2
+			BLO 3
+				NEG (R1)		; negate direction
+3:			ADD -(R1),14(R1)	; Y
+			BGT 4
+				NEG (R1)		; negate direction
+4:			CMP 14(R1),#HEIGT*WIDTH*4
+			BLO 5
+				NEG (R1)		; negate direction
+5:		SOB R0,1
+
+
+		BR DRAW
+
+
+DIRECT:	.WORD WIDTH*4,-2, -4*WIDTH,2, -4*WIDTH,-2	; directions
+BLOBS:	.WORD 4*WIDTH*4,12, 21*WIDTH*4,62, 15*WIDTH*4,40	; coordinates (Y,X)
+
+		; 32 colour patterns 1x5 bytes each
+PATT:	insert_file "palette3.raw"
+
+FIN:
+
+
+ 	.END
+
+; end of file

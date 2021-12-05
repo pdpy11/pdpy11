@@ -1,0 +1,570 @@
+
+; Extended arithmetic driver (EIS) installer for BK-0010/11.
+; It allows a programm to use MUL, DIV, ASH, and ASHC instructions.
+; Compile this source with PDPy11: https://github.com/imachug/PDPy11
+; (c) Manwe/SandS 2018-2021
+
+; Emulated:
+; all addressing modes for all registers,
+; correct PSW flags.
+
+; Not emulated:
+; direct PC and SP modifications, such as MUL #5,PC or DIV #3,SP
+; -(PC) and @-(PC) make endless loop, so they are not emulated.
+
+; Driver stays resident in MKDOS and ANDOS (ver. 3.15 and 3.1 or higher)
+; In other DOS init EIS driver by MOV #160016,@#10 in your program tu use it.
+; Do not rely on EIS too much, better use your own MUL/DIV subroutines.
+
+; version 1.3 (July 2021).
+; Thanks to gid and ivagor.
+
+
+	DrvSize	= ENDDRV-DRIVER
+
+BEGIN:	CMP @#167776,#176200	; check HDD controller version SMK-64
+		BHIS 1
+			MOV #ERROR,R1
+			BR QUIT
+1:		MOV #170000,R1			; user memory address
+2:		TST (R1)				; free memory?
+		BEQ 4
+			CMP 2(R1),#175774	; is EIS driver installed already?
+			BNE 3
+				MOV #EXISTS,R1
+				BR QUIT
+3:			ADD (R1),R1
+			CMP R1,#175770-DrvSize
+			BLOS 2				; check next memory block
+				MOV #NOMEM,R1
+				BR QUIT
+
+4:		MOV R1,R3
+
+		MOV @#10,OLD10			; save old vector
+		MOV #DRIVER,R2
+		MOV #DrvSize/2+1,R0
+5:			MOV (R2)+,(R1)+		; copy driver to user memory
+		SOB R0,5
+
+		ADD #6,R3				; begin of driver in user memory
+		MOV R3,@#175774			; init EIS driver
+
+MKDOS:	MOV @#120014,R0			; pointer to disk catalog in memory
+		CMP 402(R0),#51414		; MKDOS format marker
+		BNE ANDOS
+			CMP @#120004,#100000+315.	; check version 3.15
+			BLO QUIT
+				SUB #20,R1			; pointer to patch
+				MOV #125532,R2		; Monitor-10 address
+				MOV #4737,(R2)+		; CALL @#ENDDRV
+				MOV R1,(R2)+		; fix MKDOS code
+				MOV #240,(R2)+		; NOP
+				SUB #14,R1			; pointer to patch
+				MOV @#4,BK0010+2
+				MOV #BK0010,@#4		; set interruption on write to ROM for BK 0010
+				MOV #4737,@#100176	; fix Monitor code
+				MOV R1,@#100200		; CALL @#ENDDRV
+BK0010:			MOV #100000,@#4		; restore STOP vector
+				CMP (SP),#BK0010-4
+				BNE OK
+				MOV #OK,(SP)
+				RTI
+
+ANDOS:	CMP @#120446,#"ND"		; part of "ANDOS" text
+		BNE QUIT
+		CMP @#120170,#100466	; check version 3.1 or higher
+		BLO QUIT
+			MOV #120244,R2		; pointer to ANDOS user's variables
+			MOV #3,R0			; find free space in user's variables array
+1:				MOV (R2)+,R3	; check value
+				BIS (R2)+,R3	; check address
+				BEQ SetVar		; if both are 0
+			SOB R0,1
+			BR QUIT				; user's variables array is full
+
+SetVar:	MOV #10,-(R2)			; set user's address
+		MOV #160016,-(R2)		; set user's value
+OK:		MOV #GOOD,R1
+QUIT:	MOV #200,R2
+		EMT 20
+		HALT					; quit to DOS
+
+
+ERROR:	.ASCIZ "SMK controller required"
+NOMEM:	.ASCIZ "Not enough space in high memory"
+EXISTS:	.ASCIZ "Extended Instruction Set is emulating already"
+GOOD:	.ASCII "Extended arithmetic driver is installed successfully!"
+		.BYTE 12
+		.ASCIZ "manwe@demoscene.ru"
+		.EVEN
+
+DRIVER:	.WORD DrvSize		; size
+		.WORD 175774		; vector
+		.WORD 0				; marker
+		NOP					; first instruction of driver
+		MTPS #340			; disable interruptions
+		PUSH R5
+		PUSH R4
+		PUSH R3
+
+		MOV 6(SP),R5		; take command address from stack
+		MOV R5,OLDPC+2		; save old PC
+		MOV (R5),R4			; take possible argument
+		MOV -(R5),R5		; take command from previous address
+
+		MOV R5,R3
+		BIC #7777,R3		; check opcode
+		CMP R3,#70000
+		BNE EXIT			; if not EIS instruction
+
+		MOV R5,R3
+		BIC #170777,R3
+		SWAB R3				; 0 = MUL, 2 = DIV, 4 = ASH, 6 = ASHC
+		MOV R3,OPCODE+2		; 10 = XOR, 12 = Floating point, 14 = System, 16 = SOB
+
+		MOV R5,R3
+		BIC #177077,R3
+		MOV R3,ARG1			; get 1st argument (register number)
+
+		MOV R5,R3
+		BIC #177770,R3		; get register number
+		CMP R3,#7			; PC ?
+		BNE NOTR7
+			BIC #177707,R5	; get addressing mode
+			ASR R5
+			ASR R5			; addressing mode * 2
+			ADD R5,PC
+			BR A0		; PC
+			BR A1		; (PC)
+			BR A2		; (PC)+
+			BR A3		; @(PC)+
+			BR A4		; -(PC)
+			BR A4		; -@(PC)
+			BR OLDPC	; X(PC)
+;			BR A7		; @X(PC)
+A7:				ADD OLDPC+2,R4
+				MOV @2(R4),ARG2
+				ADD #2,6(SP)		; increase PC in stack
+CLRPSW:			BIC #17,10(SP)		; clear PSW
+				BR OPCODE
+A0:				MOV OLDPC+2,ARG2
+				BR CLRPSW
+A1:				MOV R4,ARG2
+				BR CLRPSW
+A2:				MOV R4,ARG2
+				ADD #2,6(SP)		; increase PC in stack
+				BR CLRPSW
+A3:				MOV (R4),ARG2
+				ADD #2,6(SP)		; increase PC in stack
+				BR CLRPSW
+A4:				POP R3				; skip command to prevent endless loop
+				POP R4
+				POP R5	
+				RTI	
+OLDPC:			ADD #1000,R4
+				MOV 2(R4),ARG2
+				ADD #2,6(SP)		; increase PC in stack
+				BR CLRPSW
+
+NOTR7:	BIC #177700,R5		; get addressing mode and register number
+		SWAB R5
+		ASR R5
+		ASR R5
+		BIS #010067,R5		; opcode of "MOV R0,ARG2"
+		CMP R5,#016067		; detect addressing mode < 6
+		BLO GO1
+			MOV R4,INSTR1+2	; set argument
+			MOV R5,INSTR1	; modify command
+			ADD #2,6(SP)	; increase PC in stack
+			POP R3			; restore registers except PC
+			POP R4
+			POP R5
+			ADD #4,SP
+INSTR1:		MOV 0(R0),ARG2	; instruction to modify
+			BR GO2
+GO1:	MOV R5,INSTR2		; modify command
+		POP R3				; restore registers except PC
+		POP R4
+		POP R5
+		ADD #4,SP
+INSTR2:	MOV R0,ARG2			; instruction to modify
+
+GO2:	BIC #17,-(SP)		; clear PSW
+		TST -(SP)			; skip return address
+		PUSH R5
+		PUSH R4
+		PUSH R3
+OPCODE:	ADD 0(PC),PC		; use opcode of EIS instruction
+
+OPTABL:	.WORD MULEMU-OPTABL
+		.WORD DIVEMU-OPTABL
+		.WORD ASHEMU-OPTABL
+		.WORD ASHCEM-OPTABL
+		.WORD EXIT-OPTABL
+		.WORD EXIT-OPTABL
+		.WORD EXIT-OPTABL
+
+; exit. unsupported instruction
+
+EXIT:	POP R3
+		POP R4
+		POP R5
+		SEC
+		MOV @#4,PC			; JMP @4
+
+
+; ASH emulation
+
+ASHEMU:	MOV ARG1,R4
+		MOV #10004,R3		; opcode of "MOV R0,R4" instruction
+		BIS R4,R3			; modify MOV instruction
+		MOV R3,MOV3
+		ASL R4
+		ASL R4
+		SWAB R4
+		BIS #12700,R4		; opcode of "MOV #0,R0" instruction
+		MOV R4,RES1			; modify MOV instruction
+		POP R3				; restore registers except SP and PC
+		POP R4
+		POP R5
+		ADD #4,SP			; interruptions should be blocked at this moment
+MOV3:	MOV R0,R4			; instruction to modify
+		SUB #10,SP			; PSW, return address, R5, R4 are in stack already
+		MOV ARG2,R5
+		TST R5				; shift left or right?
+		BNE 1
+			TST R4
+			BR 6
+1:		BMI 3
+		CMP R5,#20			; shift more than 16 bits?
+		BLO 2
+			CLR R4
+			BR 6
+2:		ASL R4				; left shift
+		BVS ASHV2
+		SOB R5,2
+		BR 6
+
+3:		CMP R5,#-20			; shift more than 16 bits?
+		BGT 4
+			SXT R4
+			BPL 5
+				SEC			; if negative
+				BR 5
+4:		ADD #20,R5			; 16
+		ASL R5				; offset
+		ADD R5,PC
+		.repeat 16.
+		{
+		ASR R4				; right shift
+		}
+5:		CLV					; bit V should be 0 after right shift
+6:		MFPS R5
+ASH0:	BIC #177760,R5
+		BIS R5,6(SP)		; set PSW
+		MOV R4,RES1+2		; save result
+		POP R4
+		POP R5
+RES1:	MOV #0,R0			; instruction to modify
+		RTI
+ASHV:	ASL R4
+ASHV2:	SOB R5,ASHV
+		MFPS R5
+		BIS #2,R5			; set bit V in PSW
+		BR ASH0
+
+
+; ASHC emulation
+
+ASHCEM:	CALL GETARG			; get arguments and R4_R3 and R5
+		TST R5				; shift left or right?
+		BEQ 5
+		BMI 2
+		BIC #177700,R5		; leave only 6 bits
+0:		ASL R3
+		ROL R4
+		BVS 12
+		SOB R5,0
+		BR 4
+11:			ASL R3
+			ROL R4
+12:			SOB R5,11
+			BIS #2,R5		; set bit V in PSW
+			BR 4
+2:		NEG R5
+		BIC #177700,R5		; leave only 6 bits
+3:		ASR R4
+		ROR R3
+		SOB R5,3
+4:		ADC R5				; PSW
+5:		TST R4				; test high 16 bits of result
+		BNE 6
+			BIS #4,R5		; set bit Z in PSW
+			BR 7
+6:		BPL 7
+			BIS #10,R5		; set bit N in PSW
+7:		TST R3				; test low 16 bits of result
+		BEQ 71
+			BIC #4,R5		; clear bit Z in PSW
+71:		MOV R3,RES2L+2		; save result
+		MOV R4,RES2H+2		; save result
+		BIS R5,10(SP)		; set PSW
+		JMP DONE2
+
+
+; MUL emulation. R4_R3 = R4 * R5
+
+MULEMU:	MOV ARG1,R4
+		MOV #10005,R5		; "MOV R0,R5" opcode
+		BIS R4,R5
+		MOV R5,MUL1			; modify instruction
+		ASL R4
+		ASL R4
+		SWAB R4				; register number
+		MOV #12700,R5		; "MOV #X,R0" opcode
+		BIS R4,R5
+		MOV R5,MUL4
+		BIS #1,R5			; inc if even
+		MOV R5,MUL4+4		; modify instruction
+
+		POP R3				; restore registers except PC
+		POP R4
+		POP R5
+		ADD #4,SP			; interruptions should be blocked at this moment
+
+MUL1:	MOV R0,R5			; instruction to modify
+		BEQ MULZ1			; if 0
+
+		SUB #12,SP			; PSW, return address, R5, R4, R3 are in stack already
+		CLR R4
+		CLR R3				; result's sign
+
+		PUSH R2
+		MOV ARG2,R2
+		BEQ MULZ2			; if 0
+		BPL 1
+			NEG R2
+			INC R3
+1:		TST R5
+		BPL 2
+			NEG R5
+			DEC R3
+
+2:		PUSH R1
+		PUSH R0
+		CLR R1
+		CLR R0				; R0_R1 = R4_R5 * R2
+		BR 5
+3:		BCC 4				; main loop
+			ADD R5,R1
+			ADC R0
+			ADD R4,R0
+4:		ASL R5
+		ROL R4
+5:		ROR R2
+		BNE 3				; end of main loop
+		BCC 6
+			ADD R5,R1
+			ADC R0
+			ADD R4,R0
+
+6:		TST R0				; high 16 bit
+		BEQ 71
+			INC R2			; set bit C in PSW
+			BR 72
+71:		TST R1				; low 16 bit
+		BPL 72
+			INC R2			; set bit C in PSW
+72:		TST R3				; result's sign
+		BEQ 74
+			COM R0
+			NEG R1
+			BNE 73
+				INC R0
+73:			BIS #10,R2		; set bit N ib PSW
+
+74:		MOV R0,MUL4+2		; save high 16 bits
+		MOV R1,MUL4+6		; save low 16 bits
+		BIS R2,16(SP)		; save PSW
+		POP R0
+		POP R1
+MUL2:	POP R2
+		POP R3
+		POP R4
+MUL3:	POP R5
+MUL4:	MOV #0,R0			; instruction to modify
+		MOV #0,R0			; instruction to modify
+		RTI
+
+MULZ1:	BIS #4,-(SP)		; set bit Z ib PSW
+		SUB #4,SP			; point to R5 in stack
+		CLR MUL4+2
+		CLR MUL4+6
+		BR MUL3
+MULZ2:	BIS #4,12(SP)		; set bit Z ib PSW
+		CLR MUL4+2
+		CLR MUL4+6
+		BR MUL2
+
+
+; DIV emulation. R4_R3 - dividend. R2 = R4_R3 / R5
+
+DIVEMU:	CALL GETARG
+		TST R4
+		BNE 1
+		TST R3
+		BNE 1
+			BIS #4,10(SP)	; set bits Z in PSW
+			POP R3
+			POP R4
+			POP R5
+			RTI
+1:		PUSH R2
+		CLR R2
+		TST R5
+		BNE 2
+			BIS #1,12(SP)	; set bits C in PSW, divide by zero
+			BR OVERFLOW		; divide by zero causes overflow
+2:		BPL 3				; test R5 again
+			NEG R5			; divisor was negative
+			INC R2
+3:		TST R4
+		BEQ DIV0
+		BPL 4
+			COM R4			; dividend was negative
+			NEG R3
+			INC R2
+			BIS #100000,R2	; sign of reminder
+4:		CMP R4,R5
+		BGE OVERFLOW
+		BR DIV1
+
+DIV0:	PUSH R1				; R2 = R3 / R5
+		PUSH R0
+		PUSH R2				; low bit of R2 now represents result's sign
+		CLR R1				; reminder
+		MOV #16.,R0
+1:			ASL R3			; seek for the first bit
+			BCS 21
+		SOB R0,1
+2:			ASL R3			; dividend
+21:			ROL R1			; reminder
+			CMP R1,R5		; compare with divisor
+			BLO 3
+				SUB R5,R1
+				INC R3
+3:		SOB R0,2
+		MOV R3,R2
+		BR DIV2
+
+DIV1:	PUSH R1				; R2 = R4_R3 / R5
+		PUSH R0
+		PUSH R2				; low bit of R2 now represents result's sign
+
+		MOV #32.,R0
+		CLR R1				; reminder
+		MOV #177777,R2
+1:			ASL R3			; seek for the first bit
+			ROL R4
+			ROL R1
+			BNE 3
+		SOB R0,1
+2:			ROL R1			; main loop
+3:			CMP R1,R5
+			BLO 4
+				SUB R5,R1
+4:			ROL R2
+			ASL R3
+			ROL R4
+		SOB R0,2
+5:		COM R2
+		BNE DIV2
+			BIS #4,20(SP)	; set bit Z in PSW
+
+DIV2:	POP R0				; reminder's sign
+		BPL 1
+			NEG R1			; reminder
+1:		ASR R0				; test result's sign
+		BCC 2				; if result is positive
+			NEG R2			; result
+			BIS #10,16(SP)	; set bit N in PSW
+2:		BIT #1,RES2H		; is destination register odd ?
+		BEQ 3				; if bit 0 is zero
+			MOV R2,R1		; save quotient instead of reminder
+3:		MOV R2,RES2H+2		; save quotient
+		MOV R1,RES2L+2		; save reminder
+		POP R0
+		POP R1
+		POP R2
+		BR DONE2
+
+
+; get values of 2 registers for DIV and ASHC
+
+GETARG:	MOV ARG1,R4
+		MOV R4,R3
+		BIS #10004,R3		; opcode of "MOV R0,R4" instruction
+		MOV R3,GET2			; write "MOV Rn,R4" instruction
+		BIS #100,R3			; Rn+1
+		DEC R3				; write "MOV Rn+1,R3" instruction
+		MOV R3,GET2+2
+
+		ASL R4
+		ASL R4
+		SWAB R4
+		BIS #12700,R4		; opcode of "MOV #n,R0" instruction
+		MOV R4,RES2H		; write "MOV #n,Rn" instruction
+		BIS #1,R4			; write "MOV #n,Rn+1" instruction
+		MOV R4,RES2L
+
+		ADD #2,SP			; skip return address
+		POP R3				; restore registers except PC
+		POP R4
+		POP R5
+		ADD #4,SP			; interruptions should be blocked at this moment
+GET2:	MOV R0,R4			; instruction to modify, even register
+		MOV R0,R3			; instruction to modify, odd register
+		MOV ARG2,R5
+		SUB #14,SP
+		RET
+
+
+; return 2 parametes
+
+DONE2:	POP R3
+		POP R4
+		POP R5
+RES2H:	MOV #0,R0			; instruction to modify
+RES2L:	MOV #0,R0			; instruction to modify
+		RTI
+
+
+; in case of overflow
+
+OVERFLOW:
+		POP R2
+		POP R3
+		POP R4
+		POP R5
+		BIS #2,2(SP)		; set bit V, while leave Z and N clean
+		RTI
+
+
+ARG1:	.WORD 1337			; argument 1
+ARG2:	.WORD 1337			; argument 2
+
+OLD10:	.WORD 100000		; old 10 vector
+
+		MOV #160016,@#10	; set new vector
+		MOV #120,R2			; for MKDOS
+		RET
+
+		MOV #160016,@#10		; set new vector
+		MOV #126000,@#120014	; at addres 125532
+		RET
+
+ENDDRV:	HALT
+
+	.END
+

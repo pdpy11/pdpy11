@@ -1,0 +1,109 @@
+; "14 Colours" 256 byte intro
+; for BK-0011M Soviet computer
+; (c) Manwe/SandS 2020
+; compile this code with PDPy11 by Ivanq
+; github.com/imachug/PDPy11
+
+
+START:	MOV #140000,@#4		; set stop vector to restart computer
+		MOV #MAIN1+2,@#100	; set v-sync timer vector
+		MOV #177664,R5
+		MOV #1330,(R5)		; scroll position
+
+		; build drawing subroutine and screen pattern
+		MOV #40000,R4
+		MOV #FLOW,R2
+FILL:	MOV #128.,R0		; picture height
+			CLR (R4)+		; left screen column
+PAL2:		MOV #PAL,R1
+			MOV #5,R3
+2:				MOV #12715,(R2)+	; MOV (R7)+,(R5) instruction code
+				CLRB (R2)+
+				MOVB (R1)+,(R2)+	; copy palette number
+3:				MOV #52525,(R4)+	; draw screen pattern
+				MOV #125252,(R4)+
+				MOV #177777,(R4)+
+				INC PC
+				BR 3			; repeat twice
+			SOB R3,2
+			MOV #11113,(R2)+	; MOV (R1),(R3) instruction code
+			CLR (R4)+			; right screen column
+		SOB R0,FILL+4
+
+		MOV R1,PAL2+2			; pointer to second palette
+		DEC #2					; repeat twice
+		BNE FILL
+
+		MOV #137,(R2)+		; JMP @# instruction code
+		MOV #LOOP,(R2)+		; address
+
+		BR GO
+PAL:	.BYTE	4,7,6,10,0, 10,14,12,17,4	; palettes
+
+
+GO:		MOV #1,@#177706		; timer initial value
+		MOV #177712,R4
+		MOV #1,(R4)			; stop and init timer	
+		MOV #32,(R4)		; start timer
+		TST -(R4)			; now R4 = 177712
+3:		TST (R4)			; wait till it's really started
+		BNE	3
+
+		MTPS #140			; enable timer interruption only
+		CLR -(R5)			; set RGB palette and start timer
+
+		; main loop
+LOOP:	WAIT				; wait for v-sync
+
+		MOV #124.,@#177706	; timer initial value
+		MOV #32,@#177712	; start timer
+
+		; we have about 15000 CPU cycles here
+		; while the ray can not see us ;)
+
+		NEG #1
+		BMI MAIN2
+
+		MOV #47600,R0		; move top lines to the right
+		MOV #4,R3
+MAIN1:	MOV #2,R2
+1:			MOV #28.,R1
+			ASL (R0)+
+2:				ROL (R0)+
+			SOB R1,2
+			ROL (R0)+
+			ROL (R0)+
+			ADC -74(R0)
+			SUB #76,R0
+		SOB R2,1
+		ADD #100,R0
+		SOB R3,MAIN1
+
+		BR RAY
+
+MAIN2:	MOV #70276,R0		; move bottom lines to the left
+		MOV #4,R3
+1:		MOV #2,R2
+2:			MOV #28.,R1
+			CLC
+3:				ROR -(R0)
+			SOB R1,3
+			ROR -(R0)
+			ROR -(R0)
+			BCC 4
+				BIS #100000,72(R0)
+4:			ADD #74,R0
+		SOB R2,2
+		SUB #100,R0
+		SOB R3,1
+
+		; end of hidden code
+
+
+RAY:	TST (R4)			; wait for the ray at the top of the screen
+		BNE	RAY
+		MOV @0(R3),0(R3)	; dummy instructions 80 cycles (timing reason)
+
+FLOW:	; a lot of instruction would be generated here
+
+ 	.END

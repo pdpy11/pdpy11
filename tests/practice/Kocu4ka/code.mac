@@ -1,0 +1,129 @@
+; 256-byte intro for BK-0010 Soviet computer
+; Better run it in turbo mode (6 MHz)
+; (c) Manwe/SandS 2021 for Yandex Demodulation demoparty
+; Compile this code with PDPy11 by Ivanq
+; github.com/PDPy11
+
+
+; .LINK 140000	; for run in SMK fast RAM
+
+	TablSize	= 64.
+	Angle		= 16.		; Cos offset
+	Variable	= Accums+6
+
+
+
+Speed:	BR Begin			; Y
+		.WORD 36543,1321	; timer2, timer1
+Accums:
+
+Begin:
+; Clone sine table
+		MOV #Tabl+32.,R1	; pointer to sine table
+		MOV #32.,R2
+1:			MOVB Tabl-1(R2),(R1)+
+		SOB R2,1
+
+; clear screen
+2:		CLR (R1)+
+		TST R1
+		BPL 2
+
+; clear screen for fast SMK version
+;2:		CLR (R2)+
+;		TST R2
+;		BPL 2
+
+Loop:	MOV #Accums,R3
+		CLR (R3)+			; clear accums
+		CLR (R3)+
+		TST (R3)+
+		MOV #100,R0			; mask
+Direct:	INCB (R3)			; default Y
+		BNE 1
+			XOR R0,Direct	; DEC opcode: 5313, INC opcode: 5213
+1:		MOV (R3)+,(R3)		; set Y
+		MOV (R3)+,(R3)		; set timer2
+		MOV #40200,R0		; screen address
+
+; render twister to screen
+Render:
+		MOV #Speed,R4
+		MOV #3,R3
+0:			ADD (R4)+,4(R4)	; add speed to accum
+			ADC 14(R4)		; increment variable
+		SOB R3,0
+
+		MOV #Variable+6,R3	; pointer to variable array
+
+		MOV (R3),R4			; get timer 1
+		CALL Sin
+		SWAB R5
+		ASL R5
+		MOV R5,Speed		; Y speed
+
+		MOV -(R3),R4		; get timer 2
+		CALL Sin
+		ADD #32.,R5
+		ASR R5
+		ASR R5
+		MOV R5,R2			; horisontal shift
+
+		MOV -(R3),R4		; get Y
+
+		MOV R0,-(SP)		; set maximum
+		MOV R0,-(SP)
+		ADD #77,(SP)		; set minimum
+		MOV #4,R3
+3:			CALL Sin		; R5=Sin(R4)
+			MOV R5,R1
+			ASR R1			; left coordinate
+			ADD #Angle,R4	; 90 degrees offset
+			CALL Sin		; R5=Sin(R4)
+			ASR R5			; right coordinate
+			SUB R1,R5		; length
+			BLE 7
+				BIC #77,R0		; new screen line
+				ADD R2,R0		; horisontal shift
+				ADD R1,R0
+				CMP R0,(SP)			; minimum
+				BGT 4
+					MOV R0,(SP)		; set new minimum
+4:				MOVB Color-1(R3),R1	; read colour
+5:					MOVB R1,(R0)+
+				SOB R5,5
+				CMP R0,2(SP)		; maximum
+				BLOS 6
+					MOV R0,2(SP)	; set new maximum
+6:				BICB #340,-(R0)		; draw border
+7:		SOB R3,3
+		MOV (SP)+,R5		; get minimum
+		MOVB R3,-(R5)			; erase left pixels
+		MOVB R3,-(R5)
+		MOVB R3,-(R5)
+		MOVB R3,-(R5)
+		MOV (SP)+,R5		; get maxumum
+		MOVB R3,(R5)+		; erase right pixels
+		MOVB R3,(R5)+
+		MOV R3,(R5)
+
+		ADD #300,R0			; next screen line
+		BPL Render			; end of screen?
+
+		BR Loop				; next frame
+
+
+; Sinus
+; input: R4 - angle
+; outpu: R5 - sinus
+Sin:	MOV R4,R5
+		BIC #177700,R5
+		MOVB Tabl(R5),R5
+		RET
+
+
+Color:	.BYTE 231,167,252,273
+
+Tabl:	.BYTE 63.,62.,62.,61.,60.,58.,56.,54.,52.,50.,48.,45.,42.,39.,37.,33.
+		.BYTE 31.,28.,25.,22.,19.,17.,14.,12.,10.,8.,6.,4.,3.,2.,2.,1.
+

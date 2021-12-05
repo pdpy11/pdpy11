@@ -1,0 +1,689 @@
+; Convert Scream Tracker 3 module to SST0 (c) Manwe/SandS 2018
+; 3 channels, 25 KHz mixing rate on BK-0011m
+; compile this code with PDPy11 by Ivanq
+; github.com/imachug/PDPy11
+
+		SST0=40000		; address of converted data
+		EXTRADATA=100000
+
+		SYSREG=177716	; system register (keyboard, memory pages)
+		OCTOUT=120056	; MKDOS print oct number from R0
+		DECOUT=120060	; MKDOS print decimal number from R0
+
+BEGIN:  MOV #100,@#177660	; block keyboard interrupt
+		MOV SP,STACK+2		; save stack pointer
+		MOV @#4,STOP+2		; save STOP vector
+		MOV #STOP,@#4		; set new STOP vector
+		MOV #1000,SP		; set stack
+
+		MOV #1330,@#177664	; set full screen mode
+
+		MOV #100000-MODULE,R0
+1:		CLRB MODULE-1(R1)			; clear memory and screen
+		SOB R0,1
+
+		MOV #HELLO,R1
+		MOV #200,R2
+		EMT 20
+
+		MOV @#120004,R0		; check MKDOS version
+		SUB #100473,R0		; 100000+315.
+		BPL 2
+			MOV #VERS,R1	; error
+			JMP PRINTERROR+4
+
+2:		CALL LOAD			; load and check S3M module
+		CALL INFO			; print info and set the song parameters
+		CALL FORMHEADER		; make SST0 header
+		CALL PLIST			; convert pattern numbers to pattern addresses
+		CALL CONVERTPATTERN	; convert patterns
+
+		MOV #EXTRADATA,R0
+		CMP OFFSETS,R0
+		BEQ 5				; if there is nothing to add
+			MOV #OFSTXT,R1
+			MOV #10,R3
+3:				MOVB (R1)+,(R2)+
+			SOB R3,3
+			MOV OFFSETS,R1
+			SUB R1,R0
+4:				MOVB (R1)+,(R2)+
+			SOB R0,4
+			CLR (R2)+
+
+5:		CALL SAVE
+
+		HALT
+
+
+
+;       the main program ends here
+
+
+; on STOP pressed
+
+STOP:	MOV #100000,@#4		; restore STOP vector
+STACK:  MOV #776,SP			; restore saved stack
+		MOV #1330,@#177664	; set default screen mode
+		CLR @#177660		; unblock keyboard interrupt
+;1:		BIT #100,@#SYSREG	; if a key is pressed
+;		BNE 1
+		HALT
+
+
+; convert pattern
+; input: R2 - where to store converted pattern data
+
+CONVERTPATTERN:
+		MOV SAMPLES,R1
+		ASL R1
+		ADD ORDERS,R1
+		ADD #MODULE+140,R1	; pointer to pattern parapointers
+
+0:		MOV R1,-(SP)
+		MOV (R1),R1			; pattern parapointer
+		ASL R1
+		ASL R1
+		ASL R1
+		ASL R1
+		ADD #MODULE,R1		; pointer to pattern in memory
+		CMP R1,#SST0
+		BLO 1
+			MOV #TOOFAR2,R1	; error
+			JMP PRINTERROR+4
+
+1:		INC CURRENTPATTERN
+		CLR CURRENTROW
+		MOV (R1)+,R0		; packed pattern size
+		ADD R1,R0			; end address
+		DEC R0
+
+		CLR PATBREAK		; sign of pattern break command
+
+11:		CMP R1,R0			; end of pattern data?
+		BGE 7
+		TST PATBREAK		; pattern break command in this row?
+		BNE 71
+
+		CLRB (R2)+			; clear row
+		CLRB (R2)+
+		CLRB (R2)+
+		CLRB (R2)+
+		CLRB (R2)+
+		INC CURRENTROW
+
+2:		MOVB (R1)+,R3
+		BNE 3				; if not end of row
+			CALL ANALIZEROW	; end of row
+			BR 11
+
+3:		BIT #40,R3			; is there a note and a sample?
+		BEQ 4
+			MOVB (R1)+,R4	; read note number
+			CMP R4,#-2		; note cut?
+			BNE 31
+				CALL NOTECUT
+				BR 4
+31:			CALL PROCESSNOTE
+
+4:		BIT #100,R3			; is there a volume?
+		BEQ 5
+			INC R1			; skip volume
+
+5:		BIT #200,R3			; is there a command an an info?
+		BEQ 6
+			CMPB (R1),#3	; pattern break?
+			BNE 51
+				INC PATBREAK	; set pattern break sign
+				BR 52
+51:			CMPB (R1),#17	; sample offset?
+			BNE 52
+				CALL SAMPLEOFFSET
+52:			ADD #2,R1		; skip the command and info
+
+6:		CMP R1,R0
+		BLO 2				; continue to read current row data
+
+7:		SUB #5,R2
+71:		MOV #-1,R0			; pattern end marker
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+
+		MOV (SP)+,R1
+		TST (R1)+			; next pattern pointer
+		DEC PATTERNS
+		BNE 0
+
+		MOVB R0,(R2)+		; song end marker
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+
+		BIT #1,R2			; make end address even
+		BEQ 72
+		CLRB (R2)+
+72:		RET
+
+; analize row that was just formed
+; input: R2 - pointer to the end of row
+
+ANALIZEROW:
+		TSTB -5(R2)				; check sample number on channel 1
+		BNE 2
+			TSTB -4(R2)			; check note on channel 1
+			BMI 1				; if note cut
+			MOVB -11(R2),-4(R2)	; copy previous note from channel 1
+			BPL 2
+1:				CLRB -4(R2)		; if the first row
+2:		TSTB -3(R2)				; check sample number on channel 2
+		BNE 4
+			TSTB -2(R2)			; check note on channel 2
+			BMI 3				; if note cut
+			MOVB -7(R2),-2(R2)	; copy previous note from channel 2
+			BPL 4
+3:				CLRB -2(R2)		; if the first row
+4:		RET
+
+; process note cut
+; input: R1 - pointer to S3M data
+;		 R2 - pointer to the end of current row in output ST0 data
+;		 R3 - code
+
+NOTECUT:
+		INC R1			; skip sample number
+		MOV R3,R5
+		BIC #177740,R5	; channel number
+		CMP R5,#2
+		BHI	1			; if channel number >2 then skip channel
+			ASL R5
+			SUB #4,R5	; negative offset in pattern data
+;			INC R5
+;			SUB #5,R5	; negative offset in pattern data
+			ADD R2,R5	; point to converted pattern data for this channel
+			MOVB #-1,(R5)	; store note cut
+1:		RET
+
+; process channel, note, instrument and store result
+; input: R1 - pointer to S3M data
+;		 R2 - pointer to the end of current row in output ST0 data
+;		 R3 - code
+;		 R4 - note number
+
+PROCESSNOTE:
+		MOVB (R1)+,R5		; read sample number
+		MOV R3,-(SP)
+		BIC #177740,R3		; channel number
+		CMP R3,#2
+		BHI	2				; if channel number >2 then skip channel
+			ASL R3
+			SUB #5,R3		; negative offset in pattern data
+;			INC R3
+;			SUB #6,R3		; negative offset in pattern data
+			ADD R2,R3		; point to converted pattern data for this channel
+
+			ASL R5
+			MOV SMPADR-2(R5),R5	; convert S3M sample number to SST0 sample number
+			MOVB R5,(R3)+	; store sample number
+
+			MOV R4,R5
+			ASR R5
+			ASR R5
+			ASR R5
+			ASR R5			; octave number
+			SUB #5,R5
+			NEG R5
+			BIC #177760,R4	; note number, 0 = C, 1 = C#,..
+			ADD #13,R4
+			NEG R4
+1:			ADD #14,R4
+			SOB R5,1
+			MOVB R4,(R3)	; store note number
+2:		MOV (SP)+,R3
+		RET
+
+; process sample offset
+; input: R1 - pointer to effect code in S3M pattern data
+;		 R2 - pointer to the end of current row in output ST0 data
+;		 R3 - code
+
+SAMPLEOFFSET:
+		BIC #177740,R3	; channel number
+		CMP R3,#2
+		BHI	7			; if channel number >2 then skip channel
+			MOV R3,R5
+			ASL R5
+			SUB #5,R5
+			ADD R2,R5	; point to converted pattern data for this channel
+			CMPB (R5),#1	; empty instrument?
+			BMI 7		; skip offset if the instrument is empty
+
+			MOV OFFSETS,R5		; pointer to the block of offsets
+			MOVB 1(R1),-(R5)	; store offset value
+			INC R3				; channel number from 1 to 3
+			MOVB R3,-(R5)		; store channel number
+			MOVB CURRENTROW,-(R5)
+			DECB (R5)
+			MOVB CURRENTPATTERN,-(R5)
+			MOV R5,OFFSETS
+
+7:		RET
+
+; form output file header
+
+FORMHEADER:
+		MOV #SM1TXT,R1
+		MOV #100,R2
+		EMT 20
+
+		MOV #SST0,R2
+		MOV #"SS",(R2)+
+		MOV #"T0",(R2)+
+		CLRB (R2)+
+		MOV #MODULE,R1
+1:		MOVB (R1)+,(R2)+	; copy song name
+		BNE 1
+
+		; take author, group, year, comment from sample text
+		MOV #SMPADR,R1
+		CLR R0
+11:			INC R0
+			CMP R0,SAMPLES	; no more samples?
+			BLE 12
+				CLRB (R2)+	; skip
+				BR 14
+12:			MOV (R1)+,R3	; pointer to sample
+			ADD #60,R3		; pointer to sample text
+13:			MOVB (R3)+,(R2)+
+			BNE 13
+14:		CMP R0,#4
+		BNE 11
+
+		MOV #SMPADR,R1
+		MOV SAMPLES,R0
+		BEQ 3
+2:			MOV (R1)+,R3		; get sample header address
+			TSTB (R3)			; empty sample?
+			BEQ 3
+			CMPB (R3),#1		; sample type
+			BNE PRINTERROR
+			INC NSMPLS			; usual samples counter
+			CALL PROCSMP		; process sample
+			MOV CURSMP,-2(R1)	; S3M sample number -> SST0 sample number
+			INC CURSMP
+		SOB R0,2				; next sample
+3:		CLRB (R2)+				; marker between usual and drum samples
+
+		TST R0					; any drum samples?
+		BEQ 6
+			MOV R1,-(SP)		; save sample adresses table pointer
+			MOV R2,-(SP)		; save converted data pointer
+			MOV #SM2TXT,R1		; print "drum samples"
+			MOV #100,R2
+			EMT 20	
+			MOV (SP)+,R2
+			MOV (SP)+,R1 
+
+4:			MOV (R1)+,R3		; get sample header address
+			TSTB (R3)			; empty sample?
+			BEQ 5				; skip
+			CMPB (R3),#1		; sample type
+			BNE PRINTERROR
+			INC NDRUMS			; drum samples counter
+			CALL PROCSMP		; process sample
+			MOV CURSMP,-2(R1)	; S3M sample number -> SST0 sample number
+			INC CURSMP
+5:		SOB R0,4
+6:		CLRB (R2)+				; end of drum samples list
+
+		CLRB (R2)+				; make pointer even
+		BIC #1,R2
+
+		MOV VOLUME,(R2)
+		ASL (R2)+
+		MOV BPM,(R2)+
+
+		RET
+
+; print error message and quit
+
+PRINTERROR:
+		MOV #TYPERR,R1	; error
+		MOV #100,R2
+		EMT 20
+		JMP STOP
+
+; process sample
+; input:  R2 - pointer to converted data
+;		  R3 - pointer to S3M sample
+; output: R2 - pointer to the next converted data
+
+PROCSMP:
+		CMP 114(R3),#"SC"
+		BNE 3
+		CMP 116(R3),#"RS"
+		BNE 3
+
+		INC R3				; filename pointer
+		MOV R3,R4
+		ADD #14,R4			; MS-DOS filename size
+
+1:		TSTB -(R4)			; 0 symbol?
+		BEQ 2
+		CMPB (R4),#40		; space symbol?
+		BNE 3
+2:		CMP R3,R4			; no more symbols?
+		BNE 1
+			MOV #EMPNAM,R1	; error
+			BR PRINTERROR+4
+
+3:		MOV R0,-(SP)		; save loop counter
+		MOV R1,-(SP)		; save sample adresses table pointer
+		MOV R2,R5			; save converted data pointer
+		SUB R3,R4
+		INC R4
+
+4:		MOVB (R3)+,(R5)+	; copy filename
+		SOB R4,4
+		CLRB (R5)+			; end of text string
+
+		MOV #40,R0
+		EMT 16
+		MOV R2,R1			; text string address
+		MOV #100,R2
+		EMT 20				; print filename
+
+		MOV R5,R2
+		MOV (SP)+,R1
+		MOV (SP)+,R0
+		RET
+
+
+; form playlist subroutine
+; input: R2 - where to store converted playlist
+
+PLIST:	MOV ORDERS,R0		; length of the orders list, 254 maximum
+		MOV #MODULE+140,R4	; pointer to order list
+1:		MOVB (R4)+,R3
+		BIC #177400,R3
+		CMP R3,#254.		; skip
+		BEQ 3
+		CMP R3,#255.		; end of list
+		BEQ 4
+		INC R3
+		MOVB R3,(R2)+
+3:		SOB R0,1
+
+4:		CLRB (R2)+			; end of order list
+		MOV #-1,R0
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		MOVB R0,(R2)+
+		RET
+
+
+; save ST0 file
+; input: R2 - end address
+
+SAVE:	MOV @#306,R1		; addrress of MKDOS EMT 36 data block
+		MOV #2,(R1)		  	; 3 means read, 2 means write
+		MOV #SST0,R0
+		MOV R0,2(R1)		; start addres to write on disk
+		SUB R0,R2
+		MOV R2,4(R1)		; file size to write on disk
+		MOV R1,R2
+		ADD #5,R2			; pointer to file name
+		MOV R2,R0
+		ADD #13,R0
+1:		INC R2
+		CMP R2,R0
+		BGE 2
+		CMPB (R2),#"."		; find file extention
+		BNE 1
+2:		MOVB #".",(R2)+
+		MOVB #"S",(R2)+
+		MOVB #"T",(R2)+
+		MOVB #"0",(R2)+
+
+		EMT 36				; write to disk
+
+		TSTB 1(R1)
+		BNE 3
+		MOV #SAVED,R1
+		MOV #100,R2
+		EMT 20
+
+3:		RET
+
+; load S3M module and check its format
+
+LOAD:	CLR R5
+		CALL @120016(R5)	; MKDOS init disk driver (returns block of parameters address in R3)
+		MOV R3,HDDBLK
+		MOVB DRIVE,34(R3)	; switch to current drive
+		CLR R5
+		CALL @120024(R5)	; MKDOS read catalog of files from disk (RDDIR)
+		BCC 2
+			MOV #CATERR,R1	; error
+1:			BR PRINTERROR+4
+2:		MOV CATAL,R3		; catalog address
+
+		MOV #INPUT,R1		; prompt to input file name
+		MOV #200,R2
+		EMT 20
+
+		MOV @#306,R1		; addrress of MKDOS EMT 36 data block
+		MOV #3,(R1)		  	; 3 means read, 2 means write
+		MOV #MODULE,2(R1)	; set addres to load file
+		ADD #6,R1			; pointer to file name
+		MOV R1,R2
+		MOV #7,R0
+3:		CLR	(R2)+			; fill file name by zeros
+		SOB R0,3
+		MOV #5016,R2
+		CLR @#177660		; unblock keyboard interrupt
+		EMT 10				; input file name
+		MOV #100,@#177660	; block keyboard interrupt
+		CLRB -(R1)
+
+;		MOV CATAL,R3		; catalog address
+		CLR R5
+		CALL @120026(R5)	; MKDOS search file in catalog
+		BCC 4
+			MOV #NOTFND,R1	; error message
+			BR 1
+
+4:		MOV 20(R3),R0		; file's start block on disk
+		MOV 26(R3),R1		; file's size in bytes
+		CMP R1,#40000-MODULE
+		BLO 41
+			MOV #40000-MODULE,R1	; S3M file is to big, load first 16 kb only
+41:		CLC
+		ROR R1
+		MOV #MODULE,R2
+		CLR R5
+		CALL @120022(R5)	; MKDOS read by bloack number (INOUT)
+		BCC 5
+			MOV #LERROR,R1	; loading error
+			BR 1
+
+5:		CMP MODULE+54,#"SC"	; check for "SCRM" string
+		BNE 6
+		CMP MODULE+56,#"RM"
+		BEQ 7
+6:			MOV #FORMAT,R1	; error
+			BR 1
+; curiously S3M format store non zero values even for 0 samples, 0 patterns, 0 orders
+7:		RET
+
+
+; print info
+
+INFO:	MOV #TITLE,R1		; print title
+		MOV #34,R2
+		EMT 20
+		MOV #MODULE,R1
+		MOV #100,R2
+		EMT 20
+
+		MOV #PATTXT,R1		; print number of patterns
+		MOV #100,R2
+		EMT 20
+		MOV MODULE+44,R0	; number of patterns
+		MOV R0,PATTERNS
+		CALL @DECOUT
+
+		MOV #ORDTXT,R1		; print number of orders, 254 maximum
+		MOV #100,R2
+		EMT 20
+		MOV MODULE+40,R0	; number of orders
+		MOV R0,ORDERS
+		CALL @DECOUT
+
+		MOV #BPMTXT,R1		; print BPM
+		MOV #100,R2
+		EMT 20
+		MOVB MODULE+62,R0
+		BIC #177400,R0
+		MOV R0,BPM
+		CALL @DECOUT
+
+		MOV #VOLTXT,R1		; print volume
+		MOV #100,R2
+		EMT 20
+		MOVB MODULE+60,R0
+		BIC #177400,R0
+		MOV R0,VOLUME
+		CALL @DECOUT
+		MOV #VOLWAR,R1
+		MOV #100,R2
+		EMT 20
+
+		MOV #SMPTXT,R1		; print number of samples
+		MOV #100,R2
+		EMT 20
+		MOV MODULE+42,R0	; number of samples
+		MOV R0,SAMPLES
+		CALL @DECOUT
+
+		; calculate mixing loop duration from BPM
+		MOV #46875.,R1		; mixing rate * 3,75.
+		MOV BPM,R2			
+		CALL DIVIDE			; R0=R1/R2	
+		ASL R0
+		ASL R0
+		MOV R0,TEMPO
+
+		MOV #MINSIZ,R1		; print recommemded sample size
+		MOV #100,R2
+		EMT 20
+		MOV R0,TEMPO
+		CALL @DECOUT
+		MOV #12,R0
+		EMT 16
+
+		MOV SAMPLES,R0
+		BEQ 3
+		MOV #MODULE+140,R1
+		ADD ORDERS,R1		; list of sample pointers
+		MOV #SMPADR,R2
+		MOV #MODULE,R4
+		MOV #SST0,R5
+1:		MOV (R1)+,R3
+		ASL R3
+		ASL R3
+		ASL R3
+		ASL R3
+		ADD R4,R3			; pointer to sample in memory
+		CMP R3,R5
+		BLO 2
+			SUB SAMPLES,R0
+			NEG R0
+			CALL @DECOUT
+			MOV #TOOFAR,R1	; error
+			JMP PRINTERROR+4
+2:		MOV R3,(R2)+
+		SOB R0,1
+
+3:		RET
+
+
+
+; divide R1/R2, returns result in R0
+
+DIVIDE:	CLR R3
+		SEC
+		ROL R1
+1:		ROL R3
+		CMP R3,R2
+		BLO 2
+		SUB R2,R3
+2:		ROL R0
+		ASL R1
+		BNE 1
+		COM R0
+		RET
+
+
+VERS:	.BYTE 12 .ASCIZ " MKDOS 3.15 or higher required"
+HELLO:	.ASCII " S3M to SST0 converter v0.2 (c) Manwe/SandS 2018-2019" .BYTE 12, 0
+INPUT:	.ASCIZ " Input music file name: "
+CATERR:	.BYTE 12 .ASCIZ " can't read disk catalog"
+NOTFND:	.BYTE 12 .ASCIZ " file not found"
+LERROR:	.BYTE 12 .ASCIZ " loading error"
+FORMAT:	.BYTE 12 .ASCIZ " not Scream Tracker 3 format"
+TOOFAR:	.BYTE 12 .ASCIZ " sample header's offset is too long"
+TYPERR:	.BYTE 12 .ASCIZ " unsupported sample type"
+EMPNAM:	.BYTE 12 .ASCIZ " sample has empty file name"
+TOOFAR2: .BYTE 12 .ASCIZ " pattern header's offset is too long"
+TITLE:	.BYTE 12
+		.BYTE 12 .ASCIZ "    title: "
+VOLTXT:	.BYTE 12 .ASCIZ "   volume:"
+VOLWAR:	.ASCIZ " (42 is clipping-safe value)"
+BPMTXT:	.BYTE 12 .ASCIZ "      BPM:"
+PATTXT:	.BYTE 12 .ASCIZ " patterns:"
+ORDTXT:	.BYTE 12 .ASCIZ "   orders:"
+SMPTXT:	.BYTE 12 .ASCIZ "  samples:"
+MINSIZ:	.BYTE 12 .ASCIZ "  minimal recommended sample size:"
+SM1TXT:	.BYTE 12 .ASCII " 12500 Hz usual samples:" .BYTE 12,0
+SM2TXT:	.BYTE 12 .ASCII " 25000 Hz drum samples:" .BYTE 12,0
+SAVED:	.BYTE 12,12 .ASCII " saved!" .BYTE 12,0
+OFSTXT:	.ASCIZ "OFFSETS"
+
+		.EVEN
+
+HDDBLK: .WORD 136712	; block of parameters for HDD driver
+CATAL:	.WORD 126000	; disk catalog adress
+DRIVE:	.WORD 0			; current disk drive id
+
+NSMPLS:	.WORD 0			; count of usual samples
+NDRUMS:	.WORD -1		; count of drums samples
+TEMPO:	.WORD 2700
+
+VOLUME: .WORD	96.		; sound volume
+BPM:	.WORD	125.	; beats per minute
+SAMPLES: .WORD 0		; number of samples
+PATTERNS: .WORD 0		; number of patterns
+ORDERS:	.WORD 0			; number of orders
+
+CURSMP: .WORD 1			; current sample number
+PATBREAK: .WORD 0		; sign of pattern break command on curren row
+
+CURRENTPATTERN: .WORD 0	; number of processing pattern
+CURRENTROW: .WORD 0		; number of processing row
+OFFSETS: .WORD EXTRADATA	; address of sample offsets block
+
+SMPADR:	.BLKW 100		; address of each sample
+
+MODULE:
+
+
+ 	.END
+
+; end of file
+
