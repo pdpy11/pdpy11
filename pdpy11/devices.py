@@ -200,7 +200,7 @@ def is_device_path(path: str):
 
 
 def is_absolute_path(path: str):
-    return os.path.abspath(path) or is_device_path(path)
+    return path == os.path.abspath(path) or is_device_path(path)
 
 
 def open_device(path, mode="rb", data_format=None):
@@ -232,4 +232,4 @@ def resolve_relative_path(relative_path: str, base_file_path: str):
     if is_absolute_path(relative_path):
         return relative_path
     else:
-        return os.path.abspath(os.path.join(os.path.dirname(base_file_path), relative_path))
+        return os.path.normpath(os.path.join(os.path.dirname(base_file_path), relative_path))
