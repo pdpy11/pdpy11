@@ -539,33 +539,33 @@ def test_insert_file(fs):
 
 
 @pytest.mark.parametrize(
-    "suffix,input_file_name,output_file_name,code_prefix",
+    "suffix,input_file_name,output_file_name,file_format,code_prefix",
     [
-        ("make_bin", "test.mac", "test.bin", b"\x00\x02\x02\x00"),
-        ("make_bin 'test2.bin'", "test.mac", "test2.bin", b"\x00\x02\x02\x00"),
-        ("make_bin", "dir/test.mac", "dir/test.bin", b"\x00\x02\x02\x00"),
+        ("make_bin", "test.mac", "test.bin", "bin", b"\x00\x02\x02\x00"),
+        ("make_bin 'test2.bin'", "test.mac", "test2.bin", "bin", b"\x00\x02\x02\x00"),
+        ("make_bin", "dir/test.mac", "dir/test.bin", "bin", b"\x00\x02\x02\x00"),
 
-        ("make_raw", "test.mac", "test", b""),
-        ("make_raw 'test2.raw'", "test.mac", "test2.raw", b""),
-        ("make_raw", "dir/test.mac", "dir/test", b""),
+        ("make_raw", "test.mac", "test", "raw", b""),
+        ("make_raw 'test2.raw'", "test.mac", "test2.raw", "raw", b""),
+        ("make_raw", "dir/test.mac", "dir/test", "raw", b""),
 
         # Must not guess file type from extension
-        ("make_bin 'test2.raw'", "test.mac", "test2.raw", b"\x00\x02\x02\x00"),
-        ("make_raw 'test2.bin'", "test.mac", "test2.bin", b""),
+        ("make_bin 'test2.raw'", "test.mac", "test2.raw", "bin", b"\x00\x02\x02\x00"),
+        ("make_raw 'test2.bin'", "test.mac", "test2.bin", "raw", b""),
 
         # Source file without .mac extension
-        ("make_bin", "test", "test.bin", b"\x00\x02\x02\x00")
+        ("make_bin", "test", "test.bin", "bin", b"\x00\x02\x02\x00")
     ]
 )
-def test_binaries(fs, suffix, input_file_name, output_file_name, code_prefix):
+def test_binaries(fs, suffix, input_file_name, output_file_name, file_format, code_prefix):
     fs.create_file(output_file_name)
-    assert compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
+    assert compile_and_emit(input_file_name, "mov r1, r2\n" + suffix) == (True, {"format": file_format, "path": output_file_name})
     with open(output_file_name, "rb") as f:
         assert f.read() == code_prefix + b"B\x10"
 
 
 def test_emit(fs):
-    assert not compile_and_emit("test.mac", "mov r1, r2")
+    assert compile_and_emit("test.mac", "mov r1, r2") == (False, None)
 
     fs.create_file("test.bin", st_mode=0)
     with util.expect_error("io-error"):
@@ -573,23 +573,23 @@ def test_emit(fs):
 
 
 @pytest.mark.parametrize(
-    "suffix,input_file_name,output_file_name,test_result_file_name",
+    "suffix,input_file_name,output_file_name,file_format,test_result_file_name",
     [
-        ("make_wav", "test.mac", "test.wav", "test.wav"),
-        ("make_wav", "test", "test.wav", "test.wav"),
-        ("make_wav 'test2.wav'", "test.mac", "test2.wav", "test2.wav"),
-        ("make_wav 'test2.wav', 'test2'", "test.mac", "test2.wav", "test2.wav"),
-        ("make_wav 'test2'", "test.mac", "test2", "test2.wav"),
-        ("make_wav", "dir/test.mac", "dir/test.wav", "test.wav"),
+        ("make_wav", "test.mac", "test.wav", "bk_wav", "test.wav"),
+        ("make_wav", "test", "test.wav", "bk_wav", "test.wav"),
+        ("make_wav 'test2.wav'", "test.mac", "test2.wav", "bk_wav", "test2.wav"),
+        ("make_wav 'test2.wav', 'test2'", "test.mac", "test2.wav", "bk_wav", "test2.wav"),
+        ("make_wav 'test2'", "test.mac", "test2", "bk_wav", "test2.wav"),
+        ("make_wav", "dir/test.mac", "dir/test.wav", "bk_wav", "test.wav"),
 
-        ("make_turbo_wav", "test.mac", "test.wav", "test.turbo.wav"),
-        ("make_turbo_wav 'test2.wav'", "test.mac", "test2.wav", "test2.turbo.wav"),
-        ("make_turbo_wav", "dir/test.mac", "dir/test.wav", "test.turbo.wav")
+        ("make_turbo_wav", "test.mac", "test.wav", "bk_turbo_wav", "test.turbo.wav"),
+        ("make_turbo_wav 'test2.wav'", "test.mac", "test2.wav", "bk_turbo_wav", "test2.turbo.wav"),
+        ("make_turbo_wav", "dir/test.mac", "dir/test.wav", "bk_turbo_wav", "test.turbo.wav")
     ]
 )
-def test_wavs1(fs, suffix, input_file_name, output_file_name, test_result_file_name):
+def test_wavs1(fs, suffix, input_file_name, output_file_name, file_format, test_result_file_name):
     fs.create_file(output_file_name)
-    assert compile_and_emit(input_file_name, "mov r1, r2\n" + suffix)
+    assert compile_and_emit(input_file_name, "mov r1, r2\n" + suffix) == (True, {"format": file_format, "path": output_file_name})
     with open(output_file_name, "rb") as f:
         assert f.read() == resources[test_result_file_name]
 
