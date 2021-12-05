@@ -121,7 +121,7 @@ def main_cli():
                     print(f"File '{output_file}' was written in format '{output_format}'", file=sys.stderr)
 
 
-        if args.lst is not None:
+        if args.lst is not False:
             if emitted_file is None:
                 print(f"No listing file was generated because no output file was specified", file=sys.stderr)
             else:
