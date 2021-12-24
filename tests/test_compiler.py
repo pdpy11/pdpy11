@@ -380,6 +380,21 @@ def test_addressing():
     expect_same("clr <-57>", "clr -57")
 
 
+@pytest.mark.parametrize(
+    "operand",
+    [
+        "(1)+", "(x)+\nx = 1",
+        "(1)-", "(x)-\nx = 1",
+        "@@(1)", "@@(x)\nx = 1",
+        "##(1)", "##(x)\nx = 1",
+        "1(2)", "x(y)\nx = 1\ny = 2"
+    ]
+)
+def test_invalid_addressing(operand):
+    with util.expect_error("unexpected-value"):
+        compile(f"clr {operand}")
+
+
 def test_branch():
     compare_with_old("br . + 4")
     compare_with_old("br 1\n1:")

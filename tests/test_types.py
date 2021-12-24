@@ -16,7 +16,7 @@ def test_repr():
             mov #(1 + 2), r1 ;
             inc -(r1) ;
             dec (r2)+ ;
-            mov #1, 4(sp) ;
+            mov #1, 4 $ sp ;
             .word <12> ;
             mov #'x, r0 ;
             mov #"ab, r0
@@ -31,3 +31,5 @@ def test_repr():
         repr(parse("test.mac", source)).replace(" ", "")
         == "<test.mac>{" + source.replace(" ", "").replace("\n", "") + "}"
     )
+
+    assert repr(parse("test.mac", "mov #1, 4(sp)") == "<test.mac>{ mov #1, 4$sp }")

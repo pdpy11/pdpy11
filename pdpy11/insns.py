@@ -70,20 +70,20 @@ class RegisterModeOperandStub:
         # great for function calls, but terrible for index addressing. Hence
         # we're 'hoisting' registers up here.
         def hoist(token):
-            if isinstance(token, operators.InfixOperator):
+            if isinstance(token, operators.InfixOperator) and not isinstance(token, operators.call):
                 token.rhs = hoist(token.rhs)
-                if isinstance(token.rhs, operators.call) and is_register(token.rhs.operand):
-                    register = token.rhs.operand
+                if isinstance(token.rhs, operators.call) and is_register(token.rhs.rhs):
+                    register = token.rhs.rhs
                     ctx_end = token.ctx_end
-                    token.rhs = token.rhs.callee
+                    token.rhs = token.rhs.lhs
                     token.ctx_end = token.rhs.ctx_end
                     return operators.call(token.ctx_start, ctx_end, token, register)
             elif isinstance(token, operators.PrefixOperator):
                 token.operand = hoist(token.operand)
-                if isinstance(token.operand, operators.call) and is_register(token.operand.operand):
-                    register = token.operand.operand
+                if isinstance(token.operand, operators.call) and is_register(token.operand.rhs):
+                    register = token.operand.rhs
                     ctx_end = token.ctx_end
-                    token.operand = token.operand.callee
+                    token.operand = token.operand.lhs
                     token.ctx_end = token.operand.ctx_end
                     return operators.call(token.ctx_start, ctx_end, token, register)
             return token
@@ -138,17 +138,17 @@ class RegisterModeOperandStub:
 
         # Yes, I am aware that the nesting is broken here, but that's thanks to
         # hoisting and that's the least hacky way I had come up with.
-        if isinstance(operand, operators.call) and isinstance(operand.callee, operators.deferred):
-            register = try_register_from_symbol(operand.operand)
+        if isinstance(operand, operators.call) and isinstance(operand.lhs, operators.deferred):
+            register = try_register_from_symbol(operand.rhs)
             if register is not None:
                 # Index deferred
-                return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee.operand, bitness=16, unsigned=False)))
+                return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.lhs.operand, bitness=16, unsigned=False)))
 
         if isinstance(operand, operators.call):
-            register = try_register_from_symbol(operand.operand)
+            register = try_register_from_symbol(operand.rhs)
             if register is not None:
                 # Index
-                return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.callee, bitness=16, unsigned=False)))
+                return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.lhs, bitness=16, unsigned=False)))
 
         if isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression):
             register = try_register_from_symbol(operand.operand.expr)
@@ -222,9 +222,6 @@ class OffsetOperandStub:
                     token.lhs = fixup_label(token.lhs)
                     token.rhs = fixup_label(token.rhs)
                 elif isinstance(token, (operators.PrefixOperator, operators.PostfixOperator)):
-                    token.operand = fixup_label(token.operand)
-                elif isinstance(token, operators.call):
-                    token.callee = fixup_label(token.callee)
                     token.operand = fixup_label(token.operand)
                 elif isinstance(token, Number) and token.representation[-1] != ".":
                     if fixup_active:

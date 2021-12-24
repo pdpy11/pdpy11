@@ -144,15 +144,22 @@ def operator(signature, precedence, associativity, awaited=True, pure=True, toke
 
 
 # Operators precedences are mostly copied from C
+@operator("x+", precedence=2, associativity="left", pure=False, token=True)
+def postadd(token, x):
+    reports.error(
+        "unexpected-value",
+        (token.ctx_start, token.ctx_end, "The '...+' operator cannot be used with a value. Only syntax like '(r0)+' is allowed.")
+    )
+    return x
 
-@operator("x+", precedence=2, associativity="left")
-def postadd(x):
-    raise NotImplementedError()
 
-
-@operator("x-", precedence=2, associativity="left")
-def postsub(x):
-    raise NotImplementedError()
+@operator("x-", precedence=2, associativity="left", pure=False, token=True)
+def postsub(token, x):
+    reports.error(
+        "unexpected-value",
+        (token.ctx_start, token.ctx_end, "The '...-' operator cannot be used with a value.")
+    )
+    return x
 
 
 @operator("+x", precedence=2, associativity="left", awaited=False)
@@ -260,27 +267,29 @@ def or2(a: int, b: int) -> int:
     return a | b
 
 
-@operator("#x", precedence=15, associativity="left")
-def immediate(x):
-    raise NotImplementedError()
+@operator("#x", precedence=15, associativity="left", pure=False, token=True)
+def immediate(token, x):
+    reports.error(
+        "unexpected-value",
+        (token.ctx_start, token.ctx_end, "'#...' cannot be used in this context. You should probably remove the hash sign.")
+    )
+    return x
 
 
-@operator("@x", precedence=15, associativity="left")
-def deferred(x):
-    raise NotImplementedError()
+@operator("@x", precedence=15, associativity="left", pure=False, token=True)
+def deferred(token, x):
+    reports.error(
+        "unexpected-value",
+        (token.ctx_start, token.ctx_end, "'@...' cannot be used as a value. A common reason for this error is using '#@' instead of '@#'.")
+    )
+    return x
 
 
-class call(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, callee: ExpressionToken, operand: ExpressionToken):
-        self.callee: ExpressionToken = callee
-        self.operand: ExpressionToken = operand
-
-    def __repr__(self):
-        return f"{self.callee!r}({self.operand!r})"
-
-    def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and (self.callee, self.operand) == (rhs.callee, rhs.operand)
-
-    def resolve(self, state):
-        raise NotImplementedError(f"call.resolve: {self!r}")
+# Yes, I'm using Haskell syntax, sue me
+@operator("x $ x", precedence=1, associativity="right", pure=False, token=True)
+def call(token, callee, operand):
+    reports.error(
+        "unexpected-value",
+        (token.ctx_start, token.ctx_end, "A construct of kind 'A(B)' is only reasonable in context like '1(r0)'.")
+    )
+    return operand
