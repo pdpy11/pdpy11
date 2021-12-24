@@ -3,6 +3,12 @@ import itertools
 import re
 
 
+WARNING_CLASSES = {
+    "all": ["implicit-operand", "not-implemented", "suspicious-name", "excess-quote", "missing-newline", "missing-whitespace", "meta-typo", "legacy-deferred", "implicit-index", "label-fixup", "excess-hash"],
+    "default": ["implicit-operand", "not-implemented", "label-fixup", "excess-hash"]
+}
+
+
 class Report:
     def __init__(self, text: str, raw_text: str):
         self.text: str = text
@@ -76,6 +82,36 @@ class handle_reports:
                     raise UnrecoverableError()
 
         return swallow
+
+    def __call__(self, priority, identifier, *reports):
+        self.obj(priority, identifier, *reports)
+
+
+class FilterHandler:
+    def __init__(self, nested_handler, warning_control):
+        self.nested_handler = nested_handler
+        self.warning_control = warning_control
+
+    def __enter__(self):
+        if hasattr(self.nested_handler, "__enter__"):
+            self.nested_handler = self.nested_handler.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        if hasattr(self.nested_handler, "__exit__"):
+            return self.nested_handler.__exit__()
+        else:
+            return False
+
+    def __call__(self, priority, identifier, *reports):
+        if priority is warning:
+            if identifier in self.warning_control:
+                if not self.warning_control[identifier]:
+                    return
+            else:
+                if identifier not in WARNING_CLASSES["default"]:
+                    return
+        self.nested_handler(priority, identifier, *reports)
 
 
 class BareHandler:
@@ -206,7 +242,7 @@ def emit_report(priority, identifier, *reports):
         raise Exception(f"Unhandled report: {identifier}")  # pragma: no cover
 
     handler = handle_reports.handlers_stack[-1]
-    handler.obj(priority, identifier, *reports)
+    handler(priority, identifier, *reports)
 
     if priority in (error, critical):
         handler.is_error_condition = True

@@ -28,6 +28,8 @@ argparser.add_argument("--lst", action="store_true", help="generate a listing fi
 argparser.add_argument("--charset", metavar="encoding", type=str, default="bk", help="output string encoding for .ascii and other directives (default: bk)")
 argparser.add_argument("--report-format", choices=["graphical", "bare"], default="graphical", help="format in which error messages and warnings are printed")
 
+argparser.add_argument("-W", metavar="xxx", dest="warnings", action="append", type=str, help="enable warning xxx, use '-Wno-xxx' to disable, '-Wall' to enable all. Only few critical warnings are enabled by default (-Wdefault)")
+
 argparser.add_argument("--version", "-v", action="version", version=f"%(prog)s {version} running on {platform.python_implementation()} {platform.python_version()}")
 
 
@@ -40,6 +42,28 @@ def main_cli():
     except LookupError:
         print(f"'{args.charset}' encoding is unsupported", file=sys.stderr)
         sys.exit(1)
+
+
+    warnings = args.warnings or []
+    warning_control = {}
+    for warning_name in warnings:
+        if warning_name.startswith("no-"):
+            warning_name = warning_name[3:]
+            value = False
+        else:
+            value = True
+        if warning_name in reports.WARNING_CLASSES:
+            warning_names = reports.WARNING_CLASSES[warning_name]
+        else:
+            warning_names = [warning_name]
+        for warning_name in warning_names:
+            warning_control[warning_name] = value
+
+
+    report_handler = reports.FilterHandler({
+        "graphical": reports.GraphicalHandler,
+        "bare": reports.BareHandler
+    }[args.report_format](), warning_control)
 
 
     error = False
@@ -63,11 +87,6 @@ def main_cli():
 
     if error:
         sys.exit(1)
-
-    report_handler = {
-        "graphical": reports.GraphicalHandler,
-        "bare": reports.BareHandler
-    }[args.report_format]()
 
     try:
         with reports.handle_reports(report_handler):
