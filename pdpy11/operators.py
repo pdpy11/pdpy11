@@ -59,6 +59,7 @@ class UnaryOperator(ExpressionToken):
     char: str
     awaited: bool
     token: bool
+    pure: bool
     return_type: type
 
     # pylint: disable=arguments-differ

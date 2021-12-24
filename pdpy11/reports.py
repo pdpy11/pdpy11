@@ -1,4 +1,3 @@
-from collections import namedtuple
 import itertools
 import re
 

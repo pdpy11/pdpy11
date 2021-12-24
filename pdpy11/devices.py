@@ -60,6 +60,7 @@ def materialize_file(data: bytes, suffix: str=None):
 @register_device("~speaker", "wb", input_formats=["wav"])
 def speaker(audio_data):
     # pragma: no cover
+    # pylint: disable=import-outside-toplevel, import-error
 
     if os.name == "nt":
         # On Windows, we use a built-in module
@@ -87,7 +88,7 @@ def speaker(audio_data):
         # On macOS, there's afplay command which we use as a fallback
         with materialize_file(audio_data, ".wav") as file_name:
             print("Playing wave audio via afplay")
-            subprocess.run(["afplay", "-q", "1", file_name])
+            subprocess.run(["afplay", "-q", "1", file_name], check=True)
         return
 
     # On Linux with GTK, we use 'gi' module
@@ -139,56 +140,56 @@ def speaker(audio_data):
 
     # On Linux with ALSA we use aplay
     try:
-        subprocess.run(["aplay", "--version"])
+        subprocess.run(["aplay", "--version"], check=True)
     except FileNotFoundError:
         pass
     else:
         print("Playing wave audio via ALSA")
-        subprocess.run(["aplay", "-"], input=audio_data)
+        subprocess.run(["aplay", "-"], input=audio_data, check=True)
         return
 
     # On Linux with PulseAudio we use paplay
     try:
-        subprocess.run(["paplay", "--version"], input=audio_data)
+        subprocess.run(["paplay", "--version"], input=audio_data, check=True)
     except FileNotFoundError:
         pass
     else:
         print("Playing wave audio via PulseAudio")
         with materialize_file(audio_data, ".wav") as file_name:
-            subprocess.run(["paplay", file_name])
+            subprocess.run(["paplay", file_name], check=True)
         return
 
     # On Linux and Cygwin with SOX we use it
     try:
-        subprocess.run(["sox", "--version"], input=audio_data)
+        subprocess.run(["sox", "--version"], input=audio_data, check=True)
     except FileNotFoundError:
         pass
     else:
         print("Playing wave audio via SOX")
         with materialize_file(audio_data, ".wav") as file_name:
-            subprocess.run(["sox", file_name, "-d"])
+            subprocess.run(["sox", file_name, "-d"], check=True)
         return
 
     # If ffplay is available, we use it
     try:
-        subprocess.run(["ffplay", "--version"])
+        subprocess.run(["ffplay", "--version"], check=True)
     except FileNotFoundError:
         pass
     else:
         print("Playing wave audio via ffmpeg")
         with materialize_file(audio_data, ".wav") as file_name:
-            subprocess.run(["ffplay", file_name])
+            subprocess.run(["ffplay", file_name], check=True)
         return
 
     # Otherwise use xdg-open to open the default program for WAWs on this system
     try:
-        subprocess.run(["xdg-open", "--version"])
+        subprocess.run(["xdg-open", "--version"], check=True)
     except FileNotFoundError:
         pass
     else:
         print("Playing wave audio via xdg-open")
         with materialize_file(audio_data, ".wav") as file_name:
-            subprocess.run(["xdg-open", file_name])
+            subprocess.run(["xdg-open", file_name], check=True)
         return
 
     print("Speaker output is not supported on your system.")
@@ -212,7 +213,9 @@ def open_device(path, mode="rb", data_format=None):
     """
 
     if not is_device_path(path):
-        return open(path, mode)
+        # 'mode' can only be 'rb' or 'wb', so 'encoding' is useless, but pylint
+        # can't infer this
+        return open(path, mode)  # pylint: disable=unspecified-encoding
 
     name = path[1:].split()[0]
 

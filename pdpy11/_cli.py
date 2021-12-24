@@ -56,8 +56,8 @@ def main_cli():
             warning_names = reports.WARNING_CLASSES[warning_name]
         else:
             warning_names = [warning_name]
-        for warning_name in warning_names:
-            warning_control[warning_name] = value
+        for new_warning_name in warning_names:
+            warning_control[new_warning_name] = value
 
 
     report_handler = reports.FilterHandler({
@@ -142,7 +142,7 @@ def main_cli():
 
         if args.lst is not False:
             if emitted_file is None:
-                print(f"No listing file was generated because no output file was specified", file=sys.stderr)
+                print("No listing file was generated because no output file was specified", file=sys.stderr)
             else:
                 lst_file = emitted_file["path"]
                 if lst_file.endswith("." + emitted_file["format"]):
