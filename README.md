@@ -20,6 +20,8 @@ $ pip3 install pdpy11
 
 (some modern systems use `pip` instead of `pip3` for Python 3 packages)
 
+On Windows, installing via pip works too, but pay attention to any warnings. If pip says anything along the lines of `The script pdpy11.exe is installed in '...' which is not on PATH`, add the path pip mentions to the PATH variable. On newer Windows, this can be done by searching for 'Edit the system environment variables' in the Start menu and clicking through 'Environment Variables...', then 'User variables for ...' or 'System variables' depending on whether you want to install the compiler for a single user or globally, followed by 'Path', and adding the path to the end of the list.
+
 
 ## Licensing
 
