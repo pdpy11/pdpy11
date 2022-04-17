@@ -27,7 +27,7 @@ If you're using Sublime Text, you might also want to install various utilities f
 
 ## Licensing
 
-PDPy11 is licensed under GNU General Public License version 3 (which is attached to PDPy11 in 'LICENSE' file), or (at your opinion) any later version.
+PDPy11 is licensed under GNU General Public License version 3 (which is attached to PDPy11 in 'LICENSE' file), or (at your option) any later version.
 
 
 ## Development
