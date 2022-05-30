@@ -6,7 +6,7 @@ from . import reports
 from .types import ExpressionToken
 
 
-def wrap_unpure(expr, invoke):
+def wrap_impure(expr, invoke):
     def fn(*args):
         expr.value = invoke(*args)
         return expr.value
@@ -39,7 +39,7 @@ class InfixOperator(ExpressionToken):
         # is True
         invoke = self.fn if self.token else type(self).fn
         if not self.pure:
-            invoke = wrap_unpure(self, invoke)
+            invoke = wrap_impure(self, invoke)
 
         if not isinstance(lhs, BaseDeferred) and not isinstance(rhs, BaseDeferred):
             return invoke(lhs, rhs)
@@ -75,7 +75,7 @@ class UnaryOperator(ExpressionToken):
 
         invoke = self.fn if self.token else type(self).fn
         if not self.pure:
-            invoke = wrap_unpure(self, invoke)
+            invoke = wrap_impure(self, invoke)
 
         if not isinstance(operand, BaseDeferred):
             return invoke(operand)
