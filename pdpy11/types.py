@@ -187,6 +187,7 @@ class AngleBracketedChar(ExpressionToken):
     def __init__(self, ctx_start, ctx_end, expr):
         super().__init__(ctx_start, ctx_end)
         self.expr = expr
+        self.reported_error = False
 
     def __repr__(self):
         return f"<{self.expr!r}>"
@@ -195,9 +196,19 @@ class AngleBracketedChar(ExpressionToken):
         return isinstance(rhs, type(self)) and self.expr == rhs.expr
 
     def resolve(self, state):
-        resolved = self.expr.resolve(state)
-        # TODO: handle exception here
-        return chr(wait(resolved))
+        if self.reported_error:
+            return ""
+
+        code = wait(self.expr.resolve(state))
+        try:
+            return chr(code)
+        except ValueError:
+            self.reported_error = True
+            reports.error(
+                "value-out-of-bounds",
+                (self.ctx_start, self.ctx_end, f"<{code}> does not specify a valid Unicode code point because it's outside its range: [0; 0x110000).")
+            )
+            return ""
 
 
 class QuotedString(ExpressionToken):
@@ -287,7 +298,7 @@ class CharLiteral(ExpressionToken):
         if len(bytes_value) > 2:
             reports.error(
                 "too-long-string",
-                (self.ctx_start, self.ctx_end, f"These characaters, encoded to {state['compiler'].output_charset}, take {len(bytes_value)} bytes, which does not fit in 16 bits.\nPlease fix that. Changing the encoding via '.charset ???' directive or '--charset=???' CLI argument may help.")
+                (self.ctx_start, self.ctx_end, f"These characters, encoded to {state['compiler'].output_charset}, take {len(bytes_value)} bytes, which does not fit in 16 bits.\nPlease fix that. Changing the encoding via '.charset ???' directive or '--charset=???' CLI argument may help.")
             )
 
         bytes_value = bytes_value[:2].ljust(2, b"\x00")

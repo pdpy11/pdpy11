@@ -139,6 +139,11 @@ def test_metacommands():
     with util.expect_error("value-out-of-bounds"):
         compile(".ascii <400>")
 
+    with util.expect_error("value-out-of-bounds", "io-error"):
+        compile(".include <-1>")
+    with util.expect_error("io-error"):
+        compile(".include <400>")
+
     expect_binary(".byte 1\n.even", b"\x01\x00")
     expect_binary(".byte 1, 2\n.even", b"\x01\x02")
     expect_binary(".byte 1\n.odd", b"\x01")
