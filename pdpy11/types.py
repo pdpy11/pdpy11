@@ -159,16 +159,16 @@ class Label(Token):
 
 
 class Assignment(Token):
-    def __init__(self, ctx_start, ctx_end, name: Symbol, value):
+    def __init__(self, ctx_start, ctx_end, target: Symbol, value):
         super().__init__(ctx_start, ctx_end)
-        self.name: Symbol = name
+        self.target: Symbol = target
         self.value = value
 
     def __repr__(self):
-        return f"{self.name!r} = {self.value!r}"
+        return f"{self.target!r} = {self.value!r}"
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and (self.name, self.value) == (rhs.name, rhs.value)
+        return isinstance(rhs, type(self)) and (self.target, self.value) == (rhs.target, rhs.value)
 
 
 class CodeBlock(Token):

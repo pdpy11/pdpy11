@@ -330,20 +330,20 @@ def label(ctx):
 
 @Parser
 def assignment(ctx):
-    # TODO: Macro-11 supports '. = X' syntax which we should probably interpret
-    # as an alias for '.blkb X - .'. Or as '.link X' if nothing has been emitted
-    # yet.
-
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    symbol = symbol_literal(ctx)
-    ctx_after_symbol = ctx.save()
+    target = instruction_pointer(ctx, maybe=True)
+    if not target:
+        symbol = symbol_literal(ctx)
+        target = types.Symbol(ctx_start, ctx, symbol)
+
     ctx.skip_whitespace()
 
     ctx_equals = ctx.save()
     equals_sign(ctx)
     ctx_after_equals = ctx.save()
+
     ctx.skip_whitespace()
 
     value = expression(ctx, report=(
@@ -353,18 +353,19 @@ def assignment(ctx):
         (ctx, ctx, "...yet no expression was matched here")
     ))
 
-    if symbol in builtin_commands:
-        reports.warning(
-            "suspicious-name",
-            (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction")
-        )
-    elif symbol.lower() in REGISTER_NAMES:
-        reports.warning(
-            "suspicious-name",
-            (ctx_start, ctx_after_symbol, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'?")
-        )
+    if isinstance(target, types.Symbol):
+        if target.name in builtin_commands:
+            reports.warning(
+                "suspicious-name",
+                (target.ctx_start, target.ctx_end, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction")
+            )
+        elif target.name.lower() in REGISTER_NAMES:
+            reports.warning(
+                "suspicious-name",
+                (target.ctx_start, target.ctx_end, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'?")
+            )
 
-    return types.Assignment(ctx_start, ctx, types.Symbol(ctx_start, ctx_after_symbol, symbol), value)
+    return types.Assignment(ctx_start, ctx, target, value)
 
 
 @Parser

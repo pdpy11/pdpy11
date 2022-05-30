@@ -2,6 +2,10 @@ class NotReadyError(Exception):
     pass
 
 
+class DeferredCycle(Exception):
+    pass
+
+
 def wait(deferred):
     while isinstance(deferred, BaseDeferred):
         deferred = deferred.wait()
@@ -29,7 +33,8 @@ class Awaiting:
         self.deferred = deferred
 
     def __enter__(self):
-        assert not self.deferred.is_awaiting
+        if self.deferred.is_awaiting:
+            raise DeferredCycle()
         self.deferred.is_awaiting = True
         Awaiting.awaiting_stack.append(self.deferred)
         return self

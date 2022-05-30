@@ -628,20 +628,26 @@ def test_wavs2(fs):
         compile("make_wav '17charslongstring.wav'")
 
 
-def test_link():
-    expect_binary(".word .", b"\x00\x02")
-    expect_binary(".link 1000\n.word .", b"\x00\x02")
-    expect_binary(".link 2000\n.word .", b"\x00\x04")
-    expect_binary(".link 0\n.word .", b"\x00\x00")
+@pytest.mark.parametrize("syntax", [".link", ". ="])
+def test_link(syntax):
+    expect_binary(f"{syntax} 0\n.word .", b"\x00\x00")
+    expect_binary(f"{syntax} 1000\n.word .", b"\x00\x02")
+    expect_binary(f"{syntax} 2000\n.word .", b"\x00\x04")
 
+    expect_same(".word .", f"{syntax} 1000\n.word .")
+
+    # .link cannot override previous value
     with util.expect_error("address-conflict"):
-        compile(".link 1000\n.link 2000")
-
+        compile(f"{syntax} 1000\n.link 2000")
     with util.expect_error("address-conflict"):  # maybe this is ok, idk
-        compile(".link 1000\n.link 1000")
+        compile(f"{syntax} 1000\n.link 1000")
 
-    with util.expect_error("recursive-definition"):  # maybe this is ok, idk
-        compile(".link a\na = .")
+    # . = can sometimes override previous value
+    expect_same(f"{syntax} 1000\n. = 2000", f"{syntax} 1000\n.blkb 1000")
+    expect_same(f"{syntax} 1000\n. = 1000", f"{syntax} 1000")
+    with util.expect_error("value-out-of-bounds"):
+        compile(f"{syntax} 1000\n. = 400")
+
     # TODO: check something like
     # .link a4
     # if a3 == 1000 { a4 = 1000 }

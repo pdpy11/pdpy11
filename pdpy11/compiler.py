@@ -3,10 +3,11 @@ import sys
 
 from .builtins import builtin_commands
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, wait, BaseDeferred, Deferred
+from .deferred import Promise, wait, BaseDeferred, Deferred, DeferredCycle
 from .devices import open_device
 from .formats import file_formats
-from .types import Instruction, Label, Assignment
+from .metacommand_impl import get_as_int
+from .types import Instruction, Label, Assignment, InstructionPointer
 from . import reports
 
 
@@ -75,6 +76,28 @@ class Compiler:
                         self.next_local_symbol_prefix += 1
 
                 elif isinstance(insn, Assignment):
+                    if isinstance(insn.target, InstructionPointer):
+                        if state["link_base"]["promise"].settled:
+                            # Bring the current address forward
+                            new_addr = Deferred[int](lambda: insn.value.resolve(state))
+                            def fn():
+                                old_addr_value = wait(addr)
+                                new_addr_value = get_as_int(state, "link address", state["insn"], insn.value, bitness=16, unsigned=False)
+                                length = new_addr_value - old_addr_value
+                                if length < 0:
+                                    reports.error(
+                                        "value-out-of-bounds",
+                                        (insn.ctx_start, insn.ctx_end, f"The new link address is lower than the previous one: a negative skip from {old_addr_value} to {new_addr_value} was attempted")
+                                    )
+                                    raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
+                                return b"\x00" * length
+                            data += Deferred[bytes](fn)
+                            addr = new_addr
+                        else:
+                            # Set link base
+                            self.set_link_address(insn.value, state)
+                        continue
+
                     if state["context"] == "repeat":
                         if not hasattr(insn, "assignment_error_emitted"):
                             reports.error(
@@ -119,24 +142,48 @@ class Compiler:
                 self.declare_external_symbol(state["extern_all"], label.name, state)
 
 
-    def compile_assignment(self, var, state):
-        name = state["internal_symbol_prefix"] + var.name.name
+    def compile_assignment(self, insn, state):
+        name = state["internal_symbol_prefix"] + insn.target.name
 
         if name in self.symbols:
             prev_sym, _ = self.symbols[name]
             reports.error(
                 "duplicate-symbol",
-                (var.ctx_start, var.ctx_end, f"Duplicate variable '{var.name.name}'"),
+                (insn.ctx_start, insn.ctx_end, f"Duplicate variable '{insn.target.name}'"),
                 (prev_sym.ctx_start, prev_sym.ctx_end, "A symbol with the same name has been already declared here")
             )
             return
 
-        state["internal_symbols_list"].append(var.name.name)
-        self.symbols[name] = (var, Deferred[int](lambda: var.value.resolve(state), var.name.name))
+        state["internal_symbols_list"].append(insn.target.name)
+        self.symbols[name] = (insn, Deferred[int](lambda: insn.value.resolve(state), insn.target.name))
         self._handle_new_symbol(name)
 
         if state["extern_all"]:
-            self.declare_external_symbol(state["extern_all"], var.name.name, state)
+            self.declare_external_symbol(state["extern_all"], insn.target.name, state)
+
+
+    def set_link_address(self, address, state):
+        if state["link_base"]["promise"].settled:
+            prev_link = state["link_base"]["set_where"]
+            reports.error(
+                "address-conflict",
+                (state["insn"].ctx_start, state["insn"].ctx_end, "The link base has already been set."),
+                (prev_link.ctx_start, prev_link.ctx_end, "The link base has been previously set here.")
+            )
+            return
+
+        def fn():
+            try:
+                return get_as_int(state, "link address", state["insn"], address, bitness=16, unsigned=False)
+            except DeferredCycle:
+                reports.error(
+                    "recursive-definition",
+                    (state["insn"].ctx_start, state["insn"].ctx_end, f"The link base is mathematically equal to {address.resolve(state)!r},\nwhere LA denotes link base. In other words, the link base depends on itself,\nand thus cannot be determined.")
+                )
+                return 0
+
+        state["link_base"]["set_where"] = state["insn"]
+        state["link_base"]["promise"].settle(Deferred[int](fn))
 
 
     def declare_external_symbol(self, location, name, state):

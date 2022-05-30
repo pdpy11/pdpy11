@@ -7,7 +7,7 @@ from . import reports
 from . import types
 from .types import CodeBlock
 
-from .metacommand_impl import metacommand, get_as_int, get_as_str, int8, int16, int32, uint, uint16
+from .metacommand_impl import metacommand, get_as_str, int8, int16, int32, uint, uint16
 
 
 @metacommand(size=lambda state, *operands: len(operands) or 1, alias=".db")
@@ -336,24 +336,7 @@ def make_turbo_wav(state, output_wav_path: str=None, file_name_on_tape: str=None
 
 @metacommand(size=0, raw=True)
 def link(state, address: int) -> bytes:
-    if state["link_base"]["promise"].settled:
-        if state["link_base"]["set_where"] is None:
-            reports.error(
-                "recursive-definition",
-                (state["insn"].ctx_start, state["insn"].ctx_end, f"The argument of '.link' directive is mathematically equal to {address.resolve(state)!r},\nwhere LA denotes link base. In other words, the link base depends on itself,\nand thus cannot be determined.")
-            )
-        else:
-            prev_link = state["link_base"]["set_where"]
-            reports.error(
-                "address-conflict",
-                (state["insn"].ctx_start, state["insn"].ctx_end, "A '.link' directive was encountered, but the link base has already been set."),
-                (prev_link.ctx_start, prev_link.ctx_end, "The link address has been previously configured here.")
-            )
-        return b""
-
-    address_value = get_as_int(state, "link address", state["insn"], address, bitness=16, unsigned=False)
-    state["link_base"]["promise"].settle(address_value)
-    state["link_base"]["set_where"] = state["insn"]
+    state["compiler"].set_link_address(address, state)
     return b""
 
 
