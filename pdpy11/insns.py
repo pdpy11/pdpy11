@@ -210,7 +210,7 @@ class OffsetOperandStub:
     def encode(self, operand, state):
         insn = state["insn"]
 
-        if isinstance(operand, Number) and operand.representation[-1] != ".":
+        if isinstance(operand, Number) and operand.is_valid_label:
             operand = Symbol(operand.ctx_start, operand.ctx_end, operand.representation)
         elif "(" not in operand.text() and ":" not in operand.text():
             # TODO: the condition of this if being '"(" not in operand.text()'
@@ -225,13 +225,13 @@ class OffsetOperandStub:
                     token.rhs = fixup_label(token.rhs)
                 elif isinstance(token, (operators.PrefixOperator, operators.PostfixOperator)):
                     token.operand = fixup_label(token.operand)
-                elif isinstance(token, Number) and token.representation[-1] != ".":
+                elif isinstance(token, Number) and token.is_valid_label:
                     if fixup_active:
                         reports.warning(
                             "label-fixup",
                             (insn.name.ctx_start, insn.name.ctx_end, f"Instruction '{insn.name.name}' takes an offset."),
                             (operand.ctx_start, operand.ctx_end, "It's operand is a complex expression."),
-                            (token.ctx_start, token.ctx_end, f"Thus, for compatibility, the first number is treated as a local label.\nFor example, '1 + 2' is parsed as 'address of local label 1 plus two'.\nThis may be unintended, so please state your intent explicitly:\n- if you meant numbers to be numbers, add parentheses around the operand: '({operand!r})', and\n- if you wanted '{token!r}' to be a label, add a colon after it: '{token!r}:'.")
+                            (token.ctx_start, token.ctx_end, f"Thus, for compatibility, the first number that can be parsed as a local label is treated as such.\nFor example, '1 + 2' is parsed as 'address of local label 1 plus two'.\nThis may be unintended, so please state your intent explicitly:\n- if you meant numbers to be numbers, add parentheses around the operand: '({operand!r})', and\n- if you wanted '{token!r}' to be a label, add a colon after it: '{token!r}:'.")
                         )
                         fixup_active = False
                         return Symbol(token.ctx_start, token.ctx_end, token.representation)

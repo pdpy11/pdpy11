@@ -439,6 +439,17 @@ def test_branch():
         compile("sob r0, . - 1000000")
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "1", "2", "212", "189", "54354343235435", "4723974239hxadsd4432",
+        "0x4z32", "0o123456789", "0b123456789"
+    ]
+)
+def test_valid_local_label_names(name):
+    expect_same("br 1\n1:", f"br {name}\n{name}:")
+
+
 def test_unexpected_symbol():
     with util.expect_error("unexpected-symbol-definition"):
         compile(".repeat 10 { lbl = 1 }")

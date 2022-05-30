@@ -20,11 +20,11 @@ def c(fn):
 
 
 R0 = c(Symbol)("r0")
-MINUS_ONE = c(Number)("-1", -1)
-ZERO = c(Number)("0", 0)
-ONE = c(Number)("1", 1)
-TWO = c(Number)("2", 2)
-THREE = c(Number)("3", 3)
+MINUS_ONE = c(Number)("-1", -1, is_valid_label=False)
+ZERO = c(Number)("0", 0, is_valid_label=True)
+ONE = c(Number)("1", 1, is_valid_label=True)
+TWO = c(Number)("2", 2, is_valid_label=True)
+THREE = c(Number)("3", 3, is_valid_label=True)
 A = c(Symbol)("a")
 B = c(Symbol)("b")
 C = c(Symbol)("c")
@@ -150,32 +150,32 @@ def test_brackets():
 
 
 @pytest.mark.parametrize(
-    "code,value",
+    "code,value,is_valid_label",
     [
-        ("1", 1),
-        ("2", 2),
-        ("0", 0),
-        ("-1", -1),
-        ("1.", 1),
-        ("-1.", -1),
-        ("0x1f", 0x1f),
-        ("-0x1f", -0x1f),
-        ("0o57", 0o57),
-        ("0b10110", 0b10110),
-        ("^X1f", 0x1f),
-        ("^O57", 0o57),
-        ("^B10110", 0b10110),
-        ("^D57", 57),
-        ("57", 0o57),
-        ("057", 0o57)
+        ("1", 1, True),
+        ("2", 2, True),
+        ("0", 0, True),
+        ("-1", -1, False),
+        ("1.", 1, False),
+        ("-1.", -1, False),
+        ("0x1f", 0x1f, True),
+        ("-0x1f", -0x1f, False),
+        ("0o57", 0o57, True),
+        ("0b10110", 0b10110, True),
+        ("^X1f", 0x1f, False),
+        ("^O57", 0o57, False),
+        ("^B10110", 0b10110, False),
+        ("^D57", 57, False),
+        ("57", 0o57, True),
+        ("057", 0o57, True)
     ]
 )
-def test_numbers1(code, value):
-    expect_code(f"insn #{code}", INSN(c(immediate)(c(Number)(code, value))))
+def test_numbers1(code, value, is_valid_label):
+    expect_code(f"insn #{code}", INSN(c(immediate)(c(Number)(code, value, is_valid_label=is_valid_label))))
 
 def test_numbers2():
-    expect_code("insn #81", INSN(c(immediate)(c(Number)("81", 81, invalid_base8=True))))
-    expect_code("insn #91", INSN(c(immediate)(c(Number)("91", 91, invalid_base8=True))))
+    expect_code("insn #81", INSN(c(immediate)(c(Number)("81", 81, is_valid_label=True, invalid_base8=True))))
+    expect_code("insn #91", INSN(c(immediate)(c(Number)("91", 91, is_valid_label=True, invalid_base8=True))))
 
 
 @pytest.mark.parametrize("name", ["hello", "HELLO", "1", "0", "99", "12$", "a_"])

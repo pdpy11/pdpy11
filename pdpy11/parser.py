@@ -156,6 +156,7 @@ equals_sign = Parser.literal("=")
 single_quote = Parser.literal("'")
 double_quote = Parser.literal("\"")
 string_quote = Parser.regex(r"['\"/]")
+number_dot = Parser.literal(".", skip_whitespace_before=False)
 character = Parser.regex(r"[\s\S]", skip_whitespace_before=False)
 string_backslash = Parser.literal("\\", skip_whitespace_before=False)
 
@@ -167,7 +168,6 @@ instruction_name = Parser.regex(r"\.?[a-z_][a-z_0-9]*")
 
 @Parser
 def number(ctx):
-    # TODO: Macro-11 supports ^B, ^O, ^D, ^X standing for binary, octal, decimal and hexadecimal
     # TODO: Macro-11 supports ^R for radix-50. ^R<...> works, ^R^/.../ works, maybe something else works too
     # TODO: Macro-11 supports ^F... for floating-point numbers, no idea how the format looks like
     # TODO: Macro-11 supports ^P for psect limits, whatever that means
@@ -179,84 +179,102 @@ def number(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    boundary = r"(?![$_])\b"
-
-    if Parser.literal("^X")(ctx, maybe=True):
-        # Hexadimical number
-        num = Parser.regex(rf"[0-9a-f]+{boundary}", skip_whitespace_before=False)(ctx, report=(
-            reports.critical,
-            "invalid-number",
-            (ctx_start, ctx, "A hexadecimal number was expected after '^X'")
-        ))
-        return types.Number(ctx_start, ctx, f"{sign_str}^X{num}", int(num, 16) * sign)
-    elif Parser.literal("^O")(ctx, maybe=True):
-        # Octal number
-        num = Parser.regex(rf"[0-7]+{boundary}", skip_whitespace_before=False)(ctx, report=(
-            reports.critical,
-            "invalid-number",
-            (ctx_start, ctx, "An octal number was expected after '^O'")
-        ))
-        return types.Number(ctx_start, ctx, f"{sign_str}^O{num}", int(num, 8) * sign)
-    elif Parser.literal("^B")(ctx, maybe=True):
-        # Binary number
-        num = Parser.regex(rf"[01]+{boundary}", skip_whitespace_before=False)(ctx, report=(
-            reports.critical,
-            "invalid-number",
-            (ctx_start, ctx, "A binary number was expected after '^B'")
-        ))
-        return types.Number(ctx_start, ctx, f"{sign_str}^B{num}", int(num, 2) * sign)
-    elif Parser.literal("^D")(ctx, maybe=True):
-        # Decimal number
-        num = Parser.regex(rf"\d+{boundary}", skip_whitespace_before=False)(ctx, report=(
-            reports.critical,
-            "invalid-number",
-            (ctx_start, ctx, "A decimal number was expected after '^D'")
-        ))
-        return types.Number(ctx_start, ctx, f"{sign_str}^D{num}", int(num, 10) * sign)
-
-
-    first_digit = Parser.regex(r"\d")(ctx)
-
-    if first_digit == "0":
-        if Parser.literal("x", skip_whitespace_before=False)(ctx, maybe=True):
-            # Hexadecimal number
-            num = Parser.regex(rf"[0-9a-f]+{boundary}", skip_whitespace_before=False)(ctx, report=(
+    # Macro-11-style numbers
+    for prefix, adjective, digit_regex, base in (
+        ("^X", "A hexadecimal", r"[0-9a-f]", 16),
+        ("^O", "An octal", r"[0-7]", 8),
+        ("^B", "A binary", r"[01]", 2),
+        ("^D", "A decimal", r"\d", 10)
+    ):
+        if Parser.literal(prefix)(ctx, maybe=True):
+            num = Parser.regex(rf"{digit_regex}+(?![$_])\b", skip_whitespace_before=False)(ctx, report=(
                 reports.critical,
                 "invalid-number",
-                (ctx_start, ctx, "A hexadecimal number was expected after '0x'")
+                (ctx_start, ctx, f"{adjective} number was expected after '{prefix}'")
             ))
-            return types.Number(ctx_start, ctx, f"{sign_str}0x{num}", int(num, 16) * sign)
-        elif Parser.literal("o", skip_whitespace_before=False)(ctx, maybe=True):
-            # Octal number
-            num = Parser.regex(rf"[0-7]+{boundary}", skip_whitespace_before=False)(ctx, report=(
-                reports.critical,
-                "invalid-number",
-                (ctx_start, ctx, "An octal number was expected after '0o'")
-            ))
-            return types.Number(ctx_start, ctx, f"{sign_str}0o{num}", int(num, 8) * sign)
-        elif Parser.literal("b", skip_whitespace_before=False)(ctx, maybe=True):
-            # Binary number
-            num = Parser.regex(rf"[01]+{boundary}", skip_whitespace_before=False)(ctx, report=(
-                reports.critical,
-                "invalid-number",
-                (ctx_start, ctx, "A binary number was expected after '0b'")
-            ))
-            return types.Number(ctx_start, ctx, f"{sign_str}0b{num}", int(num, 2) * sign)
 
-    # This may be a local label, so better not be strict
-    num = Parser.regex(rf"\d*(\.|{boundary})", skip_whitespace_before=False)(ctx)
-    num = first_digit + num
+            return types.Number(ctx_start, ctx, sign_str + prefix + num, int(num, base) * sign, is_valid_label=False)
 
-    if num.endswith("."):
-        return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num[:-1], 10) * sign)
+    # Every other kind of number is also a valid local symbol literal. Parse it as such first.
+    num = local_symbol_literal(ctx)
 
+    # This is exactly the reason we have the colon
     if colon(ctx, maybe=True):
+        # If the name is followed by a colon, it must be a label
         raise reports.RecoverableError("Local label, not a number")
 
-    if "8" in num or "9" in num:
-        return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num, 10) * sign, invalid_base8=True)
+    # Includes characters only present in labels -- fail immediately. This disregards 1huh$. We
+    # allow an unary minus in this case, because such labels can't be confused with numbers in any
+    # way.
+    if "$" in num or "_" in num:
+        raise reports.RecoverableError("Local label, not a number")
 
-    return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num, 8) * sign)
+    # Does the number only include decimal digits?
+    if num.isdigit():
+        if number_dot(ctx, maybe=True):
+            # Decimal
+            return types.Number(ctx_start, ctx, f"{sign_str}{num}.", int(num, 10) * sign, is_valid_label=False)
+
+        if "8" in num or "9" in num:
+            # Should be octal, but is not. This should be parsed as a local label, but it would be
+            # extremely confusing to newcomers and may cause miscompilations due to typos (say
+            # someone forgot a dot). So we return a number as if it was decimal but whenever it's
+            # actually used we raise an error.
+            if sign == -1:
+                # Note that '-8' obviously can't be a number, but it can't be a local label either.
+                # Also in some cases arithmetic on local labels is useful, negating it certainly is
+                # not intended. So we report this as such.
+                char = "8" if "8" in num else "9"
+                reports.error(
+                    "invalid-number",
+                    (ctx_start, ctx, f"In PDP-11 assembly, numbers are considered base-8 by default.\nThis number has digit {char}, so you probably wanted it base-10.\nAdd a dot after the number to switch to decimal: '-{num}.'\nIf you wanted to specify a local label of the same name, add a colon: '-{num}:'")
+                )
+                # Don't set invalid_base8 because we have already reported that for better
+                # responsibility.
+                return types.Number(ctx_start, ctx, f"-{num}", int(num, 10) * sign, is_valid_label=False, invalid_base8=False)
+
+            return types.Number(ctx_start, ctx, num, int(num, 10) * sign, is_valid_label=True, invalid_base8=True)
+
+        # The easy part--an octal number
+        return types.Number(ctx_start, ctx, f"{sign_str}{num}", int(num, 8) * sign, is_valid_label=sign == 1)
+
+    # This is the hard part. How do we handle something that looks suspiciously similar to a number
+    # but does not parse as such? The question is whether we parse it as a local label or abort
+    # compilation.
+    #
+    # This is different from the case of '8' and '9' in octal numbers: if 8 or 9 are used, we are
+    # reasonably sure that that was meant to be a number anyway and we treat it as such. But what if
+    # it's something like 0x0123456789abcdefg? We assume it's a label, because otherwise we have to
+    # second guess ourselves in cases like 0ball, which is a reasonable label name, and we probably
+    # don't want to use a natural language library to separate the two cases.
+
+    # Explicit C-style base: 0x... and such
+    if len(num) >= 2 and num[0] == "0" and num[1].isalpha():
+        BASES = {
+            "x": 16,
+            "o": 8,
+            "b": 2
+        }
+
+        base_char = num[1].lower()
+        if base_char not in BASES:
+            # Must be a label then
+            raise reports.RecoverableError("Local label, not a number")
+
+        base = BASES[base_char]
+
+        # Does the rest parse?
+        try:
+            value = int(num[2:], base) * sign
+        except ValueError:
+            # Must be a label then
+            raise reports.RecoverableError("Local label, not a number") from None
+
+        return types.Number(ctx_start, ctx, sign_str + num, value, is_valid_label=sign == 1)
+
+    # A weird bundle of digits and characters that doesn't parse in any known way. The definition of
+    # a local label, that is.
+    raise reports.RecoverableError("Local label, not a number")
 
 
 radix50_chars = Parser.regex("[" + re.escape(radix50.TABLE.replace(" ", "")) + "]+", skip_whitespace_before=False)
@@ -285,7 +303,7 @@ def radix50_literal(ctx):
 
     string = string.upper()
 
-    return types.Number(ctx_start, ctx, f"^R{string}", radix50.pack_to_int(string))
+    return types.Number(ctx_start, ctx, f"^R{string}", radix50.pack_to_int(string), is_valid_label=False)
 
 
 @Parser

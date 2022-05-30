@@ -232,10 +232,11 @@ class StringConcatenation(ExpressionToken):
 
 
 class Number(ExpressionToken):
-    def __init__(self, ctx_start, ctx_end, representation, value, invalid_base8=False):
+    def __init__(self, ctx_start, ctx_end, representation, value, is_valid_label, invalid_base8=False):
         super().__init__(ctx_start, ctx_end)
         self.representation = representation
         self.value = value
+        self.is_valid_label = is_valid_label
         self.invalid_base8 = invalid_base8
         self.reported_invalid_base8 = False
 
@@ -243,7 +244,7 @@ class Number(ExpressionToken):
         return f"{self.representation}"
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and (self.representation, self.value, self.invalid_base8) == (rhs.representation, rhs.value, rhs.invalid_base8)
+        return isinstance(rhs, type(self)) and (self.representation, self.value, self.is_valid_label, self.invalid_base8) == (rhs.representation, rhs.value, rhs.is_valid_label, rhs.invalid_base8)
 
     def resolve(self, state):
         if not self.reported_invalid_base8 and self.invalid_base8:
