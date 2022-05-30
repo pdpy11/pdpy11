@@ -6,15 +6,11 @@ from . import reports
 
 
 class Token:
-    def __init__(self, ctx_start, ctx_end, *args, **kwargs):
+    def __init__(self, ctx_start, ctx_end):
         assert ctx_start is None or isinstance(ctx_start, Context)
         assert ctx_end is None or isinstance(ctx_end, Context)
         self.ctx_start = None if ctx_start is None else ctx_start.save()
         self.ctx_end = None if ctx_end is None else ctx_end.save()
-        self.init(*args, **kwargs)
-
-    def init(self):
-        pass
 
     def text(self):
         return self.ctx_start.code[self.ctx_start.pos:self.ctx_end.pos]
@@ -29,8 +25,8 @@ class ExpressionToken(Token):
 
 
 class Instruction(Token):
-    # pylint: disable=arguments-differ
-    def init(self, name, operands):
+    def __init__(self, ctx_start, ctx_end, name, operands):
+        super().__init__(ctx_start, ctx_end)
         self.name = name
         self.operands = operands
 
@@ -63,8 +59,8 @@ class InstructionPointer(ExpressionToken):
 
 
 class ParenthesizedExpression(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, expr):
+    def __init__(self, ctx_start, ctx_end, expr):
+        super().__init__(ctx_start, ctx_end)
         self.expr = expr
 
     def __repr__(self):
@@ -78,8 +74,8 @@ class ParenthesizedExpression(ExpressionToken):
 
 
 class BracketedExpression(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, expr):
+    def __init__(self, ctx_start, ctx_end, expr):
+        super().__init__(ctx_start, ctx_end)
         self.expr = expr
 
     def __repr__(self):
@@ -93,8 +89,8 @@ class BracketedExpression(ExpressionToken):
 
 
 class Symbol(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, name: str):
+    def __init__(self, ctx_start, ctx_end, name: str):
+        super().__init__(ctx_start, ctx_end)
         self.name: str = name
 
     def __repr__(self):
@@ -150,8 +146,8 @@ class Symbol(ExpressionToken):
 
 
 class Label(Token):
-    # pylint: disable=arguments-differ
-    def init(self, name: str):
+    def __init__(self, ctx_start, ctx_end, name: str):
+        super().__init__(ctx_start, ctx_end)
         self.name: str = name
         self.local: bool = name[0].isdigit()
 
@@ -163,8 +159,8 @@ class Label(Token):
 
 
 class Assignment(Token):
-    # pylint: disable=arguments-differ
-    def init(self, name: Symbol, value):
+    def __init__(self, ctx_start, ctx_end, name: Symbol, value):
+        super().__init__(ctx_start, ctx_end)
         self.name: Symbol = name
         self.value = value
 
@@ -176,8 +172,8 @@ class Assignment(Token):
 
 
 class CodeBlock(Token):
-    # pylint: disable=arguments-differ
-    def init(self, insns):
+    def __init__(self, ctx_start, ctx_end, insns):
+        super().__init__(ctx_start, ctx_end)
         self.insns = insns
 
     def __repr__(self):
@@ -188,8 +184,8 @@ class CodeBlock(Token):
 
 
 class AngleBracketedChar(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, expr):
+    def __init__(self, ctx_start, ctx_end, expr):
+        super().__init__(ctx_start, ctx_end)
         self.expr = expr
 
     def __repr__(self):
@@ -205,8 +201,8 @@ class AngleBracketedChar(ExpressionToken):
 
 
 class QuotedString(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, quote, string: str):
+    def __init__(self, ctx_start, ctx_end, quote, string: str):
+        super().__init__(ctx_start, ctx_end)
         self.quote: str = quote
         self.string: str = string
 
@@ -221,8 +217,8 @@ class QuotedString(ExpressionToken):
 
 
 class StringConcatenation(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, chunks):
+    def __init__(self, ctx_start, ctx_end, chunks):
+        super().__init__(ctx_start, ctx_end)
         self.chunks = chunks
 
     def __repr__(self):
@@ -236,8 +232,8 @@ class StringConcatenation(ExpressionToken):
 
 
 class Number(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, representation, value, invalid_base8=False):
+    def __init__(self, ctx_start, ctx_end, representation, value, invalid_base8=False):
+        super().__init__(ctx_start, ctx_end)
         self.representation = representation
         self.value = value
         self.invalid_base8 = invalid_base8
@@ -261,8 +257,8 @@ class Number(ExpressionToken):
 
 
 class CharLiteral(ExpressionToken):
-    # pylint: disable=arguments-differ
-    def init(self, representation, string):
+    def __init__(self, ctx_start, ctx_end, representation, string):
+        super().__init__(ctx_start, ctx_end)
         self.representation = representation
         self.string = string
         self.evaluated_value = None

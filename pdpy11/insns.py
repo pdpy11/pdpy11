@@ -1,3 +1,6 @@
+# Pylint does not work with dynamically generated types, which @operator does
+# pylint: disable=isinstance-second-argument-not-valid-type
+
 import struct
 
 from .architecture import instruction_opcodes
@@ -90,7 +93,6 @@ class RegisterModeOperandStub:
         operand = hoist(operand)
 
         # Good luck debugging this
-        # pylint: disable=isinstance-second-argument-not-valid-type
         register = try_register_from_symbol(operand)
         if register is not None:
             # Register
@@ -296,7 +298,7 @@ class ImmediateOperandStub:
     def encode(self, operand, state):
         insn = state["insn"]
 
-        if isinstance(operand, operators.immediate):  # pylint: disable=isinstance-second-argument-not-valid-type
+        if isinstance(operand, operators.immediate):
             reports.warning(
                 "excess-hash",
                 (operand.ctx_start, operand.ctx_end, f"'{insn.name.name}' instruction takes an immediate value implicitly, a hash is unnecessary")

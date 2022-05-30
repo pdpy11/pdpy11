@@ -21,8 +21,8 @@ class InfixOperator(ExpressionToken):
     pure: bool
     return_type: type
 
-    # pylint: disable=arguments-differ
-    def init(self, lhs: ExpressionToken, rhs: ExpressionToken):
+    def __init__(self, ctx_start, ctx_end, lhs: ExpressionToken, rhs: ExpressionToken):
+        super().__init__(ctx_start, ctx_end)
         self.lhs: ExpressionToken = lhs
         self.rhs: ExpressionToken = rhs
         self.value = None
@@ -62,8 +62,8 @@ class UnaryOperator(ExpressionToken):
     pure: bool
     return_type: type
 
-    # pylint: disable=arguments-differ
-    def init(self, operand: ExpressionToken):
+    def __init__(self, ctx_start, ctx_end, operand: ExpressionToken):
+        super().__init__(ctx_start, ctx_end)
         self.operand: ExpressionToken = operand
         self.value = None
 

@@ -127,12 +127,12 @@ def rad50(state, string: str) -> bytes:
 
 
 @metacommand
-def blkb(state, blkb_count: uint16) -> bytes:
+def blkb(state, blkb_count: uint16) -> bytes:  # pylint: disable=unused-argument
     return b"\x00" * blkb_count
 
 
 @metacommand
-def blkw(state, blkw_count: uint16) -> bytes:
+def blkw(state, blkw_count: uint16) -> bytes:  # pylint: disable=unused-argument
     return b"\x00\x00" * blkw_count
 
 
@@ -389,6 +389,8 @@ def include(state, included_file_path: str):
         )
         return b""
 
+    # parser needs to have a list of metacommands. This avoids cyclic dependency.
+    # pylint: disable=import-outside-toplevel
     from . import parser
     file_ast = parser.parse(include_path, code)
 
