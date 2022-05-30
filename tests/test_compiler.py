@@ -282,6 +282,10 @@ def test_math():
         expect_same(".word 5 / 0", ".word 0")
     with util.expect_error("arithmetic-error"):
         expect_same(".word 5 % 0", ".word 0")
+    with util.expect_error("arithmetic-error"):
+        expect_same(".word 123 << -6", ".word 123 >> 6")
+    with util.expect_error("arithmetic-error"):
+        expect_same(".word 123 >> -6", ".word 123 << 6")
 
 
 def test_variables():

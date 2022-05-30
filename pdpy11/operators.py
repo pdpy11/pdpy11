@@ -222,21 +222,33 @@ def sub(a: int, b: int) -> int:
     return a - b
 
 
-@operator("x << x", precedence=5, associativity="left", awaited=False)
-def lshift(a: int, b: int) -> int:
+@operator("x << x", precedence=5, associativity="left", awaited=False, pure=False, token=True)
+def lshift(token, a: int, b: int) -> int:
     b = wait(b)
-    assert b >= 0  # TODO: handle this
-    return a * 2 ** b
+    if b >= 0:
+        return a * 2 ** b
+    else:
+        reports.error(
+            "arithmetic-error",
+            (token.ctx_start, token.ctx_end, f"Negative left shift: '<< {b}'. If you want this to be interpreted as '>> {-b}',\neither use >> if you know the right hand side is always non-positive, or _ if you don't.")
+        )
+        return wait(a) >> (-b)
 
 
-@operator("x >> x", precedence=5, associativity="left", awaited=False)
-def rshift(a: int, b: int) -> int:
+@operator("x >> x", precedence=5, associativity="left", awaited=False, pure=False, token=True)
+def rshift(token, a: int, b: int) -> int:
     b = wait(b)
-    assert b >= 0  # TODO: handle this
     if b == 0:
         return a
-    else:
+    elif b > 0:
         return wait(a) >> b
+    else:
+        assert b < 0
+        reports.error(
+            "arithmetic-error",
+            (token.ctx_start, token.ctx_end, f"Negative right shift: '>> {b}'. If you want this to be interpreted as '<< {-b}',\neither use << if you know the right hand side is always non-positive, or _ (with an inverted operand) if you don't.")
+        )
+        return a * 2 ** (-b)
 
 
 # It seems they were running out of characters.
