@@ -1,7 +1,7 @@
 import struct
 
 from .architecture import instruction_opcodes
-from .builtins import get_as_int
+from .metacommand_impl import get_as_int
 from .containers import CaseInsensitiveDict
 from .deferred import Deferred, SizedDeferred, wait
 from .types import Symbol, ParenthesizedExpression, Number, InstructionPointer, Label

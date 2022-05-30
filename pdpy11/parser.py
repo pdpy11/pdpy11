@@ -1,7 +1,8 @@
 import re
 
-from .builtins import builtin_commands, Metacommand
+from .builtins import builtin_commands
 from .context import Context
+from .metacommand_impl import Metacommand
 from . import operators
 from . import radix50
 from . import reports
