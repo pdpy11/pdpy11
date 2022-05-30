@@ -130,8 +130,14 @@ def test_metacommands():
     expect_binary(".asciz \"Hello, world!\"", b"Hello, world!\x00")
     expect_binary(".ascii \"Hello\"<12>\"world!\"", b"Hello\nworld!")
     expect_binary(".ascii <12>", b"\n")
+    expect_binary(".ascii <377>", b"\xff")
     expect_binary(".blkb 10", b"\x00" * 8)
     expect_binary(".blkw 10", b"\x00" * 16)
+
+    with util.expect_error("value-out-of-bounds"):
+        compile(".ascii <-1>")
+    with util.expect_error("value-out-of-bounds"):
+        compile(".ascii <400>")
 
     expect_binary(".byte 1\n.even", b"\x01\x00")
     expect_binary(".byte 1, 2\n.even", b"\x01\x02")
@@ -661,10 +667,9 @@ def test_link(syntax):
 
 
 def test_encoding():
-    with util.expect_error("invalid-character"):
-        expect_same("clr r0\n.ascii /Hello α world/\nclr r1", "clr r0\nclr r1")
-    with util.expect_error("invalid-character"):
-        expect_same("clr r0\n.asciz /Hello α world/\nclr r1", "clr r0\nclr r1")
+    for insn in (".ascii", ".asciz"):
+        with util.expect_error("invalid-character"):
+            expect_same(f"clr r0\n{insn} /Hello α world/\nclr r1", f"clr r0\n{insn} //\nclr r1")
 
     compile("make_wav '16 char long str.wav'", output_charset="utf-8")
     compile("make_wav '16-карлонгстринг.wav'", output_charset="bk")

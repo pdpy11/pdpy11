@@ -59,29 +59,45 @@ def dword(state, *dword_operand: int32) -> bytes:
     return prefix + b"".join(encode_i32(operand) for operand in dword_operand)
 
 
+def ascii_impl(state, string) -> bytes:
+    if isinstance(string, types.StringConcatenation):
+        chunks = string.chunks
+    else:
+        chunks = [string]
+
+    result = bytearray()
+    for chunk in chunks:
+        if isinstance(chunk, types.AngleBracketedChar):
+            # Raw byte
+            val = wait(chunk.expr.resolve(state))
+            if not 0 <= val < 256:
+                reports.error(
+                    "value-out-of-bounds",
+                    (chunk.ctx_start, chunk.ctx_end, f"Character {val} does not fit in a byte and is therefore not a valid character.")
+                )
+                val = 0
+            result.append(val)
+        else:
+            try:
+                result += get_as_str(state, state["insn"].name.name + " operand", state["insn"], chunk).encode(state["compiler"].output_charset)
+            except UnicodeEncodeError as ex:
+                reports.error(
+                    "invalid-character",
+                    (state["insn"].ctx_start, state["insn"].ctx_end, f"Cannot encode this string using the selected output charset:\n{ex}\nYou can change the charset using --charset CLI argument or '.charset' directive.")
+                )
+
+    return result
+
+
 # pylint: disable=redefined-builtin
-@metacommand
+@metacommand(raw=True)
 def ascii_(state, ascii_text: str) -> bytes:
-    try:
-        return ascii_text.encode(state["compiler"].output_charset)
-    except UnicodeEncodeError as ex:
-        reports.error(
-            "invalid-character",
-            (state["insn"].ctx_start, state["insn"].ctx_end, f"Cannot encode this string using the selected output charset:\n{ex}\nYou can change the charset using --charset CLI argument or '.charset' directive.")
-        )
-        return b""
+    return ascii_impl(state, ascii_text)
 
 
-@metacommand
+@metacommand(raw=True)
 def asciz(state, ascii_text: str) -> bytes:
-    try:
-        return ascii_text.encode(state["compiler"].output_charset) + b"\x00"
-    except UnicodeEncodeError as ex:
-        reports.error(
-            "invalid-character",
-            (state["insn"].ctx_start, state["insn"].ctx_end, f"Cannot encode this string using the selected output charset:\n{ex}\nYou can change the charset using --charset CLI argument or '.charset' directive.")
-        )
-        return b""
+    return ascii_impl(state, ascii_text) + b"\x00"
 
 
 @metacommand(raw=True)
