@@ -143,12 +143,10 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
         return self
 
     def __mul__(self, rhs):
-        if self.typ is int and not isinstance(rhs, BaseDeferred):
-            return LinearPolynomial[self.typ]({self: rhs})
+        if self.typ is int:
+            return Deferred[self.typ](lambda: LinearPolynomial[self.typ]({self: wait(rhs)}))
         else:
-            # TODO: maybe it makes sense not to await LinearPolynomial when
-            # multiplying Deferred by LinearPolynomial (and the other way round)
-            return Deferred[self.typ](lambda: wait(self) * wait(rhs))
+            raise TypeError(f"Don't know how to multiply {self.typ.__name__}")
 
     def __rmul__(self, lhs):
         if self.typ is int:
