@@ -766,6 +766,8 @@ def test_include(fs):
         (".extern all", "a = 1"),
         (".extern a", "a:"),
         (".extern all", "a:"),
+        ("", "a == 1"),
+        ("", "a == 1"),
         ("", "a::"),
         ("", "a::")
     ]
@@ -789,6 +791,8 @@ def test_extern_downstream(fs):
         (".extern all", "a = 1"),
         (".extern a", "a:"),
         (".extern all", "a:"),
+        ("", "a == 1"),
+        ("", "a == 1"),
         ("", "a::"),
         ("", "a::")
     ):

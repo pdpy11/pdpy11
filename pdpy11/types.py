@@ -163,7 +163,7 @@ class Label(Token):
         super().__init__(ctx_start, ctx_end)
         self.name: str = name
         self.local: bool = name[0].isdigit()
-        self.is_extern = is_extern
+        self.is_extern: bool = is_extern
 
     def __repr__(self):
         return f"{self.name}:" + (":" if self.is_extern else "")
@@ -173,16 +173,17 @@ class Label(Token):
 
 
 class Assignment(Token):
-    def __init__(self, ctx_start, ctx_end, target: Symbol, value):
+    def __init__(self, ctx_start, ctx_end, target: Symbol, value, is_extern: bool):
         super().__init__(ctx_start, ctx_end)
         self.target: Symbol = target
         self.value = value
+        self.is_extern: bool = is_extern
 
     def __repr__(self):
-        return f"{self.target!r} = {self.value!r}"
+        return f"{self.target!r} ={'=' if self.is_extern else ''} {self.value!r}"
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and (self.target, self.value) == (rhs.target, rhs.value)
+        return isinstance(rhs, type(self)) and (self.target, self.value, self.is_extern) == (rhs.target, rhs.value, rhs.is_extern)
 
 
 class CodeBlock(Token):

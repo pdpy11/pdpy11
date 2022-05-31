@@ -353,6 +353,7 @@ def assignment(ctx):
 
     ctx_equals = ctx.save()
     equals_sign(ctx)
+    is_extern = bool(Parser.literal("=", skip_whitespace_before=False)(ctx, maybe=True))
     ctx_after_equals = ctx.save()
 
     ctx.skip_whitespace()
@@ -360,7 +361,7 @@ def assignment(ctx):
     value = expression(ctx, report=(
         reports.critical,
         "invalid-assignment",
-        (ctx_equals, ctx_after_equals, "An equals sign '=' must be followed by an expression (as in assignment)"),
+        (ctx_equals, ctx_after_equals, "An equals sign must be followed by an expression (as in assignment)"),
         (ctx, ctx, "...yet no expression was matched here")
     ))
 
@@ -376,7 +377,14 @@ def assignment(ctx):
                 (target.ctx_start, target.ctx_end, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'?")
             )
 
-    return types.Assignment(ctx_start, ctx, target, value)
+    if is_extern and isinstance(target, types.InstructionPointer):
+        reports.error(
+            "invalid-assignment",
+            (ctx_start, ctx_after_equals, "Assignment to '.' cannot be external")
+        )
+        is_extern = False
+
+    return types.Assignment(ctx_start, ctx, target, value, is_extern=is_extern)
 
 
 @Parser

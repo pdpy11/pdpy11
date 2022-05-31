@@ -174,6 +174,9 @@ class Compiler:
         self.symbols[name] = (insn, Deferred[int](lambda: insn.value.resolve(state), insn.target.name))
         self._handle_new_symbol(name)
 
+        if insn.is_extern:
+            self.declare_external_symbol(insn, insn.target.name, state)
+
         if state["extern_all"]:
             self.declare_external_symbol(state["extern_all"], insn.target.name, state)
 

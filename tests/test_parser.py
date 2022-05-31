@@ -194,17 +194,23 @@ def test_auto_extern():
     with util.expect_error("invalid-insn"):
         parse(f"a: : insn")
 
+    expect_code(f"a == 1", c(Assignment)(c(Symbol)("a"), ONE, is_extern=True))
+    with util.expect_error("invalid-assignment"):
+        parse(f"a = = 1")
+    with util.expect_error("invalid-assignment"):
+        parse(f". == 1")
+
 
 @pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_", "a.b"])
 def test_assignment(name):
-    expect_code(f"{name} = 1", c(Assignment)(c(Symbol)(name), ONE))
-    expect_code(f"{name} = 1 + 2", c(Assignment)(c(Symbol)(name), c(add)(ONE, TWO)))
+    expect_code(f"{name} = 1", c(Assignment)(c(Symbol)(name), ONE, is_extern=False))
+    expect_code(f"{name} = 1 + 2", c(Assignment)(c(Symbol)(name), c(add)(ONE, TWO), is_extern=False))
 
 
 def test_comments():
-    expect_code(f"a = 1 ; amazing, isn't it?", c(Assignment)(A, ONE))
-    expect_code(f"a = 1\n; amazing, isn't it?", c(Assignment)(A, ONE))
-    expect_code(f"a = 1\n; amazing, isn't it?\n; one more comment\nb = 2", c(Assignment)(A, ONE), c(Assignment)(B, TWO))
+    expect_code(f"a = 1 ; amazing, isn't it?", c(Assignment)(A, ONE, is_extern=False))
+    expect_code(f"a = 1\n; amazing, isn't it?", c(Assignment)(A, ONE, is_extern=False))
+    expect_code(f"a = 1\n; amazing, isn't it?\n; one more comment\nb = 2", c(Assignment)(A, ONE, is_extern=False), c(Assignment)(B, TWO, is_extern=False))
 
 
 def test_context():
