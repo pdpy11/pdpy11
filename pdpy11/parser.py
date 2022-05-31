@@ -883,9 +883,10 @@ def instruction(ctx):
 
     operands = []
 
-    if comma(ctx, maybe=True, lookahead=True):
-        ctx_before_comma = ctx.save()
-        comma(ctx)
+
+    ctx.skip_whitespace()
+    ctx_before_comma = ctx.save()
+    if comma(ctx, maybe=True):
         reports.critical(
             "invalid-insn",
             (ctx_before_comma, ctx, "Unexpected comma right after instruction name; expected an operand"),
