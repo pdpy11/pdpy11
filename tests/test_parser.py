@@ -235,7 +235,8 @@ def test_postfix_operator(operator):
 def test_caret_operators():
     with util.expect_error("invalid-expression"):
         parse("clr ^Z 1")
-    expect_code("insn ^Z 1", c(WordList)([c(xor)(c(Symbol)("insn"), c(Symbol)("Z"))]), c(WordList)([ONE]))
+    with util.expect_warning("missing-newline"):
+        expect_code("insn ^Z 1", c(WordList)([c(xor)(c(Symbol)("insn"), c(Symbol)("Z"))]), c(WordList)([ONE]))
 
 
 @pytest.mark.parametrize(
@@ -432,6 +433,10 @@ def test_insn_syntax():
         parse("insn #(1)nop")
     with util.expect_warning("missing-newline"):
         parse("insn .word 1")
+    with util.expect_warning("missing-newline"):
+        parse("1 2")
+    with util.expect_warning("missing-newline"):
+        parse("1 nop")
     with util.expect_error("invalid-expression"):
         parse("insn%")
 

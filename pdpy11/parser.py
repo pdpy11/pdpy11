@@ -1099,6 +1099,12 @@ def word_list(ctx):
             "missing-whitespace",
             (ctx, ctx, "Expected whitespace after word list. Proceeding as if a new instruction is starting")
         )
+    elif (newline | eof)(ctx, maybe=True, lookahead=True) is None:
+        reports.warning(
+            "missing-newline",
+            (ctx, ctx, "Expected newline after a word list; assuming a new instruction. Please add a\nnewline here if an instruction was implied, and a comma if it's the continuation\nof a word list."),
+            (ctx_start, ctx, "The word list started here")
+        )
 
     return types.WordList(ctx_start, ctx, words)
 
