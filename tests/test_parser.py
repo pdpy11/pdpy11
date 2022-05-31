@@ -217,6 +217,27 @@ def test_brackets2():
         parse("insn <1 + <2>>")
 
 
+@pytest.mark.parametrize("operator", [add, sub, mul, div, mod, lshift, rshift, lsh, and_, xor, or_, or2])
+def test_infix_operator(operator):
+    expect_code(f"insn 1 {operator.char} 2", INSN(c(operator)(ONE, TWO)))
+
+
+@pytest.mark.parametrize("operator", [pos, neg, inv, inv2, immediate, deferred])
+def test_prefix_operator(operator):
+    expect_code(f"insn {operator.char} <1>", INSN(c(operator)(angle(ONE))))
+
+
+@pytest.mark.parametrize("operator", [postadd, postsub])
+def test_postfix_operator(operator):
+    expect_code(f"insn 1 {operator.char}", INSN(c(operator)(ONE)))
+
+
+def test_caret_operators():
+    with util.expect_error("invalid-expression"):
+        parse("clr ^Z 1")
+    expect_code("insn ^Z 1", c(WordList)([c(xor)(c(Symbol)("insn"), c(Symbol)("Z"))]), c(WordList)([ONE]))
+
+
 @pytest.mark.parametrize(
     "code,value,is_valid_label",
     [

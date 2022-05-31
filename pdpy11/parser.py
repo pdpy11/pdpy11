@@ -732,16 +732,33 @@ def expression(ctx, terminator=never):
         expr = expression_literal_rec(ctx, terminator=terminator, maybe=True)
         if expr is not None:
             break
-        char = (~terminator + prefix_operator)(ctx, report=(
+
+        report = (
             reports.critical,
             "invalid-expression",
             (ctx, ctx, "Expected an expression or an operator here"),
             (ctx_start, ctx, "...after a prefix here")
-        ) if op_stack else None)
+        ) if op_stack else None
+
+        (~terminator)(ctx, report=report)
+
+        char = prefix_operator(ctx, maybe=True)
+        if char is None:
+            # This is an error either way, but this lets us report typos in caret-style prefix
+            # operators
+            ctx.skip_whitespace()
+            ctx_before_op = ctx.save()
+            prefix_op = Parser.regex(r"\^\S")(ctx, report=report)
+            reports.critical(
+                "invalid-expression",
+                (ctx_before_op, ctx, f"'{prefix_op}' is an invalid prefix operator")
+            )
+
         op_stack.append({
             "ctx_start": ctx_op,
             "operator": operators.operators[operators.PrefixOperator][char]
         })
+
         ctx.skip_whitespace()
         ctx_op = ctx.save()
 
@@ -1061,8 +1078,8 @@ def word_list(ctx):
     ctx_after_first_operand = ctx.save()
 
     while True:
-        ctx.skip_whitespace()
         ctx_before_comma = ctx.save()
+        ctx_before_comma.skip_whitespace()
         if not comma(ctx, maybe=True):
             break
         ctx_after_comma = ctx.save()
