@@ -1,13 +1,15 @@
 import collections
+import struct
 import sys
 
 from .builtins import builtin_commands
 from .containers import CaseInsensitiveDict
-from .deferred import Promise, wait, BaseDeferred, Deferred, DeferredCycle
+from .deferred import Promise, wait, BaseDeferred, Deferred, SizedDeferred, DeferredCycle
 from .devices import open_device
 from .formats import file_formats
 from .metacommand_impl import get_as_int
-from .types import Instruction, Label, Assignment, InstructionPointer
+from . import operators
+from .types import Instruction, Label, Assignment, InstructionPointer, WordList, ParenthesizedExpression
 from . import reports
 
 
@@ -58,6 +60,14 @@ class Compiler:
                             addr += chunk.length()
                         else:
                             addr += len(chunk)
+
+                elif isinstance(insn, WordList):
+                    chunk = self.compile_word_list(insn, insn.words, state)
+                    data += chunk
+                    if isinstance(chunk, BaseDeferred):
+                        addr += chunk.length()
+                    else:
+                        addr += len(chunk)
 
                 elif isinstance(insn, Label):
                     if state["context"] == "repeat":
@@ -223,24 +233,32 @@ class Compiler:
                 if name in self.symbols:
                     # Resolve a macro
                     symbol, _ = self.symbols[name]
-                    # TODO: pdpy in Macro-11 compatibility mode should support implicit
-                    # .word directive. That is when 'x = 5; x' is the same as
-                    # 'x = 5; .word x'. This is probably the right place to add the
-                    # check.
+
                     if isinstance(symbol, Label):
                         reports.error(
                             "meta-type-mismatch",
                             (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                            (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. Are you looking for macros?")
+                            (symbol.ctx_start, symbol.ctx_end, "...but is defined as a label here. You might want to add '.word' or use macros.")
                         )
                         return None
+
                     elif isinstance(symbol, Assignment):
-                        reports.error(
-                            "meta-type-mismatch",
-                            (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is used as an instruction name"),
-                            (symbol.ctx_start, symbol.ctx_end, "...but is defined as a constant here. You may be looking for MACRO-11 macros.\nNote that macros can also be defined implicitly using syntax like 'macro_name = .word 123'. Did you make a typo?")
-                        )
-                        return None
+                        # Implicit .word
+                        words = [insn.name] + insn.operands[:]
+                        if len(words) > 1:
+                            if isinstance(words[1], ParenthesizedExpression):
+                                # 'a (expr)' was misparsed as instruction 'a' with operand '(expr)'
+                                # instead of '.word a(expr)', where 'a(expr)' is a call
+                                words[0] = operators.call(words[0].ctx_start, words[1].ctx_end, words[0], words[1].expr)
+                                words.pop(1)
+                            else:
+                                reports.error(
+                                    "meta-type-mismatch",
+                                    (words[0].ctx_start, words[0].ctx_end, f"'{insn.name.name}' is used as an instruction name"),
+                                    (symbol.ctx_start, symbol.ctx_end, "...but is defined as a variable here. This would normally be interpreted as\nimplicit '.word', but the comma between the first and the second words is missing.")
+                                )
+                        return self.compile_word_list(insn, words, state)
+
                     else:
                         # TODO: macros
                         assert False  # pragma: no cover
@@ -250,6 +268,22 @@ class Compiler:
                 (insn.name.ctx_start, insn.name.ctx_end, f"'{insn.name.name}' is an undefined {'metainstruction' if insn.name.name[0] == '.' else 'instruction'}.\nIs our database incomplete? Report that on GitHub: https://github.com/imachug/pdpy11/issues/new")
             )
             return None
+
+
+    def compile_word_list(self, insn, insn_words, state):
+        def fn():
+            words = [get_as_int(state, "implicit word", insn, word, bitness=16, unsigned=False) for word in insn_words]
+            prefix = b""
+            if wait(state["emit_address"]) % 2 == 1:
+                prefix = b"\x00"
+                reports.error(
+                    "odd-address",
+                    (state["insn"].ctx_start, state["insn"].ctx_end, "This word list was emitted on an odd address.\nThe pointer was automatically adjusted one byte forward by inserting a null byte.\nThis may break labels and address calculation in your program;\nplease add '.even' or '.byte 0' where necessary.")
+                )
+            return prefix + b"".join(struct.pack("<H", word) for word in words)
+
+        return SizedDeferred[bytes](2 * len(insn_words), fn)
+
 
 
     def compile_include(self, file, addr):

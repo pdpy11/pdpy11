@@ -351,8 +351,6 @@ def test_end():
 
 def test_typing():
     with util.expect_error("meta-type-mismatch"):
-        compile("lbl = 1\nlbl")
-    with util.expect_error("meta-type-mismatch"):
         compile("lbl:\nlbl")
 
     # Not working yet
@@ -536,6 +534,33 @@ def test_numbers():
         expect_same(".word 18", ".word 18.")
     with util.expect_error("invalid-number"):
         expect_same(".word 19", ".word 19.")
+
+
+def test_implicit_word():
+    expect_same("123", ".word 123")
+    expect_same("0xa", ".word 0xa")
+    expect_same("^Xa", ".word ^Xa")
+    expect_same("<1>", ".word <1>")
+    expect_same("1 + 2", ".word 1 + 2")
+    expect_same("1, 2", ".word 1, 2")
+    expect_same("a = 1\na", "a = 1\n.word a")
+    expect_same("a = 1\na * 1", "a = 1\n.word a * 1")
+    expect_same("a = 1\nb = 2\na, b", "a = 1\nb = 2\n.word a, b")
+
+    # Parsed as as instruction 'a' with argument '+1' (unary plus)
+    with util.expect_error("meta-type-mismatch"):
+        compile("a = 1\na + 1")
+
+    # Parsed as a function call 'a(1)'
+    with util.expect_error("unexpected-value"):
+        expect_same("a = 1\na (1)", "a = 1\n.word a")
+    with util.expect_error("unexpected-value"):
+        expect_same("a = 1\na (1), 2", "a = 1\n.word a, 2")
+
+    with util.expect_error("meta-type-mismatch"):
+        expect_same("a = 1\na <1>", "a = 1\n.word a, <1>")
+    with util.expect_error("meta-type-mismatch"):
+        expect_same("a = 1\nb = 2\na b", "a = 1\nb = 2\n.word a, b")
 
 
 def test_error():

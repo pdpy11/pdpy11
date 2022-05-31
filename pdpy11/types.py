@@ -47,6 +47,18 @@ class Instruction(Token):
         return isinstance(rhs, type(self)) and (self.name, self.operands) == (rhs.name, rhs.operands)
 
 
+class WordList(Token):
+    def __init__(self, ctx_start, ctx_end, words):
+        super().__init__(ctx_start, ctx_end)
+        self.words = words
+
+    def __repr__(self):
+        return ", ".join(map(repr, self.words))
+
+    def __eq__(self, rhs):
+        return isinstance(rhs, type(self)) and self.words == rhs.words
+
+
 class InstructionPointer(ExpressionToken):
     def __repr__(self):
         return "."

@@ -49,9 +49,7 @@ class Parser:
     def __add__(self, rhs):
         assert isinstance(rhs, Parser)
         def fn(ctx):
-            result = self(ctx)
-            rhs(ctx)
-            return result
+            return self(ctx) + rhs(ctx)
         return Parser(fn)
 
 
@@ -136,7 +134,7 @@ def eof(ctx):
     ctx.skip_whitespace()
     if ctx.pos < len(ctx.code):
         raise reports.RecoverableError("Failed to match EOF")
-    return True
+    return ""
 
 
 newline = Parser.regex(r"\s*\n|\s*;[^\n]*", skip_whitespace_before=False)
@@ -719,10 +717,9 @@ def expression(ctx):
         ctx.skip_whitespace()
         ctx_op = ctx.save()
 
-        char = (postfix_operator + (newline | comma | closing_parenthesis | closing_bracket | eof))(ctx, maybe=True, lookahead=True)
-        if char:
+        if (postfix_operator + (newline | comma | closing_parenthesis | closing_bracket | eof))(ctx, maybe=True, lookahead=True):
             # Postfix operator
-            postfix_operator(ctx)
+            char = postfix_operator(ctx)
             ctx_op_end = ctx.save()
 
             operator = operators.operators[operators.PostfixOperator][char]
@@ -809,14 +806,7 @@ def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
     else:
         insn = None
 
-    is_metacommand = (
-        isinstance(insn, Metacommand)
-        or (
-            insn is None
-            and (insn_name.startswith(".") or "_" in insn_name)
-        )
-    )
-
+    is_metacommand = insn_name.startswith(".") or isinstance(insn, Metacommand)
     if is_metacommand:
         if insn is not None and insn.operand_info:
             operand_type = insn.operand_info[min(operand_idx, len(insn.operand_info) - 1)]["type"]
@@ -863,6 +853,31 @@ def instruction(ctx):
     insn_name_symbol = types.Symbol(ctx_start, ctx_state_after_name, insn_name)
 
 
+    if insn_name in builtin_commands:
+        if comma(ctx, maybe=True, lookahead=True):
+            ctx.skip_whitespace()
+            ctx_before_comma = ctx.save()
+            comma(ctx)
+            reports.critical(
+                "invalid-insn",
+                (ctx_before_comma, ctx, f"Unexpected comma right after instruction name; expected an operand. This is not\nparsed as implicit '.word' because '{insn_name}' is a real instruction."),
+                (ctx_start, ctx_state_after_name, "Instruction started here")
+            )
+    elif not insn_name.startswith("."):
+        # Potentially implicit '.word'. If this is followed by a comma, this is certainly a word
+        # list. If it's followed by, say, an asterisk, it has to be a word list too, because an
+        # operand cannot start with an asterisk. But what if it's followed by a minus?
+        #     clrr -1
+        # can be either a typo ('clrr' instead of 'clr'), or mean
+        #     .word clrr - 1
+        # Both cases are valid, but assuming the latter might cause unclear diagnostics, so we parse
+        # it as the former. People can always switch to the former by using explicit .word or
+        # parentheses.
+        pattern = comma | (~prefix_operator + infix_operator)
+        if pattern(ctx, maybe=True):
+            raise reports.RecoverableError("Implicit word, not an instruction")
+
+
     if insn_name in builtin_commands and isinstance(builtin_commands[insn_name], Metacommand) and builtin_commands[insn_name].literal_string_operand:
         idx = ctx.code.find("\n", ctx.pos)
         if idx == -1:
@@ -882,17 +897,6 @@ def instruction(ctx):
 
     if closing_bracket(ctx, maybe=True, lookahead=True):
         return types.Instruction(ctx_start, ctx, insn_name_symbol, [])
-
-
-    if comma(ctx, maybe=True, lookahead=True):
-        ctx.skip_whitespace()
-        ctx_before_comma = ctx.save()
-        comma(ctx)
-        reports.critical(
-            "invalid-insn",
-            (ctx_before_comma, ctx, "Unexpected comma right after instruction name; expected an operand"),
-            (ctx_start, ctx_state_after_name, "Instruction started here")
-        )
 
 
     if newline(ctx, maybe=True, lookahead=True):
@@ -996,6 +1000,40 @@ def instruction(ctx):
 
 
 @Parser
+def word_list(ctx):
+    ctx.skip_whitespace()
+
+    ctx_start = ctx.save()
+    words = [insn_operand(ctx)]
+    ctx_after_first_operand = ctx.save()
+
+    while True:
+        ctx.skip_whitespace()
+        ctx_before_comma = ctx.save()
+        if not comma(ctx, maybe=True):
+            break
+        ctx_after_comma = ctx.save()
+        ctx.skip_whitespace()
+
+        word = insn_operand(ctx, report=(
+            reports.critical,
+            "invalid-operand",
+            (ctx_before_comma, ctx_after_comma, "Expected word after comma in a word list"),
+            (ctx_start, ctx_after_first_operand, "(list started here)"),
+            (ctx, ctx, "This does not look like a word")
+        ))
+        words.append(word)
+
+    if ctx.pos < len(ctx.code) and ctx.code[ctx.pos].strip() not in ("", ";"):
+        reports.error(
+            "missing-whitespace",
+            (ctx, ctx, "Expected whitespace after word list. Proceeding as if a new instruction is starting")
+        )
+
+    return types.WordList(ctx_start, ctx, words)
+
+
+@Parser
 def code(ctx, break_on_closing_bracket=False):
     ctx_start = ctx.save()
 
@@ -1007,7 +1045,7 @@ def code(ctx, break_on_closing_bracket=False):
         if break_on_closing_bracket and closing_bracket(ctx, maybe=True):
             break
 
-        insn = (label | assignment | instruction)(ctx, report=(
+        insn = (label | assignment | instruction | word_list)(ctx, report=(
             reports.critical,
             "invalid-insn",
             (ctx_start, ctx_start, "Could not parse instruction starting from here")

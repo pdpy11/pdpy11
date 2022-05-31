@@ -143,10 +143,10 @@ def test_brackets():
     expect_code("insn (1)(2)", INSN(c(call)(paren(ONE), TWO)))
     expect_code("insn <1>(2)", INSN(c(call)(angle(ONE), TWO)))
 
-    with util.expect_error("invalid-insn", "missing-whitespace"):
-        expect_code("insn (1)<2>", INSN(c(call)(paren(ONE), TWO)))
-    with util.expect_error("invalid-insn", "missing-whitespace"):
-        expect_code("insn <1><2>", INSN(c(call)(angle(ONE), TWO)))
+    with util.expect_error("missing-whitespace"):
+        expect_code("insn (1)<2>", INSN(paren(ONE)), c(WordList)([angle(TWO)]))
+    with util.expect_error("missing-whitespace"):
+        expect_code("insn <1><2>", INSN(angle(ONE)), c(WordList)([angle(TWO)]))
 
 
 @pytest.mark.parametrize(
@@ -308,18 +308,19 @@ def test_string2():
     expect_code(f".ascii <1>", ASCII(c(AngleBracketedChar)(ONE)))
 
 
-@pytest.mark.parametrize("name", [".unknownmetacommand", "unknown_metacommand"])
-def test_unknown_metacommand(name):
+def test_unknown_metacommand():
     for char in "'\"/":
-        expect_code(f"{name} {char}Hello{char}", c(Instruction)(c(Symbol)(name), [c(QuotedString)(char, "Hello")]))
-        expect_code(f"{name} {char}Hello{char} <1> {char}world{char}", c(Instruction)(c(Symbol)(name), [c(StringConcatenation)([c(QuotedString)(char, "Hello"), c(AngleBracketedChar)(ONE), c(QuotedString)(char, "world")])]))
-    expect_code(f"{name} 1 + 2", c(Instruction)(c(Symbol)(name), [c(add)(ONE, TWO)]))
-    expect_code(f"{name} a + b", c(Instruction)(c(Symbol)(name), [c(add)(A, B)]))
+        expect_code(f".unknownmetacommand {char}Hello{char}", c(Instruction)(c(Symbol)(".unknownmetacommand"), [c(QuotedString)(char, "Hello")]))
+        expect_code(f".unknownmetacommand {char}Hello{char} <1> {char}world{char}", c(Instruction)(c(Symbol)(".unknownmetacommand"), [c(StringConcatenation)([c(QuotedString)(char, "Hello"), c(AngleBracketedChar)(ONE), c(QuotedString)(char, "world")])]))
+    expect_code(f".unknownmetacommand 1 + 2", c(Instruction)(c(Symbol)(".unknownmetacommand"), [c(add)(ONE, TWO)]))
+    expect_code(f".unknownmetacommand a + b", c(Instruction)(c(Symbol)(".unknownmetacommand"), [c(add)(A, B)]))
 
 
 def test_insn_syntax():
     parse("insn #(1) nop")
     with util.expect_error("invalid-insn"):
+        parse("clr,")
+    with util.expect_error("invalid-operand"):
         parse("insn,")
     with util.expect_warning("missing-whitespace"):
         parse("insn#1")
@@ -327,7 +328,7 @@ def test_insn_syntax():
         parse("insn #(1)nop")
     with util.expect_warning("missing-newline"):
         parse("insn .word 1")
-    with util.expect_error("missing-newline", "invalid-insn"):
+    with util.expect_error("invalid-expression"):
         parse("insn%")
 
 
