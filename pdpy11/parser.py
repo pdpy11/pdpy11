@@ -654,7 +654,6 @@ def expression_literal(ctx, terminator=never):
 infix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.InfixOperator]])
 prefix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PrefixOperator]])
 postfix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PostfixOperator]])
-register_name = Parser.either([Parser.literal(reg) for reg in REGISTER_NAMES])
 
 
 @Parser
@@ -837,35 +836,6 @@ def expression(ctx, terminator=never):
     return stack[-1]
 
 
-@Parser
-def register_literal(ctx):
-    ctx.skip_whitespace()
-    ctx_start = ctx.save()
-    name = register_name(ctx)
-    return types.Symbol(ctx_start, ctx, name)
-
-
-@Parser
-def autoincrement_addressing_operand(ctx):
-    ctx_start = ctx.save()
-    opening_parenthesis(ctx)
-    reg = register_literal(ctx)
-    closing_parenthesis(ctx)
-    ctx_after_paren = ctx.save()
-    plus(ctx)
-    return operators.postadd(ctx_start, ctx, types.ParenthesizedExpression(ctx_start, ctx_after_paren, reg, opening_parenthesis="(", closing_parenthesis=")"))
-
-
-@Parser
-def deferred_autoincrement_addressing_operand(ctx):
-    ctx_start = ctx.save()
-    at_sign(ctx)
-    inner = autoincrement_addressing_operand(ctx)
-    return operators.deferred(ctx_start, ctx, inner)
-
-
-insn_operand = autoincrement_addressing_operand | deferred_autoincrement_addressing_operand | expression
-
 def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
     if insn_name in builtin_commands:
         insn = builtin_commands[insn_name]
@@ -901,7 +871,7 @@ def parse_insn_operand(ctx, insn_name, operand_idx, **kwargs):
     if operand_type is str:
         return long_string(ctx, **kwargs)
     else:
-        return insn_operand(ctx, **kwargs)
+        return expression(ctx, **kwargs)
 
 
 @Parser
@@ -1074,7 +1044,7 @@ def word_list(ctx):
     ctx.skip_whitespace()
 
     ctx_start = ctx.save()
-    words = [insn_operand(ctx)]
+    words = [expression(ctx)]
     ctx_after_first_operand = ctx.save()
 
     while True:
@@ -1085,7 +1055,7 @@ def word_list(ctx):
         ctx_after_comma = ctx.save()
         ctx.skip_whitespace()
 
-        word = insn_operand(ctx, report=(
+        word = expression(ctx, report=(
             reports.critical,
             "invalid-operand",
             (ctx_before_comma, ctx_after_comma, "Expected word after comma in a word list"),
