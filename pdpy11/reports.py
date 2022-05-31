@@ -1,5 +1,6 @@
 import itertools
 import re
+import sys
 
 
 WARNING_CLASSES = {
@@ -128,9 +129,9 @@ class GraphicalHandler:
             lines = ctx.code.split("\n")
 
             if file_i == 0:
-                print(f"{priority.text} in \x1b[96m{filename}\x1b[0m: \x1b[38;5;208m[-W{identifier}]\x1b[0m")
+                print(f"{priority.text} in \x1b[96m{filename}\x1b[0m: \x1b[38;5;208m[-W{identifier}]\x1b[0m", file=sys.stderr)
             else:
-                print(f"In \x1b[96m{filename}\x1b[0m:")
+                print(f"In \x1b[96m{filename}\x1b[0m:", file=sys.stderr)
 
             reports_lst = []
             for ctx_start, ctx_end, text in file_reports:
@@ -181,7 +182,7 @@ class GraphicalHandler:
             for line_no, events in events_per_line.items():
                 events.sort(key=lambda event: event[0])
                 events.reverse()
-                print("\x1b[92m" + str(line_no + 1).rjust(5) + "\x1b[0m \x1b[38;5;242m│ ", end="")
+                print("\x1b[92m" + str(line_no + 1).rjust(5) + "\x1b[0m \x1b[38;5;242m│ ", end="", file=sys.stderr)
 
                 chars = ["  "] * cnt_columns
                 has_report = False
@@ -192,19 +193,19 @@ class GraphicalHandler:
                     elif event in (0, -1):
                         chars[i] = "│ "
                     has_report = has_report or event in (1, 2)
-                print("\x1b[38;5;11m" + "".join(chars) + "\x1b[0m", end="")
+                print("\x1b[38;5;11m" + "".join(chars) + "\x1b[0m", end="", file=sys.stderr)
 
                 line = lines[line_no].replace("\t", " " * 4)
                 if has_report:
-                    print("\x1b[0m" + colorize(line), end="")
+                    print("\x1b[0m" + colorize(line), end="", file=sys.stderr)
                 else:
-                    print("\x1b[38;5;242m" + line + "\x1b[0m", end="")
+                    print("\x1b[38;5;242m" + line + "\x1b[0m", end="", file=sys.stderr)
 
                 for event, report in events:
                     if event in (1, 2):
-                        print(f"\x1b[{1 + 5 + 3 + 2 * cnt_columns + report.start_col_no}G\x1b[48;5;52m{colorize(line[report.start_col_no:report.end_col_no])}\x1b[0m", end="")
+                        print(f"\x1b[{1 + 5 + 3 + 2 * cnt_columns + report.start_col_no}G\x1b[48;5;52m{colorize(line[report.start_col_no:report.end_col_no])}\x1b[0m", end="", file=sys.stderr)
 
-                print()
+                print(file=sys.stderr)
 
                 for event, report in events:
                     i = cnt_columns - 1 - report.max_column
@@ -224,15 +225,15 @@ class GraphicalHandler:
                             else:
                                 chars[j] = chars[j][0] + "─"
                         for line_i, line in enumerate(report.text.split("\n")):
-                            print(" " * 5 + " \x1b[38;5;242m│ \x1b[38;5;11m" + "".join(chars) + ("─" if line_i == 0 else " ") * (report.start_col_no - 2) + "─ " + line + "\x1b[0m")
+                            print(" " * 5 + " \x1b[38;5;242m│ \x1b[38;5;11m" + "".join(chars) + ("─" if line_i == 0 else " ") * (report.start_col_no - 2) + "─ " + line + "\x1b[0m", file=sys.stderr)
                             if line_i == 0:
                                 chars = old_chars
                                 chars[i] = "  "
                     elif event == 2:
                         for line_i, line in enumerate(report.text.split("\n")):
-                            print(" " * 5 + " \x1b[38;5;242m│ \x1b[38;5;11m" + "".join(chars) + " " * report.start_col_no + ("🡹 " if line_i == 0 else "  ") + line + "\x1b[0m")
+                            print(" " * 5 + " \x1b[38;5;242m│ \x1b[38;5;11m" + "".join(chars) + " " * report.start_col_no + ("🡹 " if line_i == 0 else "  ") + line + "\x1b[0m", file=sys.stderr)
 
-        print()
+        print(file=sys.stderr)
 
 
 def emit_report(priority, identifier, *reports):

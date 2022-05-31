@@ -465,6 +465,20 @@ def test_valid_local_label_names(name):
     expect_same("br 1\n1:", f"br {name}\n{name}:")
 
 
+def test_clasing_label_names():
+    with util.expect_warning("suspicious-name"):
+        expect_same("r1: jmp r1:", "1: jmp 1:")
+
+    with util.expect_warning("suspicious-name"):
+        expect_same("r1: jmp r1", "1: jmp r1")
+
+    with util.expect_warning("suspicious-name"):
+        expect_same("mov: jmp mov:", "1: jmp 1:")
+
+    with util.expect_warning("suspicious-name", "suspicious-name"):
+        expect_same("mov: jmp mov", "1: jmp 1:")
+
+
 def test_unexpected_symbol():
     with util.expect_error("unexpected-symbol-definition"):
         compile(".repeat 10 { lbl = 1 }")

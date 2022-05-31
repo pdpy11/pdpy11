@@ -34,7 +34,7 @@ REGISTER_NAMES = {
 }
 
 def try_register_from_symbol(operand):
-    if isinstance(operand, Symbol) and operand.name.lower() in REGISTER_NAMES:
+    if isinstance(operand, Symbol) and not operand.is_necessarily_label and operand.name.lower() in REGISTER_NAMES:
         return REGISTER_NAMES[operand.name.lower()]
     else:
         return None
@@ -211,7 +211,7 @@ class OffsetOperandStub:
         insn = state["insn"]
 
         if isinstance(operand, Number) and operand.is_valid_label:
-            operand = Symbol(operand.ctx_start, operand.ctx_end, operand.representation)
+            operand = Symbol(operand.ctx_start, operand.ctx_end, operand.representation, is_necessarily_label=True)
         elif "(" not in operand.text() and ":" not in operand.text():
             # TODO: the condition of this if being '"(" not in operand.text()'
             # may not work for multiline expressions, e.g.
@@ -234,7 +234,7 @@ class OffsetOperandStub:
                             (token.ctx_start, token.ctx_end, f"Thus, for compatibility, the first number that can be parsed as a local label is treated as such.\nFor example, '1 + 2' is parsed as 'address of local label 1 plus two'.\nThis may be unintended, so please state your intent explicitly:\n- if you meant numbers to be numbers, add parentheses around the operand: '({operand!r})', and\n- if you wanted '{token!r}' to be a label, add a colon after it: '{token!r}:'.")
                         )
                         fixup_active = False
-                        return Symbol(token.ctx_start, token.ctx_end, token.representation)
+                        return Symbol(token.ctx_start, token.ctx_end, token.representation, is_necessarily_label=True)
                 elif isinstance(token, (Symbol, InstructionPointer)):
                     fixup_active = False
                 else:

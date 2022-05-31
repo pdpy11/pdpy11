@@ -183,7 +183,7 @@ def test_labels(name):
     expect_code(f"{name}: insn\n{name}:", c(Label)(name), INSN(), c(Label)(name))
     if not name[0].isdigit():
         expect_code(f"insn {name}", INSN(c(Symbol)(name)))
-    expect_code(f"insn {name}:", INSN(c(Symbol)(name)))
+    expect_code(f"insn {name}:", INSN(c(Symbol)(name, is_necessarily_label=True)))
 
 
 @pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_"])
@@ -222,12 +222,10 @@ def test_unexpected_reserved_name():
     with util.expect_warning("suspicious-name"):
         parse("r0 = 1")
 
-    with util.expect_warning("suspicious-name"):
-        parse("clr mov:")
-    with util.expect_warning("suspicious-name"):
-        parse("clr fadd:")
-    with util.expect_warning("suspicious-name"):
-        parse("clr r0:")
+    # fine because there's an explicit colon
+    parse("clr mov:")
+    parse("clr fadd:")
+    parse("clr r0:")
 
     with util.expect_warning("suspicious-name"):
         parse("insn mov, 1")

@@ -89,18 +89,19 @@ class BracketedExpression(ExpressionToken):
 
 
 class Symbol(ExpressionToken):
-    def __init__(self, ctx_start, ctx_end, name: str):
+    def __init__(self, ctx_start, ctx_end, name: str, is_necessarily_label: bool=False):
         super().__init__(ctx_start, ctx_end)
         self.name: str = name
+        self.is_necessarily_label: bool = is_necessarily_label
 
     def __repr__(self):
-        return self.name
+        return self.name + (":" if self.is_necessarily_label else "")
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.name == rhs.name
+        return isinstance(rhs, type(self)) and (self.name, self.is_necessarily_label) == (rhs.name, rhs.is_necessarily_label)
 
     def _resolve(self, state):
-        if self.name.lower() in ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "sp", "pc"):
+        if self.name.lower() in ("r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "sp", "pc") and not self.is_necessarily_label:
             reports.error(
                 "unexpected-register",
                 (self.ctx_start, self.ctx_end, "A register cannot be used here. An integer or a symbol are expected")

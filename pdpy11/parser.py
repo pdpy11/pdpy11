@@ -374,19 +374,15 @@ def symbol_expression(ctx):
     ctx_start = ctx.save()
 
     symbol = symbol_literal(ctx)
-    if symbol in builtin_commands:
+    has_colon = bool(colon(ctx, maybe=True))
+
+    if symbol in builtin_commands and not has_colon:
         reports.warning(
             "suspicious-name",
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as an operand.\nCheck for a missing newline or an excess comma before it.")
         )
 
-    if colon(ctx, maybe=True) and symbol.lower() in REGISTER_NAMES:
-        reports.warning(
-            "suspicious-name",
-            (ctx_start, ctx, "This symbol suspiciously resembles a register, but is parsed as a label.")
-        )
-
-    return types.Symbol(ctx_start, ctx, symbol)
+    return types.Symbol(ctx_start, ctx, symbol, is_necessarily_label=has_colon)
 
 
 @Parser
@@ -394,8 +390,8 @@ def local_symbol_expression(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
     symbol = local_symbol_literal(ctx)
-    colon(ctx, maybe=not symbol.isdigit())
-    return types.Symbol(ctx_start, ctx, symbol)
+    has_colon = bool(colon(ctx, maybe=not symbol.isdigit()))
+    return types.Symbol(ctx_start, ctx, symbol, is_necessarily_label=has_colon)
 
 
 @Parser
