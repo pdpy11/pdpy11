@@ -331,11 +331,17 @@ def test_insn_syntax():
         parse("insn%")
 
 
+@pytest.mark.parametrize("name", ["clr", "mov"])
+@pytest.mark.parametrize("arg", ["1", "@#1", "'x", "\"ab", "^rabc", "(1)", "<1>"])
+def test_newlines_with_arguments(name, arg):
+    with util.expect_warning("unexpected-newline"):
+        assert parse(f"{name}\n{arg}") == parse(f"{name} {arg}")
+
+
 def test_newlines():
-    assert parse("insn\n1") == parse("insn 1")
-    assert parse("insn\n@#1") == parse("insn @#1")
-    assert parse("insn\n'x") == parse("insn 'x")
-    assert parse("insn\n\"ab") == parse("insn \"ab")
-    assert parse("insn\n^rabc") == parse("insn ^rabc")
-    assert parse("insn\n(1)") == parse("insn (1)")
-    assert parse("insn\n<1>") == parse("insn <1>")
+    with util.expect_warning("unexpected-newline"):
+        assert parse("clr\n@#0") == parse("clr @#0")
+    with util.expect_warning("unexpected-newline"):
+        assert parse("mov\n@#0, @#1") == parse("mov @#0, @#1")
+    assert parse("mov @#0\n, @#1") == parse("mov @#0, @#1")
+    assert parse("mov @#0,\n@#1") == parse("mov @#0, @#1")

@@ -880,120 +880,117 @@ def instruction(ctx):
         return types.Instruction(ctx_start, ctx, insn_name_symbol, operands)
 
 
+    if closing_bracket(ctx, maybe=True, lookahead=True):
+        return types.Instruction(ctx_start, ctx, insn_name_symbol, [])
 
-    operands = []
 
-
-    ctx.skip_whitespace()
-    ctx_before_comma = ctx.save()
-    if comma(ctx, maybe=True):
+    if comma(ctx, maybe=True, lookahead=True):
+        ctx.skip_whitespace()
+        ctx_before_comma = ctx.save()
+        comma(ctx)
         reports.critical(
             "invalid-insn",
             (ctx_before_comma, ctx, "Unexpected comma right after instruction name; expected an operand"),
             (ctx_start, ctx_state_after_name, "Instruction started here")
         )
 
-    with goto:
-        if closing_bracket(ctx, maybe=True, lookahead=True):
-            raise goto
 
-        if newline(ctx, maybe=True, lookahead=True):
-            # The recommended way to separate instructions is by newlines, e.g.
-            #     mov r0, r1
-            #     nop
-            #     add r1, r2
-            # Some old codes use spaces or tabs for that, so the code looks like
-            #     mov r0, r1 nop add r1, r2
-            # For a classic assemblers these two codes are equivalent, but pdpy
-            # supports rather complex macros, which makes it difficult to figure
-            # out at parse time whether e.g. 'insn insn' means two instructions
-            # 'insn' in a row or instruction 'insn' with operand 'insn'.
-            # Hence we have some sanity checks below to roll back to parsing a
-            # zero-operand instruction if we detect that the first operand seems
-            # to look like the next instruction.
-
-            # Other programmers tend to add newlines when that is unnecessary
-            # and even harmful, e.g.
+    if newline(ctx, maybe=True, lookahead=True):
+        if insn_name in builtin_commands and builtin_commands[insn_name].min_operands > 0:
+            # If the command always takes an argument, there's no choice but to parse it starting
+            # from the next line. This is still a bad thing to do: Macro-11 does not allow this, and
+            # for a good reason:
             #     .byte
             #     x, y, z
-            # which is parsed by some compilers as
+            # is parsed by some compilers as
             #     .byte x, y, z
             # and by others as
             #     .byte 0  # .byte without operands is .byte 0
             #     .word x, y, z  # implicit .word
-
-            # The first interpretation is probably more correct, but the second
-            # interpretation is more Macro-11 compatible.
-            # TODO: assume the second interpretation (and raise a warning) in
-            # Macro-11 compatibility mode
-
-            if (radix50_literal | (number + ~colon) | single_quoted_literal | double_quoted_literal | prefix_operator | opening_parenthesis | opening_angle_bracket | (symbol_literal + comma))(ctx, maybe=True, lookahead=True):
-                # All of these are invalid at the beginning of instruction, so
-                # they are probably a continuation of the current instruction.
-                # TODO: emit a warning?
-                pass
-            else:
-                raise goto
-
-        name = (instruction_name + ~colon)(ctx, maybe=True, lookahead=True)
-        if name in builtin_commands and (insn_name not in builtin_commands or builtin_commands[insn_name].max_operands == 0):
-            # Does not take an operand for sure
-            ctx_new = ctx.save()
-            ctx_new.skip_whitespace()
-            ctx_before_insn = ctx_new.save()
-            next_insn_name = instruction_name(ctx_new)
-            if not (comma | infix_operator | postfix_operator)(ctx_new, maybe=True, lookahead=True):
-                reports.warning(
-                    "missing-newline",
-                    (ctx_start, ctx_state_after_name, "There is no newline after the name of this instruction, hence an operand must follow,"),
-                    (ctx_before_insn, ctx_new, f"but it suspiciously resembles another instruction.\nYou probably \x1b[3mmeant\x1b[23m an instruction '{insn_name}' without operands followed by a '{next_insn_name}' instruction,\nand pdpy will compile this code as such, but this is against standards; please add a newline between instructions.")
-                )
-                raise goto
-
-        first_operand = parse_insn_operand(ctx, insn_name, 0, maybe=True)
-
-        if first_operand:
-            if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
-                reports.warning(
-                    "missing-whitespace",
-                    (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that an operand follows.")
-                )
-
-            operands = [first_operand]
-
-            ctx_before_comma = ctx.save()
-            while comma(ctx, maybe=True):
-                ctx_after_comma = ctx.save()
-                ctx.skip_whitespace()
-                oper = parse_insn_operand(ctx, insn_name, len(operands), report=(
-                    reports.critical,
-                    "invalid-operand",
-                    (ctx_before_comma, ctx_after_comma, "Expected operand after comma in an instruction"),
-                    (ctx_start, ctx_state_after_name, "(instruction started here)"),
-                    (ctx, ctx, "This definitely does not look like an operand")
-                ))
-                operands.append(oper)
-                ctx_before_comma = ctx.save()
-
-            ctx_opening_bracket = ctx.save()
-            if opening_bracket(ctx, maybe=True):
-                oper = code(ctx, break_on_closing_bracket=True)
-                oper.ctx = ctx_opening_bracket
-                operands.append(oper)
-
-            if ctx.pos < len(ctx.code) and ctx.code[ctx.pos].strip() not in ("", ";"):
-                reports.error(
-                    "missing-whitespace",
-                    (ctx, ctx, "Expected whitespace after instruction. Proceeding as if a new instruction is starting")
-                )
+            reports.warning(
+                "unexpected-newline",
+                (ctx_start, ctx_state_after_name, "This instruction always takes at least one argument, but there is a newline right after its name.\nPDPy11 will attempt to parse the next line as an operand, but many other compilers (including Macro-11) wouldn't, and this can potentially even cause miscompilations.\nPlease put the operand to the same line."),
+            )
         else:
-            if ctx_state_after_name.pos < len(ctx.code):
-                ctx.skip_whitespace()
-                reports.warning(
-                    "missing-newline",
-                    (ctx, ctx, "Could not parse an operand starting from here; assuming a new instruction.\nPlease add a newline here if an instruction was implied."),
-                    (ctx_start, ctx_state_after_name, "The previous instruction started here")
-                )
+            # Otherwise, it's reasonable to assume no arguments, because
+            # - there would be no way to specify no arguments otherwise, and
+            # - Macro-11 parses this as such.
+            return types.Instruction(ctx_start, ctx, insn_name_symbol, [])
+
+
+    # The recommended way to separate instructions is by newlines, e.g.
+    #     mov r0, r1
+    #     nop
+    #     add r1, r2
+    # Some old codes use spaces or tabs for that, so the code looks like
+    #     mov r0, r1 nop add r1, r2
+    # For classic assemblers these two codes are equivalent, but pdpy supports rather complex
+    # macros, which makes it difficult to figure out at parse time whether e.g. 'insn insn' means
+    # two instructions 'insn' in a row or instruction 'insn' with operand 'insn'.
+    #
+    # Our rule of thumb is: if it is known that the current instruction does not take an operand and
+    # the next word parses as a known instruction name, then it's two instructions. Theoretically
+    # speaking, the former is condition enough, but we'd prefer 'nop @#1' to say 'nop takes no
+    # arguments' rather than '@#1 is not an instruction', right?
+    next_insn_name = (instruction_name + ~colon)(ctx, maybe=True, lookahead=True)
+    if insn_name in builtin_commands and next_insn_name and builtin_commands[insn_name].max_operands == 0 and next_insn_name in builtin_commands:
+        ctx_before_insn = ctx.save()
+        ctx_before_insn.skip_whitespace()
+        next_insn_name = instruction_name(ctx_before_insn)
+        if not (comma | infix_operator | postfix_operator)(ctx_before_insn, maybe=True, lookahead=True):
+            reports.warning(
+                "missing-newline",
+                (ctx_start, ctx_state_after_name, "There is no newline after the name of this instruction, hence an operand is naturally expected to follow,"),
+                (ctx_before_insn, ctx_before_insn, f"but it suspiciously resembles another instruction.\nYou probably \x1b[3mmeant\x1b[23m an instruction '{insn_name}' without operands followed by a '{next_insn_name}' instruction,\nand pdpy will compile this code as such, but this is against standards; please add a newline between instructions.")
+            )
+            return types.Instruction(ctx_start, ctx, insn_name_symbol, [])
+
+
+    operands = []
+
+    first_operand = parse_insn_operand(ctx, insn_name, 0, maybe=True)
+    if first_operand:
+        if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
+            reports.warning(
+                "missing-whitespace",
+                (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that an operand follows.")
+            )
+
+        operands.append(first_operand)
+
+        ctx_before_comma = ctx.save()
+        while comma(ctx, maybe=True):
+            ctx_after_comma = ctx.save()
+            ctx.skip_whitespace()
+            oper = parse_insn_operand(ctx, insn_name, len(operands), report=(
+                reports.critical,
+                "invalid-operand",
+                (ctx_before_comma, ctx_after_comma, "Expected operand after comma in an instruction"),
+                (ctx_start, ctx_state_after_name, "(instruction started here)"),
+                (ctx, ctx, "This definitely does not look like an operand")
+            ))
+            operands.append(oper)
+            ctx_before_comma = ctx.save()
+
+        ctx_opening_bracket = ctx.save()
+        if opening_bracket(ctx, maybe=True):
+            oper = code(ctx, break_on_closing_bracket=True)
+            oper.ctx = ctx_opening_bracket
+            operands.append(oper)
+
+        if ctx.pos < len(ctx.code) and ctx.code[ctx.pos].strip() not in ("", ";"):
+            reports.error(
+                "missing-whitespace",
+                (ctx, ctx, "Expected whitespace after instruction. Proceeding as if a new instruction is starting")
+            )
+    else:
+        if ctx_state_after_name.pos < len(ctx.code):
+            ctx.skip_whitespace()
+            reports.warning(
+                "missing-newline",
+                (ctx, ctx, "Could not parse an operand starting from here; assuming a new instruction.\nPlease add a newline here if an instruction was implied."),
+                (ctx_start, ctx_state_after_name, "The previous instruction started here")
+            )
 
     return types.Instruction(ctx_start, ctx, insn_name_symbol, operands)
 
