@@ -149,6 +149,9 @@ class Compiler:
         self.symbols[name] = (label, addr)
         self._handle_new_symbol(name)
 
+        if label.is_extern:
+            self.declare_external_symbol(label, label.name, state)
+
         if not label.local:
             state["internal_symbols_list"].append(label.name)
             if state["extern_all"]:

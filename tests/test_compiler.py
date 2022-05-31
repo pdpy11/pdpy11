@@ -1,3 +1,4 @@
+import itertools
 import pytest
 import re
 import warnings
@@ -758,41 +759,42 @@ def test_include(fs):
 
 
 
-@pytest.mark.parametrize("declaration", ["a = 1", "a:"])
 @pytest.mark.parametrize(
-    "included_code,main_code",
+    "extern_declaration",
     [
-        (".extern a {}", "<> .word a"),
-        ("{} .extern a", "<> .word a"),
-        (".extern all {}", "<> .word a"),
-        ("{} .extern all", "<> .word a"),
-        (".extern a {}", ".word a <>"),
-        ("{} .extern a", ".word a <>"),
-        (".extern all {}", ".word a <>"),
-        ("{} .extern all", ".word a <>"),
-
-        (".word a", ".extern a {} <>"),
-        (".word a", ".extern a <> {}"),
-        (".word a", "{} .extern a <>"),
-        (".word a", "{} <> .extern a"),
-        (".word a", "<> {} .extern a"),
-        (".word a", "<> .extern a {}"),
-
-        (".word a", ".extern all {} <>"),
-        (".word a", ".extern all <> {}"),
-        (".word a", "{} .extern all <>"),
-        (".word a", "{} <> .extern all"),
-        (".word a", "<> {} .extern all"),
-        (".word a", "<> .extern all {}"),
+        (".extern a", "a = 1"),
+        (".extern all", "a = 1"),
+        (".extern a", "a:"),
+        (".extern all", "a:"),
+        ("", "a::"),
+        ("", "a::")
     ]
 )
-def test_extern1(fs, declaration, included_code, main_code):
-    included_code = included_code.replace("{}", f"\n{declaration}\n")
-    main_code = main_code.replace("{}", f"\n{declaration}\n")
+@pytest.mark.parametrize("reorder", [True, False])
+def test_extern_upstream(fs, extern_declaration, reorder):
+    if reorder:
+        extern_declaration = extern_declaration[::-1]
+    included_code = "\n".join(extern_declaration)
 
     fs.create_file("included_code.mac", contents=included_code)
+    expect_same(".include /included_code.mac/\n.word a", f"{included_code}\n.word a")
+    expect_same(".word a\n.include /included_code.mac/", f".word a\n{included_code}")
 
-    expect_same(
-        main_code.replace("<>", "\n.include /included_code.mac/\n"),
-        re.sub(r"\.extern \S+", "", main_code.replace("<>", f"\n{included_code}\n"))
-    )
+
+def test_extern_downstream(fs):
+    fs.create_file("included_code.mac", contents=".word a")
+
+    for extern, declaration in (
+        (".extern a", "a = 1"),
+        (".extern all", "a = 1"),
+        (".extern a", "a:"),
+        (".extern all", "a:"),
+        ("", "a::"),
+        ("", "a::")
+    ):
+        for perm in itertools.permutations([
+            (extern, extern),
+            (declaration, declaration),
+            (".include /included_code.mac/", ".word a")
+        ]):
+            expect_same("\n".join(line[0] for line in perm), "\n".join(line[1] for line in perm))

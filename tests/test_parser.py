@@ -180,10 +180,17 @@ def test_numbers2():
 
 @pytest.mark.parametrize("name", ["hello", "HELLO", "1", "0", "99", "12$", "a_"])
 def test_labels(name):
-    expect_code(f"{name}: insn\n{name}:", c(Label)(name), INSN(), c(Label)(name))
+    label = c(Label)(name, is_extern=False)
+    expect_code(f"{name}: insn\n{name}:", label, INSN(), label)
     if not name[0].isdigit():
         expect_code(f"insn {name}", INSN(c(Symbol)(name)))
     expect_code(f"insn {name}:", INSN(c(Symbol)(name, is_necessarily_label=True)))
+
+
+def test_auto_extern():
+    expect_code(f"a:: insn", c(Label)("a", is_extern=True), INSN())
+    with util.expect_error("invalid-extern"):
+        expect_code(f"1:: insn", c(Label)("1", is_extern=False), INSN())
 
 
 @pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_"])

@@ -159,16 +159,17 @@ class Symbol(ExpressionToken):
 
 
 class Label(Token):
-    def __init__(self, ctx_start, ctx_end, name: str):
+    def __init__(self, ctx_start, ctx_end, name: str, is_extern: bool):
         super().__init__(ctx_start, ctx_end)
         self.name: str = name
         self.local: bool = name[0].isdigit()
+        self.is_extern = is_extern
 
     def __repr__(self):
-        return f"{self.name}:"
+        return f"{self.name}:" + (":" if self.is_extern else "")
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.name == rhs.name
+        return isinstance(rhs, type(self)) and (self.name, self.is_extern) == (rhs.name, rhs.is_extern)
 
 
 class Assignment(Token):

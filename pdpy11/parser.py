@@ -309,8 +309,10 @@ def label(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    name = Parser.regex(r"([a-z_0-9$]+)\s*:")(ctx)
-    name = name[:-1].strip()
+    name = Parser.regex(r"[a-z_0-9$]+")(ctx)
+    colon(ctx)
+
+    is_extern = bool(colon(ctx, maybe=True))
 
     if name in builtin_commands:
         reports.warning(
@@ -323,7 +325,14 @@ def label(ctx):
             (ctx_start, ctx, "Label name clashes with a register.\nYou won't be able to access this label because every usage would be parsed as a register.")
         )
 
-    return types.Label(ctx_start, ctx, name)
+    if name[0].isdigit() and is_extern:
+        is_extern = False
+        reports.error(
+            "invalid-extern",
+            (ctx_start, ctx, "A local label cannot be external. Either give it a global name or remove double colon.")
+        )
+
+    return types.Label(ctx_start, ctx, name, is_extern=is_extern)
 
 
 @Parser
