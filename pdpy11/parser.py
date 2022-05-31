@@ -332,9 +332,9 @@ def label(ctx):
             (ctx_start, ctx, "This symbol suspiciously resembles an instruction, but is parsed as a label definition.\nPlease consider changing the label not to look like an instruction")
         )
     elif name.lower() in REGISTER_NAMES:
-        reports.warning(
-            "suspicious-name",
-            (ctx_start, ctx, "Label name clashes with a register.\nYou won't be able to access this label because every usage would be parsed as a register.")
+        reports.error(
+            "reserved-name",
+            (ctx_start, ctx, "Label name clashes with a register. All accesses to this symbol would be ambiguous.")
         )
 
     if name[0].isdigit() and is_extern:
@@ -380,9 +380,9 @@ def assignment(ctx):
                 (target.ctx_start, target.ctx_end, "This symbol suspiciously resembles an instruction, but is parsed as a constant definition.\nPlease consider changing the constant name not to look like an instruction")
             )
         elif target.name.lower() in REGISTER_NAMES:
-            reports.warning(
-                "suspicious-name",
-                (target.ctx_start, target.ctx_end, f"Symbol name clashes with a register.\nYou won't be able to access this symbol because every usage would be parsed as a register.\nMaybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'?")
+            reports.error(
+                "reserved-name",
+                (target.ctx_start, target.ctx_end, f"Symbol name clashes with a register. All accesses to this symbol would be\nambiguous. Maybe you are unfamiliar with assembly and wanted to say 'mov #{value!r}, {symbol}'?")
             )
 
     if is_extern and isinstance(target, types.InstructionPointer):
@@ -778,8 +778,8 @@ def expression(ctx, terminator=never):
 
     # TODO: Macro-11 doesn't support operator precedence, it evaluates infix
     # operators left to right. This may cause problems in code such as
-    # '1 * 2 + 3' which Macro-11 evaluates to 11 (oct) and PDPy11 evaluates to
-    # 5. We should emit a warning or handle this differently in Macro-11 and
+    # '1 + 2 * 3' which Macro-11 evaluates to 9 and PDPy11 evaluates to
+    # 7. We should emit a warning or handle this differently in Macro-11 and
     # pdp11asm compatibility modes.
     while True:
         ctx_prev = ctx.save()

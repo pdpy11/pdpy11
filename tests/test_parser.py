@@ -317,14 +317,14 @@ def test_unexpected_reserved_name():
         parse("mov: nop")
     with util.expect_warning("suspicious-name"):
         parse("fadd: nop")
-    with util.expect_warning("suspicious-name"):
+    with util.expect_error("reserved-name"):
         parse("r0: nop")
 
     with util.expect_warning("suspicious-name"):
         parse("mov = 1")
     with util.expect_warning("suspicious-name"):
         parse("fadd = 1")
-    with util.expect_warning("suspicious-name"):
+    with util.expect_error("reserved-name"):
         parse("r0 = 1")
 
     # fine because there's an explicit colon

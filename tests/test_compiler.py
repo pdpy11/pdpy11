@@ -475,10 +475,10 @@ def test_valid_local_label_names(name):
 
 
 def test_clasing_label_names():
-    with util.expect_warning("suspicious-name"):
+    with util.expect_error("reserved-name"):
         expect_same("r1: jmp r1:", "1: jmp 1:")
 
-    with util.expect_warning("suspicious-name"):
+    with util.expect_error("reserved-name"):
         expect_same("r1: jmp r1", "1: jmp r1")
 
     with util.expect_warning("suspicious-name"):
