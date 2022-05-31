@@ -316,7 +316,7 @@ def label(ctx):
     name = Parser.regex(r"[a-z_0-9$.]+")(ctx)
     colon(ctx)
 
-    is_extern = bool(colon(ctx, maybe=True))
+    is_extern = bool(Parser.literal(":", skip_whitespace_before=False)(ctx, maybe=True))
 
     if name in builtin_commands:
         reports.warning(

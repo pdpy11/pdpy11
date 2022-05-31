@@ -191,6 +191,8 @@ def test_auto_extern():
     expect_code(f"a:: insn", c(Label)("a", is_extern=True), INSN())
     with util.expect_error("invalid-extern"):
         expect_code(f"1:: insn", c(Label)("1", is_extern=False), INSN())
+    with util.expect_error("invalid-insn"):
+        parse(f"a: : insn")
 
 
 @pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_", "a.b"])
