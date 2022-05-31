@@ -4,7 +4,7 @@ import sys
 
 
 WARNING_CLASSES = {
-    "all": ["implicit-operand", "not-implemented", "suspicious-name", "excess-quote", "missing-newline", "missing-whitespace", "meta-typo", "legacy-deferred", "implicit-index", "label-fixup", "excess-hash"],
+    "all": ["implicit-operand", "not-implemented", "suspicious-name", "excess-quote", "missing-newline", "meta-typo", "legacy-deferred", "implicit-index", "label-fixup", "excess-hash"],
     "default": ["implicit-operand", "not-implemented", "label-fixup", "excess-hash"]
 }
 

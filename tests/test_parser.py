@@ -329,8 +329,8 @@ def test_insn_syntax():
         parse("clr,")
     with util.expect_error("invalid-operand"):
         parse("insn,")
-    with util.expect_warning("missing-whitespace"):
-        parse("insn#1")
+    with util.expect_error("missing-whitespace"):
+        expect_code("insn#1", INSN(c(immediate)(ONE)))
     with util.expect_error("missing-whitespace"):
         parse("insn #(1)nop")
     with util.expect_warning("missing-newline"):

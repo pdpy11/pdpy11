@@ -968,9 +968,9 @@ def instruction(ctx):
     first_operand = parse_insn_operand(ctx, insn_name, 0, maybe=True)
     if first_operand:
         if ctx_state_after_name.pos < len(ctx.code) and ctx.code[ctx_state_after_name.pos].strip() != "":
-            reports.warning(
+            reports.error(
                 "missing-whitespace",
-                (ctx_state_after_name, ctx, "Expected whitespace after instruction name. Proceeding under assumption that an operand follows.")
+                (ctx_state_after_name, ctx, "Expected whitespace after instruction name. This is ambiguous: Macro-11 would\ntreat this character as a separator and ignore it, while a sane assembler would\nassume it is part of the first operand. Proceeding under the latter assumption.")
             )
 
         operands.append(first_operand)
