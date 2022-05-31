@@ -79,20 +79,23 @@ class Compiler:
                     if isinstance(insn.target, InstructionPointer):
                         if state["link_base"]["promise"].settled:
                             # Bring the current address forward
-                            new_addr = Deferred[int](lambda: insn.value.resolve(state))
-                            def fn():
-                                old_addr_value = wait(addr)
-                                new_addr_value = get_as_int(state, "link address", state["insn"], insn.value, bitness=16, unsigned=False)
-                                length = new_addr_value - old_addr_value
-                                if length < 0:
-                                    reports.error(
-                                        "value-out-of-bounds",
-                                        (insn.ctx_start, insn.ctx_end, f"The new link address is lower than the previous one: a negative skip from {old_addr_value} to {new_addr_value} was attempted")
-                                    )
-                                    raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
-                                return b"\x00" * length
-                            data += Deferred[bytes](fn)
-                            addr = new_addr
+                            def closure(insn):
+                                nonlocal data, addr
+                                new_addr = Deferred[int](lambda: insn.value.resolve(state))
+                                def fn():
+                                    old_addr_value = wait(addr)
+                                    new_addr_value = get_as_int(state, "link address", state["insn"], insn.value, bitness=16, unsigned=False)
+                                    length = new_addr_value - old_addr_value
+                                    if length < 0:
+                                        reports.error(
+                                            "value-out-of-bounds",
+                                            (insn.ctx_start, insn.ctx_end, f"The new link address is lower than the previous one: a negative skip from {old_addr_value} to {new_addr_value} was attempted")
+                                        )
+                                        raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
+                                    return b"\x00" * length
+                                data += Deferred[bytes](fn)
+                                addr = new_addr
+                            closure(insn)
                         else:
                             # Set link base
                             self.set_link_address(insn.value, state)
