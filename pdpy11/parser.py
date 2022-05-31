@@ -27,9 +27,9 @@ class Parser:
 
     @classmethod
     def either(cls, parsers):
-        def fn(ctx):
+        def fn(ctx, **kwargs):
             for parser in parsers:
-                result = parser(ctx, maybe=True)
+                result = parser(ctx, **kwargs, maybe=True)
                 if result is not None:
                     return result
             raise reports.RecoverableError("Failed to match either of the alternatives")
@@ -38,11 +38,11 @@ class Parser:
 
     def __or__(self, rhs):
         assert isinstance(rhs, Parser)
-        def fn(ctx):
-            result = self(ctx, maybe=True)
+        def fn(ctx, **kwargs):
+            result = self(ctx, **kwargs, maybe=True)
             if result is not None:
                 return result
-            return rhs(ctx)
+            return rhs(ctx, **kwargs)
         return Parser(fn)
 
 
@@ -130,6 +130,11 @@ class Parser:
 
 
 @Parser
+def never(ctx):
+    raise reports.RecoverableError("Never")
+
+
+@Parser
 def eof(ctx):
     ctx.skip_whitespace()
     if ctx.pos < len(ctx.code):
@@ -158,6 +163,9 @@ number_dot = Parser.literal(".", skip_whitespace_before=False)
 character = Parser.regex(r"[\s\S]", skip_whitespace_before=False)
 string_backslash = Parser.literal("\\", skip_whitespace_before=False)
 
+# Strictly speaking, Macro-11 allows any printable character after the caret, but this is asking for
+# trouble. We white-list what's reasonable.
+caret_parenthesis = Parser.regex(r"\^[$_=[\]\\{}|:/<>?]")
 
 local_symbol_literal = Parser.regex(r"\d[a-z_0-9$.]*")
 symbol_literal = Parser.regex(r"[a-z_$][a-z_0-9$.]*")
@@ -165,7 +173,7 @@ instruction_name = Parser.regex(r"\.?[a-z_][a-z_0-9]*")
 
 
 @Parser
-def number(ctx):
+def number(ctx, terminator=never):
     # TODO: Macro-11 supports ^R for radix-50. ^R<...> works, ^R^/.../ works, maybe something else works too
     # TODO: Macro-11 supports ^F... for floating-point numbers, no idea how the format looks like
     # TODO: Macro-11 supports ^P for psect limits, whatever that means
@@ -197,7 +205,7 @@ def number(ctx):
     num = local_symbol_literal(ctx)
 
     # This is exactly the reason we have the colon
-    if colon(ctx, maybe=True):
+    if (~terminator + colon)(ctx, maybe=True):
         # If the name is followed by a colon, it must be a label
         raise reports.RecoverableError("Local label, not a number")
 
@@ -388,12 +396,12 @@ def assignment(ctx):
 
 
 @Parser
-def symbol_expression(ctx):
+def symbol_expression(ctx, terminator=never):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
     symbol = symbol_literal(ctx)
-    has_colon = bool(colon(ctx, maybe=True))
+    has_colon = bool((~terminator + colon)(ctx, maybe=True))
 
     if symbol in builtin_commands and not has_colon:
         reports.warning(
@@ -405,11 +413,11 @@ def symbol_expression(ctx):
 
 
 @Parser
-def local_symbol_expression(ctx):
+def local_symbol_expression(ctx, terminator=never):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
     symbol = local_symbol_literal(ctx)
-    has_colon = bool(colon(ctx, maybe=not symbol.isdigit()))
+    has_colon = bool((~terminator + colon)(ctx, maybe=not symbol.isdigit()))
     return types.Symbol(ctx_start, ctx, symbol, is_necessarily_label=has_colon)
 
 
@@ -625,7 +633,23 @@ def instruction_pointer(ctx):
     Parser.regex(r"\.(?![a-z_0-9])")(ctx)
     return types.InstructionPointer(ctx_start, ctx)
 
-expression_literal = symbol_expression | radix50_literal | number | local_symbol_expression | single_quoted_literal | double_quoted_literal | instruction_pointer
+
+@Parser
+def expression_literal(ctx, terminator=never):
+    expr = symbol_expression(ctx, terminator=terminator, maybe=True)
+    if expr is not None:
+        return expr
+
+    expr = radix50_literal(ctx, maybe=True)
+    if expr is not None:
+        return expr
+
+    expr = (number | local_symbol_expression)(ctx, terminator=terminator, maybe=True)
+    if expr is not None:
+        return expr
+
+    return (single_quoted_literal | double_quoted_literal | instruction_pointer)(ctx)
+
 
 infix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.InfixOperator]])
 prefix_operator = Parser.either([Parser.literal(op) for op in operators.operators[operators.PrefixOperator]])
@@ -634,14 +658,14 @@ register_name = Parser.either([Parser.literal(reg) for reg in REGISTER_NAMES])
 
 
 @Parser
-def expression_literal_rec(ctx):
+def expression_literal_rec(ctx, terminator):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    if (opening_parenthesis | opening_angle_bracket)(ctx, maybe=True, lookahead=True):
+    if (opening_parenthesis | opening_angle_bracket | caret_parenthesis)(ctx, maybe=True, lookahead=True):
         value = None
     else:
-        value = expression_literal(ctx)
+        value = expression_literal(ctx, terminator=terminator)
 
     while True:
         # <x> is allowed and means the same as (x)
@@ -650,16 +674,27 @@ def expression_literal_rec(ctx):
         # (a)<b> is a syntax error
         # <a><b> is a syntax error too
         if value is None:
-            bracket = (opening_parenthesis | opening_angle_bracket)(ctx, maybe=True)
+            opening = (opening_parenthesis | opening_angle_bracket | caret_parenthesis)(ctx, maybe=True)
         else:
-            bracket = opening_parenthesis(ctx, maybe=True)
-        if bracket is None:
+            opening = opening_parenthesis(ctx, maybe=True)
+        if opening is None:
             break
+
+        new_terminator = terminator
+        if opening == "(":
+            closing = ")"
+        elif opening == "<":
+            closing = ">"
+        elif opening[0] == "^":
+            closing = opening[1]
+            new_terminator = terminator | Parser.literal(closing)
+        else:
+            assert False  # pragma: no cover
 
         ctx_after_paren = ctx.save()
         ctx.skip_whitespace()
 
-        expr = expression(ctx, report=(
+        expr = expression(ctx, terminator=new_terminator, report=(
             reports.critical,
             "invalid-expression",
             (ctx, ctx, "Could not parse an expression here"),
@@ -668,7 +703,7 @@ def expression_literal_rec(ctx):
 
         ctx.skip_whitespace()
 
-        (closing_parenthesis if bracket == "(" else closing_angle_bracket)(ctx, report=(
+        Parser.literal(closing)(ctx, report=(
             reports.critical,
             "invalid-expression",
             (ctx, ctx, "This is not a operator, so a closing parenthesis is expected here"),
@@ -676,10 +711,7 @@ def expression_literal_rec(ctx):
         ))
 
         if value is None:
-            if bracket == "(":
-                value = types.ParenthesizedExpression(ctx_start, ctx, expr)
-            else:
-                value = types.BracketedExpression(ctx_start, ctx, expr)
+            value = types.ParenthesizedExpression(ctx_start, ctx, expr, opening_parenthesis=opening, closing_parenthesis=closing)
         else:
             value = operators.call(ctx_start, ctx, value, expr)
 
@@ -687,7 +719,7 @@ def expression_literal_rec(ctx):
 
 
 @Parser
-def expression(ctx):
+def expression(ctx, terminator=never):
     op_stack = []
 
     ctx.skip_whitespace()
@@ -697,10 +729,10 @@ def expression(ctx):
     # Try to match a full expression before matching a prefix operator, so that
     # -1 is parsed as -1, not -(1)
     while True:
-        expr = expression_literal_rec(ctx, maybe=True)
+        expr = expression_literal_rec(ctx, terminator=terminator, maybe=True)
         if expr is not None:
             break
-        char = prefix_operator(ctx, report=(
+        char = (~terminator + prefix_operator)(ctx, report=(
             reports.critical,
             "invalid-expression",
             (ctx, ctx, "Expected an expression or an operator here"),
@@ -738,7 +770,7 @@ def expression(ctx):
         ctx.skip_whitespace()
         ctx_op = ctx.save()
 
-        if (postfix_operator + (newline | comma | closing_parenthesis | closing_bracket | eof))(ctx, maybe=True, lookahead=True):
+        if (~terminator + postfix_operator + (newline | comma | closing_parenthesis | closing_bracket | eof))(ctx, maybe=True, lookahead=True):
             # Postfix operator
             char = postfix_operator(ctx)
             ctx_op_end = ctx.save()
@@ -755,7 +787,7 @@ def expression(ctx):
             break
         else:
             # Must be an infix operator
-            char = infix_operator(ctx, maybe=True)
+            char = (~terminator + infix_operator)(ctx, maybe=True)
             if not char:
                 ctx.restore(ctx_prev)
                 break
@@ -764,11 +796,11 @@ def expression(ctx):
 
             operator = operators.operators[operators.InfixOperator][char]
 
-            expr = expression_literal_rec(ctx, report=(
+            expr = expression_literal_rec(ctx, terminator=terminator, report=(
                 reports.critical,
                 "invalid-expression",
                 (ctx, ctx, "Could not parse an expression here"),
-                (ctx_op, ctx_op_end, f"...as expected after operator '{char}'")
+                (ctx_op, ctx_op_end, f"...as expected after operator '{char}'." + (" If this was intended as two closing parentheses rather than right shift, please add spaces: '> >'." if char == ">>" else ""))
             ))
 
             self_precedence = operator.precedence
@@ -804,7 +836,7 @@ def autoincrement_addressing_operand(ctx):
     closing_parenthesis(ctx)
     ctx_after_paren = ctx.save()
     plus(ctx)
-    return operators.postadd(ctx_start, ctx, types.ParenthesizedExpression(ctx_start, ctx_after_paren, reg))
+    return operators.postadd(ctx_start, ctx, types.ParenthesizedExpression(ctx_start, ctx_after_paren, reg, opening_parenthesis="(", closing_parenthesis=")"))
 
 
 @Parser
@@ -894,7 +926,7 @@ def instruction(ctx):
         # Both cases are valid, but assuming the latter might cause unclear diagnostics, so we parse
         # it as the former. People can always switch to the former by using explicit .word or
         # parentheses.
-        pattern = comma | (~prefix_operator + infix_operator)
+        pattern = comma | (~prefix_operator + ~caret_parenthesis + infix_operator)
         if pattern(ctx, maybe=True):
             raise reports.RecoverableError("Implicit word, not an instruction")
 

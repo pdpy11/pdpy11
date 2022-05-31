@@ -341,6 +341,16 @@ def test_unexpected_register():
         compile("clr (r1+1)")
     with util.expect_error("unexpected-register"):
         compile("clr <r1>")
+    with util.expect_error("unexpected-register"):
+        compile("clr <r1>+")
+    with util.expect_error("unexpected-register"):
+        compile("clr -<r1>")
+    with util.expect_error("unexpected-register"):
+        compile("clr @<r1>+")
+    with util.expect_error("unexpected-register"):
+        compile("clr @-<r1>")
+    with util.expect_error("unexpected-register"):
+        compile("clr @<r1>")
 
 
 def test_end():

@@ -98,7 +98,7 @@ class RegisterModeOperandStub:
             # Register
             return register, b""
 
-        if isinstance(operand, ParenthesizedExpression):
+        if isinstance(operand, ParenthesizedExpression) and operand.opening_parenthesis == "(":
             register = try_register_from_symbol(operand.expr)
             if register is not None:
                 # Register deferred
@@ -114,25 +114,25 @@ class RegisterModeOperandStub:
                 )
                 return 0o10 | register, b""
 
-        if isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression):
+        if isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and operand.operand.opening_parenthesis == "(":
             register = try_register_from_symbol(operand.operand.expr)
             if register is not None:
                 # Autoincrement
                 return 0o20 | register, b""
 
-        if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression):
+        if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression) and operand.operand.operand.opening_parenthesis == "(":
             register = try_register_from_symbol(operand.operand.operand.expr)
             if register is not None:
                 # Autoincrement deferred
                 return 0o30 | register, b""
 
-        if isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression):
+        if isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression) and operand.operand.opening_parenthesis == "(":
             register = try_register_from_symbol(operand.operand.expr)
             if register is not None:
                 # Autodecrement
                 return 0o40 | register, b""
 
-        if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression):
+        if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression) and operand.operand.operand.opening_parenthesis == "(":
             register = try_register_from_symbol(operand.operand.operand.expr)
             if register is not None:
                 # Autodecrement deferred
@@ -152,7 +152,7 @@ class RegisterModeOperandStub:
                 # Index
                 return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.lhs, bitness=16, unsigned=False)))
 
-        if isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression):
+        if isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and operand.operand.opening_parenthesis == "(":
             register = try_register_from_symbol(operand.operand.expr)
             if register is not None:
                 # Index deferred with implicit zero index

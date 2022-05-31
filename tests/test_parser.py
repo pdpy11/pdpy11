@@ -25,12 +25,13 @@ ZERO = c(Number)("0", 0, is_valid_label=True)
 ONE = c(Number)("1", 1, is_valid_label=True)
 TWO = c(Number)("2", 2, is_valid_label=True)
 THREE = c(Number)("3", 3, is_valid_label=True)
+FOUR = c(Number)("4", 4, is_valid_label=True)
 A = c(Symbol)("a")
 B = c(Symbol)("b")
 C = c(Symbol)("c")
 DOT = c(InstructionPointer)()
-paren = lambda expr: c(ParenthesizedExpression)(expr)
-angle = lambda expr: c(BracketedExpression)(expr)
+paren = lambda expr: c(ParenthesizedExpression)(expr, opening_parenthesis="(", closing_parenthesis=")")
+angle = lambda expr: c(ParenthesizedExpression)(expr, opening_parenthesis="<", closing_parenthesis=">")
 
 def INSN(*operands):
     return c(Instruction)(c(Symbol)("insn"), list(operands))
@@ -133,13 +134,76 @@ def test_precedence_three():
     expect_code("insn #1 * 2 * 3", INSN(c(immediate)(c(mul)(c(mul)(ONE, TWO), THREE))))
 
 
-def test_brackets():
-    expect_code("insn #(1 + 2) * 3", INSN(c(immediate)(c(mul)(paren(c(add)(ONE, TWO)), THREE))))
-    expect_code("insn #1 * (2 + 3)", INSN(c(immediate)(c(mul)(ONE, paren(c(add)(TWO, THREE))))))
+@pytest.mark.parametrize(
+    "opening,closing",
+    [
+        ("(", ")"),
+        ("<", ">"),
+        ("^/", "/"),
+        ("^?", "?"),
+        ("^:", ":"),
+        ("^<", "<"),
+        ("^>", ">")
+    ]
+)
+def test_brackets1(opening, closing):
+    expect_code(
+        f"insn #{opening}1 + 2{closing} * 3",
+        INSN(
+            c(immediate)(
+                c(mul)(
+                    c(ParenthesizedExpression)(
+                        c(add)(ONE, TWO),
+                        opening_parenthesis=opening,
+                        closing_parenthesis=closing
+                    ),
+                    THREE
+                )
+            )
+        )
+    )
 
-    expect_code("insn #<1 + 2> * 3", INSN(c(immediate)(c(mul)(angle(c(add)(ONE, TWO)), THREE))))
-    expect_code("insn #1 * <2 + 3>", INSN(c(immediate)(c(mul)(ONE, angle(c(add)(TWO, THREE))))))
+    expect_code(
+        f"insn #1 * {opening}2 + 3{closing}",
+        INSN(
+            c(immediate)(
+                c(mul)(
+                    ONE,
+                    c(ParenthesizedExpression)(
+                        c(add)(TWO, THREE),
+                        opening_parenthesis=opening,
+                        closing_parenthesis=closing
+                    )
+                )
+            )
+        )
+    )
 
+    expect_code(
+        f"insn #1 * {opening}2 + {opening}3 * 4{closing} {closing}",
+        INSN(
+            c(immediate)(
+                c(mul)(
+                    ONE,
+                    c(ParenthesizedExpression)(
+                        c(add)(
+                            TWO,
+                            c(ParenthesizedExpression)(
+                                c(mul)(THREE, FOUR),
+                                opening_parenthesis=opening,
+                                closing_parenthesis=closing
+                            )
+                        ),
+                        opening_parenthesis=opening,
+                        closing_parenthesis=closing
+                    )
+                )
+            )
+        )
+    )
+
+
+def test_brackets2():
     expect_code("insn (1)(2)", INSN(c(call)(paren(ONE), TWO)))
     expect_code("insn <1>(2)", INSN(c(call)(angle(ONE), TWO)))
 
@@ -147,6 +211,10 @@ def test_brackets():
         expect_code("insn (1)<2>", INSN(paren(ONE)), c(WordList)([angle(TWO)]))
     with util.expect_error("missing-whitespace"):
         expect_code("insn <1><2>", INSN(angle(ONE)), c(WordList)([angle(TWO)]))
+
+    expect_code("insn <1 + <2> >", INSN(angle(c(add)(ONE, angle(TWO)))))
+    with util.expect_error("invalid-expression"):
+        parse("insn <1 + <2>>")
 
 
 @pytest.mark.parametrize(

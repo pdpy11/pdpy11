@@ -71,30 +71,17 @@ class InstructionPointer(ExpressionToken):
 
 
 class ParenthesizedExpression(ExpressionToken):
-    def __init__(self, ctx_start, ctx_end, expr):
+    def __init__(self, ctx_start, ctx_end, expr, opening_parenthesis: str, closing_parenthesis: str):
         super().__init__(ctx_start, ctx_end)
         self.expr = expr
+        self.opening_parenthesis: str = opening_parenthesis
+        self.closing_parenthesis: str = closing_parenthesis
 
     def __repr__(self):
-        return f"({self.expr!r})"
+        return f"{self.opening_parenthesis}{self.expr!r}{self.closing_parenthesis}"
 
     def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.expr == rhs.expr
-
-    def resolve(self, state):
-        return self.expr.resolve(state)
-
-
-class BracketedExpression(ExpressionToken):
-    def __init__(self, ctx_start, ctx_end, expr):
-        super().__init__(ctx_start, ctx_end)
-        self.expr = expr
-
-    def __repr__(self):
-        return f"<{self.expr!r}>"
-
-    def __eq__(self, rhs):
-        return isinstance(rhs, type(self)) and self.expr == rhs.expr
+        return isinstance(rhs, type(self)) and (self.expr, self.opening_parenthesis, self.closing_parenthesis) == (rhs.expr, rhs.opening_parenthesis, rhs.closing_parenthesis)
 
     def resolve(self, state):
         return self.expr.resolve(state)

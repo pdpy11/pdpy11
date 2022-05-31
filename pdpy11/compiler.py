@@ -252,7 +252,7 @@ class Compiler:
                         # Implicit .word
                         words = [insn.name] + insn.operands[:]
                         if len(words) > 1:
-                            if isinstance(words[1], ParenthesizedExpression):
+                            if isinstance(words[1], ParenthesizedExpression) and words[1].opening_parenthesis == "(":
                                 # 'a (expr)' was misparsed as instruction 'a' with operand '(expr)'
                                 # instead of '.word a(expr)', where 'a(expr)' is a call
                                 words[0] = operators.call(words[0].ctx_start, words[1].ctx_end, words[0], words[1].expr)
