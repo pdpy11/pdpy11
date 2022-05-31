@@ -298,6 +298,15 @@ def deferred(token, x):
     return x
 
 
+@operator("%x", precedence=15, associativity="left", pure=False, token=True)
+def register(token, x):
+    reports.error(
+        "unexpected-value",
+        (token.ctx_start, token.ctx_end, "'%...' cannot be used as a value because the value of a register is not known during compilation.")
+    )
+    return x
+
+
 # Yes, I'm using Haskell syntax, sue me
 @operator("x $ x", precedence=1, associativity="right", pure=False, token=True)
 def call(token, callee, operand):

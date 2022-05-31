@@ -26,6 +26,7 @@ ONE = c(Number)("1", 1, is_valid_label=True)
 TWO = c(Number)("2", 2, is_valid_label=True)
 THREE = c(Number)("3", 3, is_valid_label=True)
 FOUR = c(Number)("4", 4, is_valid_label=True)
+P0 = c(register)(ZERO)
 A = c(Symbol)("a")
 B = c(Symbol)("b")
 C = c(Symbol)("c")
@@ -42,6 +43,7 @@ def ASCII(*operands):
 
 def test_instruction():
     expect_code("insn", INSN())
+
     expect_code("insn r0", INSN(R0))
     expect_code("insn r0, r0", INSN(R0, R0))
     expect_code("insn (r0)", INSN(paren(R0)))
@@ -50,6 +52,15 @@ def test_instruction():
     expect_code("insn @(r0)+", INSN(c(deferred)(c(postadd)(paren(R0)))))
     expect_code("insn @-(r0)", INSN(c(deferred)(c(neg)(paren(R0)))))
     expect_code("insn @(r0)", INSN(c(deferred)(paren(R0))))
+
+    expect_code("insn %0", INSN(P0))
+    expect_code("insn %0, %0", INSN(P0, P0))
+    expect_code("insn (%0)", INSN(paren(P0)))
+    expect_code("insn (%0)+", INSN(c(postadd)(paren(P0))))
+    expect_code("insn -(%0)", INSN(c(neg)(paren(P0))))
+    expect_code("insn @(%0)+", INSN(c(deferred)(c(postadd)(paren(P0)))))
+    expect_code("insn @-(%0)", INSN(c(deferred)(c(neg)(paren(P0)))))
+    expect_code("insn @(%0)", INSN(c(deferred)(paren(P0))))
 
 
 @pytest.mark.parametrize(
@@ -69,6 +80,8 @@ def test_instruction():
     [
         ("", "(r0)", lambda x: c(call)(x, R0)),
         ("@", "(r0)", lambda x: c(deferred)(c(call)(x, R0))),
+        ("", "(%0)", lambda x: c(call)(x, P0)),
+        ("@", "(%0)", lambda x: c(deferred)(c(call)(x, P0))),
         ("#", "", c(immediate)),
         ("@#", "", lambda x: c(deferred)(c(immediate)(x))),
         ("@", "", c(deferred)),
@@ -222,7 +235,7 @@ def test_infix_operator(operator):
     expect_code(f"insn 1 {operator.char} 2", INSN(c(operator)(ONE, TWO)))
 
 
-@pytest.mark.parametrize("operator", [pos, neg, inv, inv2, immediate, deferred])
+@pytest.mark.parametrize("operator", [pos, neg, inv, inv2, immediate, deferred, register])
 def test_prefix_operator(operator):
     expect_code(f"insn {operator.char} <1>", INSN(c(operator)(angle(ONE))))
 
@@ -349,6 +362,7 @@ def test_unexpected_reserved_name():
     with util.expect_warning("suspicious-name"):
         parse("clr fadd")
     parse("clr r0")
+    parse("clr %0")
 
     with util.expect_warning("suspicious-name"):
         parse("r0")

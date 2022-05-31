@@ -63,7 +63,7 @@ def test_zero_operand(code):
     "operand",
     [
         "r0", "r1", "r6", "sp", "pc", "#123", "10", "-57", "@#123", "@12",
-        "(r0)", "(r0)+", "-(r0)", "@1(r0)", "@(r0)+", "@-(r0)"
+        "(r0)", "1(r0)", "(r0)+", "-(r0)", "@1(r0)", "@(r0)+", "@-(r0)"
     ]
 )
 def test_single_operand(insn, operand):
@@ -82,6 +82,27 @@ def test_single_operand(insn, operand):
 def test_two_operands(insn, op1, op2):
     compare_with_old(f"{insn} {op1}, {op2}")
     compare_with_old(f"{insn} {op2}, {op1}")
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "clr %5",
+        "clr (%5)",
+        "clr 1(%5)",
+        "clr (%5)+",
+        "clr -(%5)",
+        "clr @1(%5)",
+        "clr @(%5)+",
+        "clr @-(%5)"
+    ]
+)
+def test_register_syntax(code):
+    expect_same(code, code.replace("%", "r"))
+
+
+def test_dynamic_register():
+    expect_same("clr %<reg+1>\nreg = 4", "clr %5")
 
 
 def test_immediate_operand():
@@ -411,7 +432,8 @@ def test_addressing():
         "(1)-", "(x)-\nx = 1",
         "@@(1)", "@@(x)\nx = 1",
         "##(1)", "##(x)\nx = 1",
-        "1(2)", "x(y)\nx = 1\ny = 2"
+        "1(2)", "x(y)\nx = 1\ny = 2",
+        "%%1"
     ]
 )
 def test_invalid_addressing(operand):

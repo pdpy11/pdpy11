@@ -33,14 +33,22 @@ REGISTER_NAMES = {
     "pc": 7
 }
 
-def try_register_from_symbol(operand):
+def try_as_register(operand, state):
     if isinstance(operand, Symbol) and not operand.is_necessarily_label and operand.name.lower() in REGISTER_NAMES:
         return REGISTER_NAMES[operand.name.lower()]
+    elif isinstance(operand, operators.register):
+        def fn():
+            register = operand.operand.resolve(state)
+            if not 0 <= register <= 7:
+                reports.error(
+                    "value-out-of-bounds",
+                    (operand.ctx_start, operand.ctx_end, f"Register number is out of bounds: %{register}")
+                )
+                return 0
+            return register
+        return Deferred[int](fn)
     else:
         return None
-
-def is_register(operand):
-    return try_register_from_symbol(operand) is not None
 
 
 class RegisterOperandStub:
@@ -49,7 +57,7 @@ class RegisterOperandStub:
         self.bit_indexes = bit_indexes
 
     def encode(self, operand, state):
-        register = try_register_from_symbol(operand)
+        register = try_as_register(operand, state)
         if register is not None:
             return register, b""
 
@@ -75,7 +83,7 @@ class RegisterModeOperandStub:
         def hoist(token):
             if isinstance(token, operators.InfixOperator) and not isinstance(token, operators.call):
                 token.rhs = hoist(token.rhs)
-                if isinstance(token.rhs, operators.call) and is_register(token.rhs.rhs):
+                if isinstance(token.rhs, operators.call) and try_as_register(token.rhs.rhs, state) is not None:
                     register = token.rhs.rhs
                     ctx_end = token.ctx_end
                     token.rhs = token.rhs.lhs
@@ -83,7 +91,7 @@ class RegisterModeOperandStub:
                     return operators.call(token.ctx_start, ctx_end, token, register)
             elif isinstance(token, operators.PrefixOperator):
                 token.operand = hoist(token.operand)
-                if isinstance(token.operand, operators.call) and is_register(token.operand.rhs):
+                if isinstance(token.operand, operators.call) and try_as_register(token.operand.rhs, state) is not None:
                     register = token.operand.rhs
                     ctx_end = token.ctx_end
                     token.operand = token.operand.lhs
@@ -93,19 +101,19 @@ class RegisterModeOperandStub:
         operand = hoist(operand)
 
         # Good luck debugging this
-        register = try_register_from_symbol(operand)
+        register = try_as_register(operand, state)
         if register is not None:
             # Register
             return register, b""
 
         if isinstance(operand, ParenthesizedExpression) and operand.opening_parenthesis == "(":
-            register = try_register_from_symbol(operand.expr)
+            register = try_as_register(operand.expr, state)
             if register is not None:
                 # Register deferred
                 return 0o10 | register, b""
 
         if isinstance(operand, operators.deferred):
-            register = try_register_from_symbol(operand.operand)
+            register = try_as_register(operand.operand, state)
             if register is not None:
                 # Register deferred
                 reports.warning(
@@ -115,25 +123,25 @@ class RegisterModeOperandStub:
                 return 0o10 | register, b""
 
         if isinstance(operand, operators.postadd) and isinstance(operand.operand, ParenthesizedExpression) and operand.operand.opening_parenthesis == "(":
-            register = try_register_from_symbol(operand.operand.expr)
+            register = try_as_register(operand.operand.expr, state)
             if register is not None:
                 # Autoincrement
                 return 0o20 | register, b""
 
         if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.postadd) and isinstance(operand.operand.operand, ParenthesizedExpression) and operand.operand.operand.opening_parenthesis == "(":
-            register = try_register_from_symbol(operand.operand.operand.expr)
+            register = try_as_register(operand.operand.operand.expr, state)
             if register is not None:
                 # Autoincrement deferred
                 return 0o30 | register, b""
 
         if isinstance(operand, operators.neg) and isinstance(operand.operand, ParenthesizedExpression) and operand.operand.opening_parenthesis == "(":
-            register = try_register_from_symbol(operand.operand.expr)
+            register = try_as_register(operand.operand.expr, state)
             if register is not None:
                 # Autodecrement
                 return 0o40 | register, b""
 
         if isinstance(operand, operators.deferred) and isinstance(operand.operand, operators.neg) and isinstance(operand.operand.operand, ParenthesizedExpression) and operand.operand.operand.opening_parenthesis == "(":
-            register = try_register_from_symbol(operand.operand.operand.expr)
+            register = try_as_register(operand.operand.operand.expr, state)
             if register is not None:
                 # Autodecrement deferred
                 return 0o50 | register, b""
@@ -141,19 +149,19 @@ class RegisterModeOperandStub:
         # Yes, I am aware that the nesting is broken here, but that's thanks to
         # hoisting and that's the least hacky way I had come up with.
         if isinstance(operand, operators.call) and isinstance(operand.lhs, operators.deferred):
-            register = try_register_from_symbol(operand.rhs)
+            register = try_as_register(operand.rhs, state)
             if register is not None:
                 # Index deferred
                 return 0o70 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.lhs.operand, bitness=16, unsigned=False)))
 
         if isinstance(operand, operators.call):
-            register = try_register_from_symbol(operand.rhs)
+            register = try_as_register(operand.rhs, state)
             if register is not None:
                 # Index
                 return 0o60 | register, SizedDeferred[bytes](2, lambda: struct.pack("<H", get_as_int(state, "an index", operand, operand.lhs, bitness=16, unsigned=False)))
 
         if isinstance(operand, operators.deferred) and isinstance(operand.operand, ParenthesizedExpression) and operand.operand.opening_parenthesis == "(":
-            register = try_register_from_symbol(operand.operand.expr)
+            register = try_as_register(operand.operand.expr, state)
             if register is not None:
                 # Index deferred with implicit zero index
                 reports.warning(
@@ -185,7 +193,7 @@ class FP11RMOperandStub(RegisterModeOperandStub):
             # FP11 accumulator
             return acc, b""
 
-        register = try_register_from_symbol(operand)
+        register = try_as_register(operand, state)
         if register is not None:
             (reports.warning if register < 6 else reports.error)(
                 "implicit-accumulator",
