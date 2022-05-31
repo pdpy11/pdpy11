@@ -159,8 +159,8 @@ character = Parser.regex(r"[\s\S]", skip_whitespace_before=False)
 string_backslash = Parser.literal("\\", skip_whitespace_before=False)
 
 
-local_symbol_literal = Parser.regex(r"\d[a-z_0-9$]*")
-symbol_literal = Parser.regex(r"[a-z_$][a-z_0-9$]*")
+local_symbol_literal = Parser.regex(r"\d[a-z_0-9$.]*")
+symbol_literal = Parser.regex(r"[a-z_$][a-z_0-9$.]*")
 instruction_name = Parser.regex(r"\.?[a-z_][a-z_0-9]*")
 
 
@@ -185,7 +185,7 @@ def number(ctx):
         ("^D", "A decimal", r"\d", 10)
     ):
         if Parser.literal(prefix)(ctx, maybe=True):
-            num = Parser.regex(rf"{digit_regex}+(?![$_])\b", skip_whitespace_before=False)(ctx, report=(
+            num = Parser.regex(rf"{digit_regex}+(?![$_.])\b", skip_whitespace_before=False)(ctx, report=(
                 reports.critical,
                 "invalid-number",
                 (ctx_start, ctx, f"{adjective} number was expected after '{prefix}'")
@@ -201,15 +201,19 @@ def number(ctx):
         # If the name is followed by a colon, it must be a label
         raise reports.RecoverableError("Local label, not a number")
 
+    has_dot = num[-1] == "."
+    if has_dot:
+        num = num[:-1]
+
     # Includes characters only present in labels -- fail immediately. This disregards 1huh$. We
     # allow an unary minus in this case, because such labels can't be confused with numbers in any
     # way.
-    if "$" in num or "_" in num:
+    if "$" in num or "_" in num or "." in num:
         raise reports.RecoverableError("Local label, not a number")
 
     # Does the number only include decimal digits?
     if num.isdigit():
-        if number_dot(ctx, maybe=True):
+        if has_dot:
             # Decimal
             return types.Number(ctx_start, ctx, f"{sign_str}{num}.", int(num, 10) * sign, is_valid_label=False)
 
@@ -309,7 +313,7 @@ def label(ctx):
     ctx.skip_whitespace()
     ctx_start = ctx.save()
 
-    name = Parser.regex(r"[a-z_0-9$]+")(ctx)
+    name = Parser.regex(r"[a-z_0-9$.]+")(ctx)
     colon(ctx)
 
     is_extern = bool(colon(ctx, maybe=True))

@@ -178,7 +178,7 @@ def test_numbers2():
     expect_code("insn #91", INSN(c(immediate)(c(Number)("91", 91, is_valid_label=True, invalid_base8=True))))
 
 
-@pytest.mark.parametrize("name", ["hello", "HELLO", "1", "0", "99", "12$", "a_"])
+@pytest.mark.parametrize("name", ["hello", "HELLO", "1", "0", "99", "12$", "a_", "a.b"])
 def test_labels(name):
     label = c(Label)(name, is_extern=False)
     expect_code(f"{name}: insn\n{name}:", label, INSN(), label)
@@ -193,7 +193,7 @@ def test_auto_extern():
         expect_code(f"1:: insn", c(Label)("1", is_extern=False), INSN())
 
 
-@pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_"])
+@pytest.mark.parametrize("name", ["hello", "HELLO", "val$", "a_", "a.b"])
 def test_assignment(name):
     expect_code(f"{name} = 1", c(Assignment)(c(Symbol)(name), ONE))
     expect_code(f"{name} = 1 + 2", c(Assignment)(c(Symbol)(name), c(add)(ONE, TWO)))
