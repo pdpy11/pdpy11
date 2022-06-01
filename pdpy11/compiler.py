@@ -185,11 +185,17 @@ class Compiler:
     def set_link_address(self, address, state):
         if state["link_base"]["promise"].settled:
             prev_link = state["link_base"]["set_where"]
-            reports.error(
-                "address-conflict",
-                (state["insn"].ctx_start, state["insn"].ctx_end, "The link base has already been set."),
-                (prev_link.ctx_start, prev_link.ctx_end, "The link base has been previously set here.")
-            )
+            if prev_link is None:
+                reports.error(
+                    "address-conflict",
+                    (state["insn"].ctx_start, state["insn"].ctx_end, "The link base cannot be set here because this metacommand cannot be evaluated\nbefore the link base itself is known.")
+                )
+            else:
+                reports.error(
+                    "address-conflict",
+                    (state["insn"].ctx_start, state["insn"].ctx_end, "The link base has already been set."),
+                    (prev_link.ctx_start, prev_link.ctx_end, "The link base has been previously set here.")
+                )
             return
 
         def fn():
