@@ -361,6 +361,14 @@ def test_symbol_propagation():
     expect_same("d = c*2\ne = d*2 + 1\n.link e*3 + 1 - . * 14\n.word .\nc:", ".link 34\n.word .")
 
 
+def test_far_forward_references():
+    n = 100
+    expect_same(
+        "".join(f"a{i} = a{i + 1} + 1\n" for i in range(n)) + f"a{n} = 1\n.word a0",
+        f".word {n + 1}."
+    )
+
+
 def test_unexpected_register():
     with util.expect_error("unexpected-register"):
         compile("clr r1+1")

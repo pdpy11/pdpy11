@@ -17,7 +17,6 @@ class Compiler:
     def __init__(self, output_charset="bk"):
         self.symbols = CaseInsensitiveDict()
         self.extern_symbols_mapping = CaseInsensitiveDict()
-        self.on_symbol_defined_listeners = CaseInsensitiveDict()
         self.emitted_files = []
         self.output_charset = output_charset
         self.next_local_symbol_prefix = 1
@@ -147,7 +146,6 @@ class Compiler:
             return
 
         self.symbols[name] = (label, addr)
-        self._handle_new_symbol(name)
 
         if label.is_extern:
             self.declare_external_symbol(label, label.name, state)
@@ -172,7 +170,6 @@ class Compiler:
 
         state["internal_symbols_list"].append(insn.target.name)
         self.symbols[name] = (insn, Deferred[int](lambda: insn.value.resolve(state), insn.target.name))
-        self._handle_new_symbol(name)
 
         if insn.is_extern:
             self.declare_external_symbol(insn, insn.target.name, state)
@@ -215,13 +212,6 @@ class Compiler:
             )
         else:
             self.extern_symbols_mapping[name] = location, state["internal_symbol_prefix"] + name
-            self._handle_new_symbol(name)
-
-
-    def _handle_new_symbol(self, name):
-        for deferred in self.on_symbol_defined_listeners.get(name, []):
-            if not deferred.is_awaiting:
-                deferred.try_compute()
 
 
     def compile_insn(self, insn, state):

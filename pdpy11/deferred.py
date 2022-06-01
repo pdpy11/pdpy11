@@ -74,9 +74,6 @@ class BaseDeferred(metaclass=BaseDeferredMetaclass):
         with Awaiting(self):
             return self._wait()
 
-    def try_compute(self):
-        raise NotImplementedError(type(self).__name__ + ".try_compute()")  # pragma: no cover
-
     def get_current_best_estimate(self):
         raise NotImplementedError(type(self).__name__ + ".get_current_best_estimate()")  # pragma: no cover
 
@@ -195,18 +192,6 @@ class Deferred(BaseDeferred):
             self.settled = True
             return self.value
 
-    def try_compute(self):
-        if not self.settled:
-            with try_compute, Awaiting(self):
-                try:
-                    self.value = self.fn()
-                    self.settled = True
-                except NotReadyError:
-                    return self
-        if isinstance(self.value, BaseDeferred):
-            self.value = self.value.try_compute()
-        return self.value
-
     def get_current_best_estimate(self):
         if not self.settled:
             return self
@@ -295,16 +280,15 @@ class LinearPolynomial(BaseDeferred):
         return LinearPolynomial[int]({key: -value for key, value in self.coeffs.items()}, -self.constant_term)
 
     def _wait(self):
-        self.try_compute()
-        return sum(key.wait() * value for key, value in self.coeffs.items()) + self.constant_term
-
-
-    def try_compute(self):
         new_coeffs = []
         new_constant_term = self.constant_term
 
         for key, value in self.coeffs.items():
-            key = key.get_current_best_estimate()
+            with try_compute:
+                key = key.wait()
+            if isinstance(key, BaseDeferred):
+                key = key.get_current_best_estimate()
+
             if isinstance(key, LinearPolynomial):
                 new_coeffs += [(key1, value1 * value) for key1, value1 in key.coeffs.items()]
                 new_constant_term += key.constant_term * value
@@ -316,7 +300,8 @@ class LinearPolynomial(BaseDeferred):
         new_value = LinearPolynomial[int](new_coeffs, new_constant_term)
         self.coeffs = new_value.coeffs
         self.constant_term = new_value.constant_term
-        return self.get_current_best_estimate()
+
+        return sum(key.wait() * value for key, value in self.coeffs.items()) + self.constant_term
 
     def get_current_best_estimate(self):
         if self.coeffs:
@@ -336,13 +321,6 @@ class Concatenator(BaseDeferred):
 
     def _wait(self):
         return self.typ().join(map(wait, self.lst))
-
-    def try_compute(self):
-        self.lst = [
-            elem.get_current_best_estimate() if isinstance(elem, BaseDeferred) else elem
-            for elem in self.lst
-        ]
-        return self.get_current_best_estimate()
 
     def get_current_best_estimate(self):
         if all(not isinstance(elem, BaseDeferred) for elem in self.lst):
@@ -421,11 +399,6 @@ class Promise(BaseDeferred):
             not_ready()
             raise Exception(f"Promise {self!r} is not ready")  # pragma: no cover
         return self.value
-
-    def try_compute(self):
-        if self.settled and isinstance(self.value, BaseDeferred):
-            self.value = self.value.get_current_best_estimate()
-        return self.get_current_best_estimate()
 
     def get_current_best_estimate(self):
         if self.settled:

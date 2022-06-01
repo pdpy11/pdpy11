@@ -124,12 +124,6 @@ class Symbol(ExpressionToken):
             if extern:
                 return extern
 
-        for name in candidates + (() if extern_mapping else (self.name,)):
-            if name not in compiler.on_symbol_defined_listeners:
-                compiler.on_symbol_defined_listeners[name] = {}
-            for elem in Awaiting.awaiting_stack[::-1]:
-                compiler.on_symbol_defined_listeners[name][elem] = True  # Ordered set. Kinda.
-
         not_ready()
         # TODO: check if there's a local symbol with the same name defined out of scope
         reports.error(
