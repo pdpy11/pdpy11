@@ -38,7 +38,7 @@ def try_as_register(operand, state):
         return REGISTER_NAMES[operand.name.lower()]
     elif isinstance(operand, operators.register):
         def fn():
-            register = operand.operand.resolve(state)
+            register = wait(operand.operand.resolve(state))
             if not 0 <= register <= 7:
                 reports.error(
                     "value-out-of-bounds",

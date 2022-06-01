@@ -103,6 +103,12 @@ def test_register_syntax(code):
 
 def test_dynamic_register():
     expect_same("clr %<reg+1>\nreg = 4", "clr %5")
+    expect_same("clr %<reg+1>\nreg = .\n.link 2", ".link 2\nclr %5")
+
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("clr %10", "clr %0")
+    with util.expect_error("value-out-of-bounds"):
+        expect_same("clr %-1", "clr %0")
 
 
 def test_immediate_operand():
