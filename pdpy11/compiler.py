@@ -90,7 +90,6 @@ class Compiler:
                             # Bring the current address forward
                             def closure(insn):
                                 nonlocal data, addr
-                                new_addr = Deferred[int](lambda: insn.value.resolve(state))
                                 def fn():
                                     old_addr_value = wait(addr)
                                     new_addr_value = get_as_int(state, "link address", state["insn"], insn.value, bitness=16, unsigned=False)
@@ -102,8 +101,13 @@ class Compiler:
                                         )
                                         raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
                                     return b"\x00" * length
-                                data += Deferred[bytes](fn)
-                                addr = new_addr
+
+                                chunk = Deferred[bytes](fn)
+                                data += chunk
+                                if isinstance(chunk, BaseDeferred):
+                                    addr += chunk.length()
+                                else:
+                                    addr += len(chunk)
                             closure(insn)
                         else:
                             # Set link base

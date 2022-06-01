@@ -163,9 +163,9 @@ def test_metacommands():
     expect_binary(".blkw 10", b"\x00" * 16)
 
     with util.expect_error("value-out-of-bounds"):
-        compile(".ascii <-1>")
+        expect_same(".ascii /Hello/<-1>/world/", ".ascii /Hello/<0>/world/")
     with util.expect_error("value-out-of-bounds"):
-        compile(".ascii <400>")
+        expect_same(".ascii /Hello/<400>/world/", ".ascii /Hello/<0>/world/")
 
     with util.expect_error("value-out-of-bounds", "io-error"):
         compile(".include <-1>")

@@ -16,38 +16,51 @@ int16 = typing.NewType("int16", int)
 int32 = typing.NewType("int32", int)
 
 
-def get_as_int(state, what, token, arg_token, bitness, unsigned):
+def get_as_int(state, what, token, arg_token, bitness, unsigned, default=None):
     value = wait(arg_token.resolve(state))
-    if isinstance(value, int):
-        if unsigned and value < 0:
-            reports.error(
-                "value-out-of-bounds",
-                (arg_token.ctx_start, arg_token.ctx_end, f"An unsigned integer is expected as {what}, but {value} was passed")
-            )
-            raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
-        if bitness is not None:
-            if value <= -2 ** bitness:
-                reports.error(
-                    "value-out-of-bounds",
-                    (arg_token.ctx_start, arg_token.ctx_end, f"The value is too small: {value} does not fit in {bitness} bits")
-                )
-                raise reports.RecoverableError("Too negative value")
-            if value >= 2 ** bitness:
-                reports.error(
-                    "value-out-of-bounds",
-                    (arg_token.ctx_start, arg_token.ctx_end, f"The value is too large: {value} does not fit in {bitness} bits")
-                )
-                raise reports.RecoverableError("Too large value")
-            return value % (2 ** bitness)
-        else:
-            return value
-    else:
+
+    if not isinstance(value, int):
         reports.error(
             "type-mismatch",
             (token.ctx_start, token.ctx_end, f"A number was expected as {what}"),
             (arg_token.ctx_start, arg_token.ctx_end, f"...yet the evaluated value is not an integer but {type(value).__name__}")
         )
         raise reports.RecoverableError()
+
+    if unsigned and value < 0:
+        reports.error(
+            "value-out-of-bounds",
+            (arg_token.ctx_start, arg_token.ctx_end, f"An unsigned integer is expected as {what}, but {value} was passed")
+        )
+        if default is None:
+            raise reports.RecoverableError("A negative value was passed when an unsigned value was expected")
+        else:
+            return default
+
+    if bitness is None:
+        return value
+
+    if value <= -2 ** bitness:
+        reports.error(
+            "value-out-of-bounds",
+            (arg_token.ctx_start, arg_token.ctx_end, f"The value is too small: {what} {value} does not fit in {bitness} bits")
+        )
+        if default is None:
+            raise reports.RecoverableError("Too negative value")
+        else:
+            return default
+
+    if value >= 2 ** bitness:
+        reports.error(
+            "value-out-of-bounds",
+            (arg_token.ctx_start, arg_token.ctx_end, f"The value is too large: {what} {value} does not fit in {bitness} bits")
+        )
+        if default is None:
+            raise reports.RecoverableError("Too large value")
+        else:
+            return default
+
+    return value % (2 ** bitness)
 
 
 def get_as_str(state, what, token, arg_token):

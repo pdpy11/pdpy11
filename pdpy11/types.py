@@ -195,7 +195,9 @@ class AngleBracketedChar(ExpressionToken):
         if self.reported_error:
             return ""
 
-        code = wait(self.expr.resolve(state))
+        from .metacommand_impl import get_as_int
+
+        code = get_as_int(state, "Unicode code point", self, self.expr, bitness=None, unsigned=False)
         try:
             return chr(code)
         except ValueError:
@@ -235,7 +237,8 @@ class StringConcatenation(ExpressionToken):
         return isinstance(rhs, type(self)) and self.chunks == rhs.chunks
 
     def resolve(self, state):
-        return "".join(chunk.resolve(state) for chunk in self.chunks)
+        from .metacommand_impl import get_as_str
+        return "".join(get_as_str(state, "string chunk", self, chunk) for chunk in self.chunks)
 
 
 class Number(ExpressionToken):

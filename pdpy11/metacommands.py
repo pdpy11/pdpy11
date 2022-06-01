@@ -7,7 +7,7 @@ from . import reports
 from . import types
 from .types import CodeBlock
 
-from .metacommand_impl import metacommand, get_as_str, int8, int16, int32, uint, uint16
+from .metacommand_impl import metacommand, get_as_int, get_as_str, int8, int16, int32, uint, uint16
 
 
 @metacommand(size=lambda state, *operands: len(operands) or 1, alias=".db")
@@ -69,14 +69,7 @@ def ascii_impl(state, string) -> bytes:
     for chunk in chunks:
         if isinstance(chunk, types.AngleBracketedChar):
             # Raw byte
-            val = wait(chunk.expr.resolve(state))
-            if not 0 <= val < 256:
-                reports.error(
-                    "value-out-of-bounds",
-                    (chunk.ctx_start, chunk.ctx_end, f"Character {val} does not fit in a byte and is therefore not a valid character.")
-                )
-                val = 0
-            result.append(val)
+            result.append(get_as_int(state, "byte character", chunk, chunk.expr, bitness=8, unsigned=True, default=0))
         else:
             try:
                 result += get_as_str(state, state["insn"].name.name + " operand", state["insn"], chunk).encode(state["compiler"].output_charset)
@@ -111,11 +104,11 @@ def rad50(state, string: str) -> bytes:
     for chunk in chunks:
         if isinstance(chunk, types.AngleBracketedChar):
             # Raw number in range 0:50 (octal)
-            val = wait(chunk.expr.resolve(state))
-            if not 0 <= val < 40:
+            val = get_as_int(state, "radix-50 character", chunk, chunk.expr, bitness=None, unsigned=True, default=0)
+            if val >= 40:
                 reports.error(
                     "value-out-of-bounds",
-                    (chunk.ctx_start, chunk.ctx_end, f"Character {val} cannot be packed into a radix-50 word.\nA value in range [0; 50) is expected (decimal).")
+                    (chunk.ctx_start, chunk.ctx_end, f"Character {val} cannot be packed into a radix-50 word.\nA value in range [0; 50) is expected (octal).")
                 )
                 val = 0
             characters.append(val)

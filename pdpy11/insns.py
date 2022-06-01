@@ -37,16 +37,9 @@ def try_as_register(operand, state):
     if isinstance(operand, Symbol) and not operand.is_necessarily_label and operand.name.lower() in REGISTER_NAMES:
         return REGISTER_NAMES[operand.name.lower()]
     elif isinstance(operand, operators.register):
-        def fn():
-            register = wait(operand.operand.resolve(state))
-            if not 0 <= register <= 7:
-                reports.error(
-                    "value-out-of-bounds",
-                    (operand.ctx_start, operand.ctx_end, f"Register number is out of bounds: %{register}")
-                )
-                return 0
-            return register
-        return Deferred[int](fn)
+        return Deferred[int](
+            lambda: get_as_int(state, "register index", operand, operand.operand, bitness=3, unsigned=True)
+        )
     else:
         return None
 
