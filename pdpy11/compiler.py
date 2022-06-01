@@ -326,7 +326,13 @@ class Compiler:
         if not link_base["promise"].settled:
             link_base["promise"].settle(0o1000)
 
-        return wait(link_base["promise"]), wait(generated_code)
+        base, code = wait(link_base["promise"]), wait(generated_code)
+
+        # Resolve all symbols, in case some have not been used
+        for _, (_, value) in self.symbols.items():
+            wait(value)
+
+        return base, code
 
 
     def emit_files(self, base, code):
