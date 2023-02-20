@@ -1,5 +1,9 @@
 # PDPy11
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/pdpy11/pdpy11/master/logo.png" alt="Logo" title="Logo" height="128" />
+</p>
+
 PDPy11 is a cross-platform assembler for PDP-11 computers.
 
 
