@@ -177,6 +177,10 @@ def test_metacommands():
     expect_binary(".byte 1\n.odd", b"\x01")
     expect_binary(".byte 1, 2\n.odd", b"\x01\x02\x00")
 
+    expect_binary(".link 0\n.byte 1\n.align 3", b"\x01\x00\x00")
+    expect_binary(".link 0\n.byte 1, 2\n.align 3", b"\x01\x02\x00")
+    expect_binary(".link 0\n.byte 1, 2, 3\n.align 3", b"\x01\x02\x03")
+
     expect_same(".repeat 10 { tst #1 }", "tst #1\n" * 8)
     expect_binary(".repeat 10 { .blkb cnt }\ncnt = 10", b"\x00" * 64)
 

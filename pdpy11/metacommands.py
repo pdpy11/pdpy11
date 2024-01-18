@@ -156,6 +156,11 @@ def odd(state) -> bytes:
     return b"\x00" if wait(state["emit_address"]) % 2 == 0 else b""
 
 
+@metacommand
+def align(state, count: uint) -> bytes:
+    return b"\x00" * ((-wait(state["emit_address"])) % count)
+
+
 # TODO: Macro-11 seems to have .rept metacommand. That is probably the same as
 # .repeat but '.rept X [code] .endr' instead of '.repeat X { [code] }'
 @metacommand
