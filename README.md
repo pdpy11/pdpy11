@@ -29,6 +29,11 @@ On Windows, installing via pip works too, but pay attention to any warnings. If 
 If you're using Sublime Text, you might also want to install various utilities for syntax highlighting and building [here](https://github.com/pdpy11/sublime-plugin).
 
 
+## Docs
+
+There is currently no up-to-date documentation for recent PDPy11. The documentation for older PDPy versions is available [here](https://github.com/purplesyringa/PDPy11/blob/master/docs.md); the basics are the same, but certain features may work slightly differently.
+
+
 ## Licensing
 
 PDPy11 is licensed under GNU General Public License version 3 (which is attached to PDPy11 in 'LICENSE' file), or (at your option) any later version.
